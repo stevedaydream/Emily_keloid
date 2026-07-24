@@ -12,10 +12,10 @@ export default async function HomePage() {
 
   const { data: dueSoon } = await supabase
     .from("case_schedule_items")
-    .select("case_id, label, due_date, status, cases(research_id)")
+    .select("id, case_id, label, due_date, status, actions, questionnaire_id, cases(research_id, body_site)")
     .eq("status", "pending")
     .order("due_date", { ascending: true })
-    .limit(5);
+    .limit(10);
 
   return (
     <div className="space-y-8">
@@ -85,13 +85,41 @@ export default async function HomePage() {
       </section>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">近期待處理時程</h2>
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">快速測試病人端（模擬 LINE/LIFF 畫面）</h2>
+        <p className="mb-2 text-xs text-slate-400">
+          點選下方任一待處理時程項目的連結，直接開啟病人端模擬畫面，不需先進個案頁面。
+        </p>
         <ul className="space-y-1">
-          {(dueSoon ?? []).map((item, i) => {
+          {(dueSoon ?? []).map((item) => {
             const c = Array.isArray(item.cases) ? item.cases[0] : item.cases;
+            const actions: string[] = item.actions ?? [];
             return (
-              <li key={i} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
-                <span className="font-medium">{c?.research_id}</span> — {item.label}（到期日 {item.due_date}）
+              <li
+                key={item.id}
+                className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+              >
+                <span>
+                  <span className="font-medium">{c?.research_id}</span>
+                  <span className="ml-1 text-slate-400">（{c?.body_site ?? "—"}）</span> — {item.label}（到期日 {item.due_date}）
+                </span>
+                <span className="flex items-center gap-3">
+                  {actions.includes("questionnaire") &&
+                    (item.questionnaire_id ? (
+                      <Link href={`/patient/${item.case_id}/questionnaire/${item.id}`} className="text-xs text-blue-600 underline">
+                        測試填問卷
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-red-400">（未指定問卷）</span>
+                    ))}
+                  {actions.includes("photo") && (
+                    <Link href={`/patient/${item.case_id}/photo/${item.id}`} className="text-xs text-blue-600 underline">
+                      測試拍照
+                    </Link>
+                  )}
+                  <Link href={`/cases/${item.case_id}`} className="text-xs text-slate-400 underline">
+                    看個案
+                  </Link>
+                </span>
               </li>
             );
           })}

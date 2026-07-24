@@ -269,14 +269,19 @@ export default async function CaseDetailPage({
                 </span>
                 {item.status === "pending" && (
                   <>
-                    {(item.actions ?? []).includes("questionnaire") && (
-                      <Link
-                        href={`/patient/${id}/questionnaire/${item.id}`}
-                        className="text-xs text-blue-600 underline"
-                      >
-                        模擬病人填問卷
-                      </Link>
-                    )}
+                    {(item.actions ?? []).includes("questionnaire") &&
+                      (item.questionnaire_id ? (
+                        <Link
+                          href={`/patient/${id}/questionnaire/${item.id}`}
+                          className="text-xs text-blue-600 underline"
+                        >
+                          模擬病人填問卷
+                        </Link>
+                      ) : (
+                        <span className="text-xs text-red-400" title="此時間點標記了填問卷動作，但尚未指定問卷，請至後台時程範本補設定">
+                          （未指定問卷）
+                        </span>
+                      ))}
                     {(item.actions ?? []).includes("photo") && (
                       <Link href={`/patient/${id}/photo/${item.id}`} className="text-xs text-blue-600 underline">
                         模擬病人拍照
