@@ -21,6 +21,7 @@ export const metadata: Metadata = {
 
 const NAV_LINKS = [
   { href: "/", label: "個案列表" },
+  { href: "/dashboard", label: "統計儀表板" },
   { href: "/cases/new", label: "新增個案" },
   { href: "/admin", label: "後台管理" },
   { href: "/export", label: "資料匯出" },
