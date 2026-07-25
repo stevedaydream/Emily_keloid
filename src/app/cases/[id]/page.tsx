@@ -8,6 +8,8 @@ import {
   updateConsentAction,
 } from "./actions";
 import TreatmentForm from "./TreatmentForm";
+import PipelineProgress from "./PipelineProgress";
+import type { CasePipelineRow } from "@/lib/pipeline";
 
 const STAGE_LABEL: Record<string, string> = { pre: "術前", intra: "術中", post: "術後" };
 const COMPLETENESS_LABEL: Record<string, string> = {
@@ -42,6 +44,7 @@ export default async function CaseDetailPage({
     { data: responses },
     { data: photos },
     { data: completeness },
+    { data: pipeline },
   ] = await Promise.all([
     supabase.from("cases").select("*, doctors(code, name)").eq("id", id).single(),
     supabase.from("case_diagnoses").select("id, is_primary, icd_codes(code, system, description_full)").eq("case_id", id),
@@ -67,6 +70,7 @@ export default async function CaseDetailPage({
       .order("submitted_at", { ascending: false }),
     supabase.from("photos").select("id, taken_at, body_site, file_path").eq("case_id", id).order("taken_at", { ascending: false }),
     supabase.from("case_data_completeness").select("*").eq("case_id", id),
+    supabase.from("v_case_pipeline_progress").select("*").eq("case_id", id).single(),
   ]);
 
   if (!caseRow) {
@@ -94,6 +98,9 @@ export default async function CaseDetailPage({
           {caseRow.line_bound ? "已綁定" : "未綁定"}
         </p>
       </div>
+
+      {/* 收案一條龍進度 */}
+      {pipeline && <PipelineProgress row={pipeline as CasePipelineRow} />}
 
       {/* 資料完整度（僅舊資料回溯建檔顯示） */}
       {completeness && completeness.length > 0 && (
