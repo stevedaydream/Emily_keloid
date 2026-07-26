@@ -9,6 +9,9 @@ import {
   markRadiotherapySessionAction,
   updateBiobankChecklistAction,
   setCaseBodyZoneAction,
+  updateDemographicsAction,
+  updateOutcomeAction,
+  updateLegacyBiobankAction,
 } from "./actions";
 import TreatmentForm from "./TreatmentForm";
 import PipelineProgress from "./PipelineProgress";
@@ -60,6 +63,7 @@ export default async function CaseDetailPage({
     { data: bodyZones },
     { data: radiotherapySessions },
     { data: biobankItems },
+    { data: legacyBiobank },
   ] = await Promise.all([
     supabase.from("cases").select("*, doctors(code, name), body_part_zones(display_name, dose_category)").eq("id", id).single(),
     supabase.from("case_diagnoses").select("id, is_primary, icd_codes(code, system, description_full)").eq("case_id", id),
@@ -89,6 +93,7 @@ export default async function CaseDetailPage({
     supabase.from("body_part_zones").select("id, view, display_name, dose_category").eq("active", true).order("sort_order"),
     supabase.from("radiotherapy_sessions").select("*").eq("case_id", id).order("due_date"),
     supabase.from("biobank_checklist_items").select("*").eq("case_id", id),
+    supabase.from("biobank_samples").select("*").eq("case_id", id).maybeSingle(),
   ]);
 
   if (!caseRow) {
@@ -120,6 +125,72 @@ export default async function CaseDetailPage({
 
       {/* 收案一條龍進度 */}
       {pipeline && <PipelineProgress row={pipeline as CasePipelineRow} />}
+
+      {/* 病人基本資料（舊資料對齊欄位） */}
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">病人基本資料</h2>
+        <form action={updateDemographicsAction} className="grid grid-cols-2 gap-3 text-sm">
+          <input type="hidden" name="case_id" value={id} />
+          <div>
+            <label className="block text-xs font-medium text-slate-600">性別</label>
+            <select name="sex" defaultValue={caseRow.sex ?? ""} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm">
+              <option value="">未填</option>
+              <option value="F">女</option>
+              <option value="M">男</option>
+              <option value="other">其他</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">年齡</label>
+            <input
+              type="number"
+              name="age_at_enrollment"
+              defaultValue={caseRow.age_at_enrollment ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">JSW score</label>
+            <input
+              name="jsw_score"
+              defaultValue={caseRow.jsw_score ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">Family（家族史）</label>
+            <input
+              name="family_history"
+              defaultValue={caseRow.family_history ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-600">keloid history</label>
+            <textarea
+              name="keloid_history"
+              rows={2}
+              defaultValue={caseRow.keloid_history ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-600">keloid 大小</label>
+            <textarea
+              name="keloid_size"
+              rows={2}
+              defaultValue={caseRow.keloid_size ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <button
+            type="submit"
+            className="col-span-2 whitespace-nowrap rounded-md bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
+          >
+            更新基本資料
+          </button>
+        </form>
+      </section>
 
       {/* 部位標記 */}
       <section className="rounded-lg border border-slate-200 bg-white p-4">
@@ -363,6 +434,28 @@ export default async function CaseDetailPage({
       {/* 生物資料庫 */}
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-slate-700">生物資料庫</h2>
+        <form action={updateLegacyBiobankAction} className="mb-3 flex flex-wrap items-end gap-3 rounded-md border border-slate-100 p-3 text-sm">
+          <input type="hidden" name="case_id" value={id} />
+          <div>
+            <label className="block text-xs font-medium text-slate-600">蠟塊編號</label>
+            <input
+              name="paraffin_block_no"
+              defaultValue={legacyBiobank?.paraffin_block_no ?? ""}
+              className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">細胞凍管位置</label>
+            <input
+              name="cryotube_location"
+              defaultValue={legacyBiobank?.cryotube_location ?? ""}
+              className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <button type="submit" className="whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
+            更新
+          </button>
+        </form>
         {(["組織", "血液"] as const).map((group) => (
           <div key={group} className="mb-3 last:mb-0">
             <h3 className="mb-1 text-xs font-semibold text-slate-500">{group}</h3>
@@ -402,6 +495,65 @@ export default async function CaseDetailPage({
             </ul>
           </div>
         ))}
+      </section>
+
+      {/* 治療後追蹤結果（舊資料對齊欄位） */}
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">治療後追蹤結果</h2>
+        <form action={updateOutcomeAction} className="grid grid-cols-2 gap-3 text-sm">
+          <input type="hidden" name="case_id" value={id} />
+          <div>
+            <label className="block text-xs font-medium text-slate-600">是否復發</label>
+            <select
+              name="recurrence_status"
+              defaultValue={caseRow.recurrence_status ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            >
+              <option value="">未填</option>
+              <option value="none">無復發</option>
+              <option value="recurred">已復發</option>
+              <option value="unknown">未知</option>
+              <option value="not_applicable">不適用</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">復發日期</label>
+            <input
+              type="date"
+              name="recurrence_date"
+              defaultValue={caseRow.recurrence_date ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">治療後復發天數</label>
+            <input
+              type="number"
+              name="days_to_recurrence"
+              defaultValue={caseRow.days_to_recurrence ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">統計截止日</label>
+            <input
+              type="date"
+              name="followup_cutoff_date"
+              defaultValue={caseRow.followup_cutoff_date ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <label className="col-span-2 flex items-center gap-2 text-xs text-slate-600">
+            <input type="checkbox" name="over_one_year_flag" defaultChecked={caseRow.over_one_year_flag === true} />
+            距離治療後超過1年
+          </label>
+          <button
+            type="submit"
+            className="col-span-2 whitespace-nowrap rounded-md bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
+          >
+            更新追蹤結果
+          </button>
+        </form>
       </section>
 
       {/* 追蹤時程 */}

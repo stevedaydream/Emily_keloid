@@ -44,6 +44,28 @@ export default function NewCaseForm({
         </p>
       </div>
 
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-sm font-medium text-slate-700">性別</label>
+          <select name="sex" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+            <option value="">未填</option>
+            <option value="F">女</option>
+            <option value="M">男</option>
+            <option value="other">其他</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700">年齡</label>
+          <input
+            type="number"
+            name="age_at_enrollment"
+            min={0}
+            max={130}
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          />
+        </div>
+      </div>
+
       <div>
         <label className="block text-sm font-medium text-slate-700">病人手機號碼</label>
         <input
