@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase";
 import { submitQuestionnaireAction } from "./actions";
 
-export default async function PatientQuestionnairePage({
+export default async function ClinicQuestionnairePage({
   params,
 }: {
   params: Promise<{ caseId: string; itemId: string }>;
@@ -26,85 +26,72 @@ export default async function PatientQuestionnairePage({
   ]);
 
   return (
-    <div className="mx-auto max-w-sm">
-      <div className="overflow-hidden rounded-2xl border border-slate-300 shadow-sm">
-        <div className="flex items-center gap-2 bg-[#06C755] px-4 py-3 text-white">
-          <div className="h-8 w-8 rounded-full bg-white/30" />
-          <div>
-            <p className="text-sm font-semibold">蟹足腫研究小幫手（模擬 LINE 畫面）</p>
-            <p className="text-xs opacity-80">{caseInfo?.research_id} ・ {item.label}</p>
-          </div>
-        </div>
-        <div className="space-y-3 bg-[#8CABD8] p-4">
-          <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-white p-3 text-sm shadow">
-            您好，該填寫「{template?.name}」囉！請點選下方表單完成填寫。
-          </div>
-
-          <form
-            action={submitQuestionnaireAction}
-            className="space-y-3 rounded-2xl rounded-tl-sm bg-white p-4 text-sm shadow"
-          >
-            <input type="hidden" name="case_id" value={caseId} />
-            <input type="hidden" name="item_id" value={itemId} />
-            <input type="hidden" name="questionnaire_id" value={item.questionnaire_id} />
-
-            {(questions ?? []).map((q) => (
-              <div key={q.id}>
-                <label className="block text-sm font-medium text-slate-800">
-                  {q.order_no}. {q.question_text}
-                  {q.required && <span className="ml-1 text-red-500">*</span>}
-                </label>
-                {q.question_type === "single" && (
-                  <div className="mt-1 space-y-1">
-                    {(q.options ?? []).map((o: { value: string; label: string }) => (
-                      <label key={o.value} className="flex items-center gap-2 text-sm">
-                        <input type="radio" name={`q_${q.id}`} value={o.value} required={q.required} />
-                        {o.label}
-                      </label>
-                    ))}
-                  </div>
-                )}
-                {q.question_type === "multi" && (
-                  <div className="mt-1 space-y-1">
-                    {(q.options ?? []).map((o: { value: string; label: string }) => (
-                      <label key={o.value} className="flex items-center gap-2 text-sm">
-                        <input type="checkbox" name={`q_${q.id}`} value={o.value} />
-                        {o.label}
-                      </label>
-                    ))}
-                  </div>
-                )}
-                {q.question_type === "number" && (
-                  <input
-                    type="number"
-                    name={`q_${q.id}`}
-                    required={q.required}
-                    className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-                  />
-                )}
-                {q.question_type === "text" && (
-                  <textarea
-                    name={`q_${q.id}`}
-                    required={q.required}
-                    rows={2}
-                    className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-                  />
-                )}
-              </div>
-            ))}
-
-            <button
-              type="submit"
-              className="w-full rounded-full bg-[#06C755] px-3 py-2 text-sm font-medium text-white hover:opacity-90"
-            >
-              送出問卷
-            </button>
-          </form>
-        </div>
+    <div className="mx-auto max-w-xl space-y-4">
+      <div>
+        <h1 className="text-lg font-semibold text-slate-800">{template?.name}</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          {caseInfo?.research_id} ・ {item.label}
+        </p>
+        {template?.description && <p className="mt-1 text-xs text-slate-400">{template.description}</p>}
       </div>
-      <p className="mt-2 text-center text-xs text-slate-400">
-        （Demo 模擬畫面，正式版將透過 LINE LIFF 呈現）
-      </p>
+
+      <form action={submitQuestionnaireAction} className="space-y-5 rounded-lg border border-slate-200 bg-white p-5">
+        <input type="hidden" name="case_id" value={caseId} />
+        <input type="hidden" name="item_id" value={itemId} />
+        <input type="hidden" name="questionnaire_id" value={item.questionnaire_id} />
+
+        {(questions ?? []).map((q) => (
+          <div key={q.id}>
+            <label className="block text-sm font-medium text-slate-800">
+              {q.order_no}. {q.question_text}
+              {q.required && <span className="ml-1 text-red-500">*</span>}
+            </label>
+            {q.question_type === "single" && (
+              <div className="mt-1 space-y-1">
+                {(q.options ?? []).map((o: { value: string; label: string }) => (
+                  <label key={o.value} className="flex items-center gap-2 text-sm">
+                    <input type="radio" name={`q_${q.id}`} value={o.value} required={q.required} />
+                    {o.label}
+                  </label>
+                ))}
+              </div>
+            )}
+            {q.question_type === "multi" && (
+              <div className="mt-1 space-y-1">
+                {(q.options ?? []).map((o: { value: string; label: string }) => (
+                  <label key={o.value} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" name={`q_${q.id}`} value={o.value} />
+                    {o.label}
+                  </label>
+                ))}
+              </div>
+            )}
+            {q.question_type === "number" && (
+              <input
+                type="number"
+                name={`q_${q.id}`}
+                required={q.required}
+                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              />
+            )}
+            {q.question_type === "text" && (
+              <textarea
+                name={`q_${q.id}`}
+                required={q.required}
+                rows={2}
+                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              />
+            )}
+          </div>
+        ))}
+
+        <button
+          type="submit"
+          className="w-full rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
+        >
+          送出
+        </button>
+      </form>
     </div>
   );
 }

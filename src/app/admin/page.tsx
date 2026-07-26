@@ -9,6 +9,7 @@ const SECTIONS = [
   { href: "/admin/operators", title: "操作者清單", desc: "共用帳號下的操作者選單維護" },
   { href: "/admin/icd", title: "ICD-9/10 常用碼", desc: "蟹足腫相關診斷碼清單維護" },
   { href: "/admin/import", title: "舊資料匯入", desc: "Excel/CSV 匯入、欄位對應與檢視" },
+  { href: "/admin/health-kb", title: "衛教資料庫", desc: "Gemini 衛教機器人的回答內容來源" },
 ];
 
 export default function AdminHubPage() {

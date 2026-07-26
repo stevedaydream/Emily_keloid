@@ -6,10 +6,14 @@ import {
   markScheduleItemAction,
   updateCompletenessAction,
   updateConsentAction,
+  markRadiotherapySessionAction,
+  updateBiobankChecklistAction,
+  setCaseBodyZoneAction,
 } from "./actions";
 import TreatmentForm from "./TreatmentForm";
 import PipelineProgress from "./PipelineProgress";
 import type { CasePipelineRow } from "@/lib/pipeline";
+import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
 
 const STAGE_LABEL: Record<string, string> = { pre: "術前", intra: "術中", post: "術後" };
 const COMPLETENESS_LABEL: Record<string, string> = {
@@ -22,6 +26,14 @@ const COMPLETENESS_COLOR: Record<string, string> = {
   pending: "bg-amber-100 text-amber-700",
   not_applicable: "bg-slate-100 text-slate-500",
 };
+
+const BIOBANK_ITEMS = [
+  { key: "tissue_paraffin_block", label: "蠟塊", group: "組織" },
+  { key: "tissue_keloid_fibroblast_culture", label: "Keloid fibroblast 原代培養", group: "組織" },
+  { key: "tissue_periskin_fibroblast_culture", label: "Periskin fibroblast 原代培養", group: "組織" },
+  { key: "blood_pre_op", label: "術前", group: "血液" },
+  { key: "blood_post_op_day1", label: "術後治療第一天", group: "血液" },
+] as const;
 
 export default async function CaseDetailPage({
   params,
@@ -45,8 +57,11 @@ export default async function CaseDetailPage({
     { data: photos },
     { data: completeness },
     { data: pipeline },
+    { data: bodyZones },
+    { data: radiotherapySessions },
+    { data: biobankItems },
   ] = await Promise.all([
-    supabase.from("cases").select("*, doctors(code, name)").eq("id", id).single(),
+    supabase.from("cases").select("*, doctors(code, name), body_part_zones(display_name, dose_category)").eq("id", id).single(),
     supabase.from("case_diagnoses").select("id, is_primary, icd_codes(code, system, description_full)").eq("case_id", id),
     supabase.from("icd_codes").select("id, code, system, description_full").eq("active", true).order("code"),
     supabase.from("term_library").select("id, stage, term").eq("active", true).order("sort_order"),
@@ -71,6 +86,9 @@ export default async function CaseDetailPage({
     supabase.from("photos").select("id, taken_at, body_site, file_path").eq("case_id", id).order("taken_at", { ascending: false }),
     supabase.from("case_data_completeness").select("*").eq("case_id", id),
     supabase.from("v_case_pipeline_progress").select("*").eq("case_id", id).single(),
+    supabase.from("body_part_zones").select("id, view, display_name, dose_category").eq("active", true).order("sort_order"),
+    supabase.from("radiotherapy_sessions").select("*").eq("case_id", id).order("due_date"),
+    supabase.from("biobank_checklist_items").select("*").eq("case_id", id),
   ]);
 
   if (!caseRow) {
@@ -78,6 +96,8 @@ export default async function CaseDetailPage({
   }
 
   const doctor = Array.isArray(caseRow.doctors) ? caseRow.doctors[0] : caseRow.doctors;
+  const bodyZone = Array.isArray(caseRow.body_part_zones) ? caseRow.body_part_zones[0] : caseRow.body_part_zones;
+  const biobankByKey = new Map((biobankItems ?? []).map((b) => [b.item_key, b]));
   const termsByStage: Record<string, { id: string; term: string }[]> = { pre: [], intra: [], post: [] };
   (termLibrary ?? []).forEach((t) => termsByStage[t.stage]?.push(t));
 
@@ -94,13 +114,41 @@ export default async function CaseDetailPage({
           )}
         </div>
         <p className="mt-1 text-sm text-slate-500">
-          負責醫師：{doctor?.code} {doctor?.name} ・ 部位：{caseRow.body_site ?? "—"} ・ LINE 綁定：
-          {caseRow.line_bound ? "已綁定" : "未綁定"}
+          負責醫師：{doctor?.code} {doctor?.name} ・ LINE 綁定：{caseRow.line_bound ? "已綁定" : "未綁定"}
         </p>
       </div>
 
       {/* 收案一條龍進度 */}
       {pipeline && <PipelineProgress row={pipeline as CasePipelineRow} />}
+
+      {/* 部位標記 */}
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">主要蟹足腫部位</h2>
+        {bodyZone ? (
+          <p className="text-sm text-slate-600">
+            {bodyZone.display_name}
+            <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-700">
+              劑量分類：{DOSE_CATEGORY_LABEL[bodyZone.dose_category]}
+            </span>
+          </p>
+        ) : (
+          <p className="text-sm text-amber-600">尚未標記部位（可至「部位標記與拍照」點選，或於下方直接指定）</p>
+        )}
+        <form action={setCaseBodyZoneAction} className="mt-2 flex items-center gap-2">
+          <input type="hidden" name="case_id" value={id} />
+          <select name="zone_id" className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
+            <option value="">變更主要部位…</option>
+            {(bodyZones ?? []).map((z) => (
+              <option key={z.id} value={z.id}>
+                [{z.view === "front" ? "正面" : "背面"}] {z.display_name}（{DOSE_CATEGORY_LABEL[z.dose_category]}）
+              </option>
+            ))}
+          </select>
+          <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
+            設定
+          </button>
+        </form>
+      </section>
 
       {/* 資料完整度（僅舊資料回溯建檔顯示） */}
       {completeness && completeness.length > 0 && (
@@ -251,6 +299,103 @@ export default async function CaseDetailPage({
         </ul>
       </section>
 
+      {/* 放射治療進度（登打「手術切除」且已標記部位後自動產生） */}
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">放射治療進度</h2>
+        {radiotherapySessions && radiotherapySessions.length > 0 ? (
+          <ul className="space-y-2">
+            {radiotherapySessions.map((s) => (
+              <li key={s.id} className="flex items-center justify-between rounded-md border border-slate-100 px-3 py-2 text-sm">
+                <span>
+                  第 {s.fraction_no}/{s.total_fractions} 次 ・ 預定 {s.planned_dose_cgy / 100}Gy ・ 到期 {s.due_date}
+                  {s.status === "done" && s.actual_dose_cgy != null && (
+                    <span className="ml-2 text-xs text-emerald-600">實際 {s.actual_dose_cgy / 100}Gy（{s.completed_date}）</span>
+                  )}
+                </span>
+                <span className="flex items-center gap-2">
+                  <span
+                    className={`rounded px-2 py-0.5 text-xs ${
+                      s.status === "done"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : s.status === "skipped"
+                        ? "bg-slate-100 text-slate-500"
+                        : "bg-amber-100 text-amber-700"
+                    }`}
+                  >
+                    {s.status === "done" ? "已完成" : s.status === "skipped" ? "已跳過" : "待處理"}
+                  </span>
+                  {s.status === "pending" && (
+                    <form action={markRadiotherapySessionAction} className="flex items-center gap-1">
+                      <input type="hidden" name="case_id" value={id} />
+                      <input type="hidden" name="session_id" value={s.id} />
+                      <input type="hidden" name="status" value="done" />
+                      <input
+                        type="number"
+                        name="actual_dose_cgy"
+                        placeholder={`${s.planned_dose_cgy}`}
+                        defaultValue={s.planned_dose_cgy}
+                        className="w-20 rounded border border-slate-300 px-1 py-0.5 text-xs"
+                      />
+                      <button type="submit" className="text-xs text-slate-400 underline">
+                        標記完成
+                      </button>
+                    </form>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-slate-400">
+            尚無放療排程。登打「手術切除」治療紀錄時，若個案已標記部位，系統會依部位對應的劑量分類自動產生排程。
+          </p>
+        )}
+      </section>
+
+      {/* 生物資料庫 */}
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">生物資料庫</h2>
+        {(["組織", "血液"] as const).map((group) => (
+          <div key={group} className="mb-3 last:mb-0">
+            <h3 className="mb-1 text-xs font-semibold text-slate-500">{group}</h3>
+            <ul className="space-y-1">
+              {BIOBANK_ITEMS.filter((it) => it.group === group).map((it) => {
+                const existing = biobankByKey.get(it.key);
+                return (
+                  <li key={it.key} className="flex items-center gap-3 rounded-md border border-slate-100 px-3 py-1.5 text-sm">
+                    <form action={updateBiobankChecklistAction} className="flex flex-1 items-center gap-3">
+                      <input type="hidden" name="case_id" value={id} />
+                      <input type="hidden" name="item_key" value={it.key} />
+                      <input type="hidden" name="item_label" value={it.label} />
+                      <label className="flex flex-1 items-center gap-2">
+                        <input type="checkbox" name="collected" defaultChecked={existing?.collected ?? false} />
+                        {it.label}
+                      </label>
+                      <input
+                        type="date"
+                        name="collected_date"
+                        defaultValue={existing?.collected_date ?? new Date().toISOString().slice(0, 10)}
+                        className="rounded border border-slate-300 px-1.5 py-1 text-xs"
+                      />
+                      <span
+                        className={`rounded px-2 py-0.5 text-xs ${
+                          existing?.collected ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {existing?.collected ? "已收" : "待收"}
+                      </span>
+                      <button type="submit" className="text-xs text-slate-400 underline">
+                        更新
+                      </button>
+                    </form>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </section>
+
       {/* 追蹤時程 */}
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-slate-700">追蹤時程</h2>
@@ -282,7 +427,7 @@ export default async function CaseDetailPage({
                           href={`/patient/${id}/questionnaire/${item.id}`}
                           className="text-xs text-blue-600 underline"
                         >
-                          模擬病人填問卷
+                          填寫問卷
                         </Link>
                       ) : (
                         <span className="text-xs text-red-400" title="此時間點標記了填問卷動作，但尚未指定問卷，請至後台時程範本補設定">
@@ -291,7 +436,7 @@ export default async function CaseDetailPage({
                       ))}
                     {(item.actions ?? []).includes("photo") && (
                       <Link href={`/patient/${id}/photo/${item.id}`} className="text-xs text-blue-600 underline">
-                        模擬病人拍照
+                        部位標記與拍照
                       </Link>
                     )}
                     <form action={markScheduleItemAction}>
@@ -319,8 +464,8 @@ export default async function CaseDetailPage({
             const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
             return (
               <li key={r.id} className="text-sm text-slate-600">
-                {new Date(r.submitted_at).toLocaleString("zh-TW")} ・ {q?.name} ・ 來源：
-                {r.submitted_via === "line_sim" ? "模擬病人端" : "診間代填"}
+                {new Date(r.submitted_at).toLocaleString("zh-TW")} ・ {q?.name} ・ 填寫人：
+                {r.submitted_via === "line_sim" ? "舊LINE路徑（已停用）" : "診間人員"}
               </li>
             );
           })}
