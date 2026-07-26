@@ -1,6 +1,17 @@
-import JSZip from "jszip";
+import ExcelJS from "exceljs";
 import { supabaseServer } from "@/lib/supabase";
-import { toCsv } from "@/lib/csv";
+import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
+
+// 匯出格式比照院內既有的「raw data」寬表（見 c:\...\20230912_keloid病人治療table(1)-2.xlsm），
+// 一人一列，欄位順序與命名沿用舊表，2026 平台新增的結構化欄位接在最後一組（決策 2026-07-27）。
+
+const first = <T>(v: T | T[] | null | undefined): T | undefined => (Array.isArray(v) ? v[0] : v ?? undefined);
+
+function daysBetween(a?: string | null, b?: string | null): number | null {
+  if (!a || !b) return null;
+  const d = (new Date(b).getTime() - new Date(a).getTime()) / 86400000;
+  return Math.round(d);
+}
 
 export async function GET() {
   const supabase = supabaseServer();
@@ -10,153 +21,274 @@ export async function GET() {
     { data: diagnoses },
     { data: termRecords },
     { data: treatmentRecords },
+    { data: radiotherapySessions },
     { data: scheduleItems },
+    { data: biobankItems },
+    { data: biobankSamplesLegacy },
+    { data: photos },
     { data: responses },
     { data: answers },
   ] = await Promise.all([
-    supabase.from("cases").select("research_id, enrollment_year, body_site, consent_signed_at, consent_confirmed_by, line_bound, data_source, created_by, created_at, doctors(code, name)"),
-    supabase.from("case_diagnoses").select("is_primary, cases(research_id), icd_codes(code, system, description_full)"),
+    supabase.from("cases").select("*, doctors(name), body_part_zones(display_name, dose_category)"),
+    supabase.from("case_diagnoses").select("case_id, is_primary, icd_codes(code, description_full)"),
     supabase
       .from("case_term_records")
-      .select("stage, recorded_at, recorded_by, cases(research_id), case_term_record_items(term_library(term))"),
-    supabase.from("treatment_records").select("treatment_date, field_values, free_text, recorded_by, cases(research_id), treatment_types(name)"),
-    supabase.from("case_schedule_items").select("label, due_date, status, completed_at, actions, cases(research_id)"),
-    supabase.from("questionnaire_responses").select("id, submitted_at, submitted_via, cases(research_id), questionnaire_templates(name)"),
-    supabase.from("questionnaire_answers").select("response_id, answer_value, questionnaire_questions(question_text)"),
+      .select("case_id, stage, case_term_record_items(term_library(term))"),
+    supabase.from("treatment_records").select("*, treatment_types(name)"),
+    supabase.from("radiotherapy_sessions").select("*"),
+    supabase.from("case_schedule_items").select("*").order("due_date"),
+    supabase.from("biobank_checklist_items").select("*"),
+    supabase.from("biobank_samples").select("*"),
+    supabase.from("photos").select("case_id"),
+    supabase.from("questionnaire_responses").select("id, case_id, questionnaire_templates(category)"),
+    supabase.from("questionnaire_answers").select("response_id, answer_value, questionnaire_questions(order_no)"),
   ]);
 
-  const first = <T>(v: T | T[] | null | undefined): T | undefined => (Array.isArray(v) ? v[0] : v ?? undefined);
+  const byCase = (rows: unknown[] | null): Map<string, any[]> => {
+    const m = new Map<string, any[]>();
+    for (const r of (rows ?? []) as any[]) {
+      const arr = m.get(r.case_id) ?? [];
+      arr.push(r);
+      m.set(r.case_id, arr);
+    }
+    return m;
+  };
 
-  const zip = new JSZip();
+  const diagnosesByCase = byCase(diagnoses as any);
+  const termsByCase = byCase(termRecords as any);
+  const treatmentsByCase = byCase(treatmentRecords as any);
+  const rtByCase = byCase(radiotherapySessions as any);
+  const scheduleByCase = byCase(scheduleItems as any);
+  const biobankByCase = byCase(biobankItems as any);
+  const legacyBiobankByCase = byCase(biobankSamplesLegacy as any);
+  const photoCountByCase = new Map<string, number>();
+  for (const p of photos ?? []) photoCountByCase.set(p.case_id, (photoCountByCase.get(p.case_id) ?? 0) + 1);
 
-  zip.file(
-    "cases.csv",
-    toCsv(
-      (cases ?? []).map((c) => {
-        const d = first(c.doctors) as { code?: string; name?: string } | undefined;
-        return {
-          research_id: c.research_id,
-          doctor_code: d?.code,
-          doctor_name: d?.name,
-          enrollment_year: c.enrollment_year,
-          body_site: c.body_site,
-          consent_signed_at: c.consent_signed_at,
-          consent_confirmed_by: c.consent_confirmed_by,
-          line_bound: c.line_bound,
-          data_source: c.data_source,
-          created_by: c.created_by,
-          created_at: c.created_at,
-        };
-      })
-    )
-  );
-
-  zip.file(
-    "diagnoses.csv",
-    toCsv(
-      (diagnoses ?? []).map((d) => {
-        const c = first(d.cases) as { research_id?: string } | undefined;
-        const icd = first(d.icd_codes) as { code?: string; system?: string; description_full?: string } | undefined;
-        return {
-          research_id: c?.research_id,
-          icd_system: icd?.system,
-          icd_code: icd?.code,
-          description: icd?.description_full,
-          is_primary: d.is_primary,
-        };
-      })
-    )
-  );
-
-  zip.file(
-    "term_records.csv",
-    toCsv(
-      (termRecords ?? []).map((r) => {
-        const c = first(r.cases) as { research_id?: string } | undefined;
-        type Item = { term_library: { term: string } | { term: string }[] };
-        const terms = ((r.case_term_record_items ?? []) as Item[])
-          .map((it) => {
-            const t = first(it.term_library) as { term?: string } | undefined;
-            return t?.term;
-          })
-          .filter(Boolean)
-          .join("; ");
-        return {
-          research_id: c?.research_id,
-          stage: r.stage,
-          recorded_at: r.recorded_at,
-          recorded_by: r.recorded_by,
-          terms,
-        };
-      })
-    )
-  );
-
-  zip.file(
-    "treatment_records.csv",
-    toCsv(
-      (treatmentRecords ?? []).map((r) => {
-        const c = first(r.cases) as { research_id?: string } | undefined;
-        const tt = first(r.treatment_types) as { name?: string } | undefined;
-        return {
-          research_id: c?.research_id,
-          treatment_date: r.treatment_date,
-          treatment_type: tt?.name,
-          field_values: JSON.stringify(r.field_values ?? {}),
-          free_text: r.free_text,
-          recorded_by: r.recorded_by,
-        };
-      })
-    )
-  );
-
-  zip.file(
-    "schedule_items.csv",
-    toCsv(
-      (scheduleItems ?? []).map((s) => {
-        const c = first(s.cases) as { research_id?: string } | undefined;
-        return {
-          research_id: c?.research_id,
-          label: s.label,
-          due_date: s.due_date,
-          status: s.status,
-          completed_at: s.completed_at,
-          actions: (s.actions ?? []).join("; "),
-        };
-      })
-    )
-  );
-
-  const answersByResponse = new Map<string, string[]>();
+  const answersByResponse = new Map<string, { order_no: number; value: unknown }[]>();
   for (const a of answers ?? []) {
-    const q = first(a.questionnaire_questions) as { question_text?: string } | undefined;
+    const q = first(a.questionnaire_questions) as { order_no?: number } | undefined;
     const arr = answersByResponse.get(a.response_id) ?? [];
-    arr.push(`${q?.question_text}=${JSON.stringify(a.answer_value)}`);
+    arr.push({ order_no: q?.order_no ?? 0, value: a.answer_value });
     answersByResponse.set(a.response_id, arr);
   }
+  const vssByCase = new Map<string, Record<number, number>>();
+  for (const r of responses ?? []) {
+    const q = first(r.questionnaire_templates) as { category?: string } | undefined;
+    if (q?.category !== "scale") continue;
+    const ans = answersByResponse.get(r.id) ?? [];
+    const byOrder: Record<number, number> = {};
+    for (const a of ans) byOrder[a.order_no] = Number(a.value);
+    vssByCase.set(r.case_id, byOrder); // 取最後一筆 VSS 覆蓋（依 responses 查詢順序）
+  }
 
-  zip.file(
-    "questionnaire_responses.csv",
-    toCsv(
-      (responses ?? []).map((r) => {
-        const c = first(r.cases) as { research_id?: string } | undefined;
-        const q = first(r.questionnaire_templates) as { name?: string } | undefined;
-        return {
-          research_id: c?.research_id,
-          questionnaire: q?.name,
-          submitted_at: r.submitted_at,
-          submitted_via: r.submitted_via,
-          answers: (answersByResponse.get(r.id) ?? []).join(" | "),
-        };
+  const maxFollowUps = Math.min(30, Math.max(5, ...[...scheduleByCase.values()].map((v) => v.length), 0));
+
+  const BIOBANK_LABELS: Record<string, string> = {
+    tissue_paraffin_block: "生資-蠟塊",
+    tissue_keloid_fibroblast_culture: "生資-Keloid培養",
+    tissue_periskin_fibroblast_culture: "生資-Periskin培養",
+    blood_pre_op: "生資-血液術前",
+    blood_post_op_day1: "生資-血液術後第一天",
+  };
+  const BIOBANK_KEYS = Object.keys(BIOBANK_LABELS);
+
+  const BASIC_HEADERS = [
+    "編號", "蠟塊編號", "病歷號", "受試者", "性別", "年齡", "手機", "主治醫師", "部位",
+    "受試者同意書", "組織庫", "Primary culture", "細胞凍管位置", "追蹤照片", "JSW score", "Family",
+    "keloid history", "keloid 大小",
+  ];
+  const OP_HEADERS = ["開刀日", "Operation 1", "Operation 2", "部位1", "部位2", "部位3", "部位4"];
+  const RT_HEADERS = [
+    "Radiation date", "DIGNOSIS", "Total Dose(cGy)", "Fractions", "bolus", "electron beam",
+    "執行部位2", "Treatment Response", "Acute Reactions",
+  ];
+  const OUTCOME_HEADERS = ["RT VS", "是否復發", "復發日期", "治療後復發天數", "統計截止日", "距離治療後超過1年"];
+  const FOLLOWUP_HEADERS = ["追蹤時間", "頻率(days)", "紀錄"];
+  const NEW_HEADERS = [
+    "部位分類", "ICD診斷", "術前術語", "術中術語", "術後術語",
+    "VSS總分", "VSS-血管分布", "VSS-色素沉澱", "VSS-柔軟度", "VSS-高度",
+    ...BIOBANK_KEYS.map((k) => BIOBANK_LABELS[k] + "(狀態)"),
+    ...BIOBANK_KEYS.map((k) => BIOBANK_LABELS[k] + "(日期)"),
+    "放療進度", "LINE綁定", "資料來源",
+  ];
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("raw data");
+
+  // 群組標題列（比照舊表第一列的合併儲存格分組）
+  const groupRow: (string | null)[] = [];
+  const pushGroup = (label: string, span: number) => {
+    groupRow.push(label);
+    for (let i = 1; i < span; i++) groupRow.push(null);
+  };
+  pushGroup("基本資料", BASIC_HEADERS.length);
+  pushGroup("OP", OP_HEADERS.length);
+  pushGroup("RT", RT_HEADERS.length);
+  pushGroup("治療後追蹤", OUTCOME_HEADERS.length);
+  for (let i = 0; i < maxFollowUps; i++) pushGroup(String(i + 1), FOLLOWUP_HEADERS.length);
+  pushGroup("備註", 1);
+  pushGroup("2026平台新增欄位", NEW_HEADERS.length);
+  ws.addRow(groupRow);
+
+  const headerRow = [
+    ...BASIC_HEADERS,
+    ...OP_HEADERS,
+    ...RT_HEADERS,
+    ...OUTCOME_HEADERS,
+    ...Array(maxFollowUps).fill(FOLLOWUP_HEADERS).flat(),
+    "備註",
+    ...NEW_HEADERS,
+  ];
+  ws.addRow(headerRow);
+
+  // 合併群組標題儲存格
+  let col = 1;
+  const merges = [
+    BASIC_HEADERS.length, OP_HEADERS.length, RT_HEADERS.length, OUTCOME_HEADERS.length,
+    ...Array(maxFollowUps).fill(FOLLOWUP_HEADERS.length), 1, NEW_HEADERS.length,
+  ];
+  for (const span of merges) {
+    if (span > 1) ws.mergeCells(1, col, 1, col + span - 1);
+    col += span;
+  }
+  ws.getRow(1).font = { bold: true };
+  ws.getRow(2).font = { bold: true };
+  ws.views = [{ state: "frozen", ySplit: 2 }];
+
+  for (const c of cases ?? []) {
+    const doctor = first(c.doctors) as { name?: string } | undefined;
+    const zone = first(c.body_part_zones) as { display_name?: string; dose_category?: string } | undefined;
+
+    const surgeries = (treatmentsByCase.get(c.id) ?? []).filter(
+      (t: any) => first(t.treatment_types)?.name === "手術切除"
+    );
+    const surgeryDate = surgeries.map((t: any) => t.treatment_date).sort()[0] ?? null;
+    const surgery = surgeries[0];
+
+    const rtRecords = (treatmentsByCase.get(c.id) ?? []).filter(
+      (t: any) => first(t.treatment_types)?.name === "放射治療"
+    );
+    const rtRecord = rtRecords[0];
+
+    const sessions = (rtByCase.get(c.id) ?? []).sort((a: any, b: any) => a.fraction_no - b.fraction_no);
+    const rtDate = sessions[0]?.due_date ?? rtRecord?.treatment_date ?? null;
+    const totalDoseCgy = sessions.length
+      ? sessions.reduce((s: number, x: any) => s + (x.actual_dose_cgy ?? x.planned_dose_cgy ?? 0), 0)
+      : rtRecord?.field_values?.total_dose_cgy ?? null;
+    const fractions = sessions.length ? sessions[0].total_fractions : rtRecord?.field_values?.fractions ?? null;
+    const doneSessions = sessions.filter((s: any) => s.status === "done").length;
+
+    const diagList = (diagnosesByCase.get(c.id) ?? [])
+      .map((d: any) => {
+        const icd = first(d.icd_codes) as { code?: string; description_full?: string } | undefined;
+        return icd ? `${icd.code} ${icd.description_full}` : null;
       })
-    )
-  );
+      .filter(Boolean)
+      .join("; ");
 
-  const buffer = await zip.generateAsync({ type: "nodebuffer" });
-  return new Response(new Uint8Array(buffer), {
+    const termsByStage: Record<string, string[]> = { pre: [], intra: [], post: [] };
+    for (const r of termsByCase.get(c.id) ?? []) {
+      const terms = ((r as any).case_term_record_items ?? [])
+        .map((it: any) => first(it.term_library)?.term)
+        .filter(Boolean);
+      termsByStage[(r as any).stage]?.push(...terms);
+    }
+
+    const followUps = (scheduleByCase.get(c.id) ?? []).slice(0, maxFollowUps);
+    const followUpCells: (string | number | null)[] = [];
+    for (let i = 0; i < maxFollowUps; i++) {
+      const item: any = followUps[i];
+      if (!item) {
+        followUpCells.push(null, null, null);
+      } else {
+        followUpCells.push(item.due_date, daysBetween(surgeryDate, item.due_date), item.note ?? "");
+      }
+    }
+
+    const biobankNew = biobankByCase.get(c.id) ?? [];
+    const biobankMap = new Map(biobankNew.map((b: any) => [b.item_key, b]));
+    const vss = vssByCase.get(c.id);
+    const vssTotal = vss ? Object.values(vss).reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0) : null;
+
+    const legacyBio = first(legacyBiobankByCase.get(c.id) as any[]) as any;
+
+    const row = [
+      // 基本資料
+      c.research_id,
+      legacyBio?.paraffin_block_no ?? "",
+      "", // 病歷號：不存
+      "", // 受試者：不存
+      c.sex ?? "",
+      c.age_at_enrollment ?? "",
+      c.phone_number ?? "",
+      doctor?.name ?? "",
+      c.body_site ?? "",
+      c.consent_signed_at ?? "",
+      legacyBio?.tissue_bank_status ?? (biobankMap.get("tissue_paraffin_block") ? "Y" : ""),
+      legacyBio?.primary_culture ?? "",
+      legacyBio?.cryotube_location ?? "",
+      photoCountByCase.get(c.id) ? "Y" : "",
+      c.jsw_score ?? "",
+      c.family_history ?? "",
+      c.keloid_history ?? "",
+      c.keloid_size ?? "",
+      // OP
+      surgeryDate ?? "",
+      surgery?.field_values?.method ?? "",
+      surgery?.field_values?.adjuvant ?? "",
+      zone?.display_name ?? c.body_site ?? "",
+      "", "", "",
+      // RT
+      rtDate ?? "",
+      diagList.split("; ")[0] ?? "",
+      totalDoseCgy ?? "",
+      fractions ?? "",
+      rtRecord?.field_values?.bolus ?? "",
+      rtRecord?.field_values?.electron_beam ?? "",
+      "",
+      rtRecord?.field_values?.treatment_response ?? "",
+      rtRecord?.field_values?.acute_reactions ?? "",
+      // 治療後追蹤
+      "",
+      c.recurrence_status ?? "",
+      c.recurrence_date ?? "",
+      c.days_to_recurrence ?? "",
+      c.followup_cutoff_date ?? "",
+      c.over_one_year_flag === true ? "Y" : c.over_one_year_flag === false ? "N" : "",
+      // 追蹤時程（repeating）
+      ...followUpCells,
+      // 備註
+      c.notes ?? "",
+      // 2026 新增欄位
+      zone?.dose_category ? DOSE_CATEGORY_LABEL[zone.dose_category] : "",
+      diagList,
+      termsByStage.pre.join("、"),
+      termsByStage.intra.join("、"),
+      termsByStage.post.join("、"),
+      vssTotal ?? "",
+      vss?.[1] ?? "",
+      vss?.[2] ?? "",
+      vss?.[3] ?? "",
+      vss?.[4] ?? "",
+      ...BIOBANK_KEYS.map((k) => (biobankMap.get(k)?.collected ? "已收" : "待收")),
+      ...BIOBANK_KEYS.map((k) => biobankMap.get(k)?.collected_date ?? ""),
+      sessions.length ? `${doneSessions}/${sessions.length}` : "",
+      c.line_bound ? "Y" : "N",
+      c.data_source === "legacy_import" ? "舊資料回溯建檔" : "正常收案",
+    ];
+
+    ws.addRow(row);
+  }
+
+  ws.columns.forEach((column) => {
+    column.width = 14;
+  });
+
+  const buffer = await wb.xlsx.writeBuffer();
+  return new Response(buffer, {
     headers: {
-      "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="keloid-structured-data-${new Date().toISOString().slice(0, 10)}.zip"`,
+      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Disposition": `attachment; filename="keloid-data-${new Date().toISOString().slice(0, 10)}.xlsx"`,
     },
   });
 }
