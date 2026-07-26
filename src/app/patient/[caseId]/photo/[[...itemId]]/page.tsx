@@ -5,9 +5,10 @@ import PhotoCaptureFlow from "./PhotoCaptureFlow";
 export default async function CasePhotoCapturePage({
   params,
 }: {
-  params: Promise<{ caseId: string; itemId: string }>;
+  params: Promise<{ caseId: string; itemId?: string[] }>;
 }) {
-  const { caseId, itemId } = await params;
+  const { caseId, itemId: itemIdParam } = await params;
+  const itemId = itemIdParam?.[0] ?? "";
   const supabase = supabaseServer();
 
   const [{ data: caseRow }, { data: zones }] = await Promise.all([

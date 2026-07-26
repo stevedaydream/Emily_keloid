@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import BodyDiagram from "./BodyDiagram";
+import BodyDiagram from "@/components/BodyDiagram";
 import CameraCapture from "./CameraCapture";
 
 type Zone = { id: string; zone_key: string; view: "front" | "back"; display_name: string; dose_category: string };

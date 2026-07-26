@@ -123,7 +123,15 @@ export default async function CaseDetailPage({
 
       {/* 部位標記 */}
       <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">主要蟹足腫部位</h2>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-700">主要蟹足腫部位</h2>
+          <Link
+            href={`/patient/${id}/photo`}
+            className="whitespace-nowrap rounded-md bg-slate-900 px-3 py-1.5 text-xs text-white hover:bg-slate-800"
+          >
+            立即拍照
+          </Link>
+        </div>
         {bodyZone ? (
           <p className="text-sm text-slate-600">
             {bodyZone.display_name}
@@ -132,7 +140,7 @@ export default async function CaseDetailPage({
             </span>
           </p>
         ) : (
-          <p className="text-sm text-amber-600">尚未標記部位（可至「部位標記與拍照」點選，或於下方直接指定）</p>
+          <p className="text-sm text-amber-600">尚未標記部位（可點右上「立即拍照」選部位，或於下方直接指定）</p>
         )}
         <form action={setCaseBodyZoneAction} className="mt-2 flex items-center gap-2">
           <input type="hidden" name="case_id" value={id} />
@@ -305,16 +313,16 @@ export default async function CaseDetailPage({
         {radiotherapySessions && radiotherapySessions.length > 0 ? (
           <ul className="space-y-2">
             {radiotherapySessions.map((s) => (
-              <li key={s.id} className="flex items-center justify-between rounded-md border border-slate-100 px-3 py-2 text-sm">
-                <span>
+              <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-100 px-3 py-2 text-sm">
+                <span className="whitespace-nowrap">
                   第 {s.fraction_no}/{s.total_fractions} 次 ・ 預定 {s.planned_dose_cgy / 100}Gy ・ 到期 {s.due_date}
                   {s.status === "done" && s.actual_dose_cgy != null && (
-                    <span className="ml-2 text-xs text-emerald-600">實際 {s.actual_dose_cgy / 100}Gy（{s.completed_date}）</span>
+                    <span className="ml-2 whitespace-nowrap text-xs text-emerald-600">實際 {s.actual_dose_cgy / 100}Gy（{s.completed_date}）</span>
                   )}
                 </span>
-                <span className="flex items-center gap-2">
+                <span className="flex flex-wrap items-center gap-2">
                   <span
-                    className={`rounded px-2 py-0.5 text-xs ${
+                    className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
                       s.status === "done"
                         ? "bg-emerald-100 text-emerald-700"
                         : s.status === "skipped"
@@ -336,7 +344,7 @@ export default async function CaseDetailPage({
                         defaultValue={s.planned_dose_cgy}
                         className="w-20 rounded border border-slate-300 px-1 py-0.5 text-xs"
                       />
-                      <button type="submit" className="text-xs text-slate-400 underline">
+                      <button type="submit" className="whitespace-nowrap text-xs text-slate-400 underline">
                         標記完成
                       </button>
                     </form>
@@ -362,12 +370,12 @@ export default async function CaseDetailPage({
               {BIOBANK_ITEMS.filter((it) => it.group === group).map((it) => {
                 const existing = biobankByKey.get(it.key);
                 return (
-                  <li key={it.key} className="flex items-center gap-3 rounded-md border border-slate-100 px-3 py-1.5 text-sm">
-                    <form action={updateBiobankChecklistAction} className="flex flex-1 items-center gap-3">
+                  <li key={it.key} className="flex flex-wrap items-center gap-3 rounded-md border border-slate-100 px-3 py-1.5 text-sm">
+                    <form action={updateBiobankChecklistAction} className="flex flex-1 flex-wrap items-center gap-3">
                       <input type="hidden" name="case_id" value={id} />
                       <input type="hidden" name="item_key" value={it.key} />
                       <input type="hidden" name="item_label" value={it.label} />
-                      <label className="flex flex-1 items-center gap-2">
+                      <label className="flex flex-1 items-center gap-2 whitespace-nowrap">
                         <input type="checkbox" name="collected" defaultChecked={existing?.collected ?? false} />
                         {it.label}
                       </label>
@@ -378,13 +386,13 @@ export default async function CaseDetailPage({
                         className="rounded border border-slate-300 px-1.5 py-1 text-xs"
                       />
                       <span
-                        className={`rounded px-2 py-0.5 text-xs ${
+                        className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
                           existing?.collected ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
                         }`}
                       >
                         {existing?.collected ? "已收" : "待收"}
                       </span>
-                      <button type="submit" className="text-xs text-slate-400 underline">
+                      <button type="submit" className="whitespace-nowrap text-xs text-slate-400 underline">
                         更新
                       </button>
                     </form>
@@ -401,15 +409,15 @@ export default async function CaseDetailPage({
         <h2 className="mb-2 text-sm font-semibold text-slate-700">追蹤時程</h2>
         <ul className="space-y-2">
           {(scheduleItems ?? []).map((item) => (
-            <li key={item.id} className="flex items-center justify-between rounded-md border border-slate-100 px-3 py-2 text-sm">
-              <div>
-                <span className="font-medium">{item.label}</span>
-                <span className="ml-2 text-slate-400">到期 {item.due_date}</span>
-                <span className="ml-2 text-xs text-slate-400">{(item.actions ?? []).join("、")}</span>
+            <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-100 px-3 py-2 text-sm">
+              <div className="min-w-0">
+                <span className="whitespace-nowrap font-medium">{item.label}</span>
+                <span className="ml-2 whitespace-nowrap text-slate-400">到期 {item.due_date}</span>
+                <span className="ml-2 whitespace-nowrap text-xs text-slate-400">{(item.actions ?? []).join("、")}</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span
-                  className={`rounded px-2 py-0.5 text-xs ${
+                  className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
                     item.status === "done"
                       ? "bg-emerald-100 text-emerald-700"
                       : item.status === "skipped"
@@ -425,17 +433,17 @@ export default async function CaseDetailPage({
                       (item.questionnaire_id ? (
                         <Link
                           href={`/patient/${id}/questionnaire/${item.id}`}
-                          className="text-xs text-blue-600 underline"
+                          className="whitespace-nowrap text-xs text-blue-600 underline"
                         >
                           填寫問卷
                         </Link>
                       ) : (
-                        <span className="text-xs text-red-400" title="此時間點標記了填問卷動作，但尚未指定問卷，請至後台時程範本補設定">
+                        <span className="whitespace-nowrap text-xs text-red-400" title="此時間點標記了填問卷動作，但尚未指定問卷，請至後台時程範本補設定">
                           （未指定問卷）
                         </span>
                       ))}
                     {(item.actions ?? []).includes("photo") && (
-                      <Link href={`/patient/${id}/photo/${item.id}`} className="text-xs text-blue-600 underline">
+                      <Link href={`/patient/${id}/photo/${item.id}`} className="whitespace-nowrap text-xs text-blue-600 underline">
                         部位標記與拍照
                       </Link>
                     )}
@@ -443,7 +451,7 @@ export default async function CaseDetailPage({
                       <input type="hidden" name="case_id" value={id} />
                       <input type="hidden" name="item_id" value={item.id} />
                       <input type="hidden" name="status" value="done" />
-                      <button type="submit" className="text-xs text-slate-400 underline">
+                      <button type="submit" className="whitespace-nowrap text-xs text-slate-400 underline">
                         標記完成
                       </button>
                     </form>

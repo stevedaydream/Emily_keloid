@@ -22,20 +22,20 @@ export default function BodyDiagram({
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-700">請點選蟹足腫部位</h2>
-        <div className="flex overflow-hidden rounded-md border border-slate-300 text-xs">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="whitespace-nowrap text-sm font-semibold text-slate-700">請點選蟹足腫部位</h2>
+        <div className="flex shrink-0 overflow-hidden rounded-md border border-slate-300 text-xs">
           <button
             type="button"
             onClick={() => setView("front")}
-            className={`px-3 py-1 ${view === "front" ? "bg-slate-900 text-white" : "bg-white text-slate-600"}`}
+            className={`whitespace-nowrap px-3 py-1 ${view === "front" ? "bg-slate-900 text-white" : "bg-white text-slate-600"}`}
           >
             正面
           </button>
           <button
             type="button"
             onClick={() => setView("back")}
-            className={`px-3 py-1 ${view === "back" ? "bg-slate-900 text-white" : "bg-white text-slate-600"}`}
+            className={`whitespace-nowrap px-3 py-1 ${view === "back" ? "bg-slate-900 text-white" : "bg-white text-slate-600"}`}
           >
             背面
           </button>
