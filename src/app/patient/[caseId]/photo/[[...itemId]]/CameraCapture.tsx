@@ -78,11 +78,11 @@ export default function CameraCapture({
   return (
     <div className="mx-auto max-w-sm">
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2">
-          <button type="button" onClick={onBack} className="text-xs text-slate-400 underline">
+        <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-2">
+          <button type="button" onClick={onBack} className="shrink-0 whitespace-nowrap text-xs text-slate-400 underline">
             ← 重新選部位
           </button>
-          <p className="text-sm font-medium text-slate-700">
+          <p className="truncate text-sm font-medium text-slate-700">
             {zoneDisplayName}（{DOSE_CATEGORY_LABEL[doseCategory]}）
           </p>
         </div>
@@ -91,7 +91,7 @@ export default function CameraCapture({
           {status === "done" ? (
             <div className="p-8 text-center text-white">
               <p className="text-lg">✓ {message}</p>
-              <button onClick={onDone} className="mt-3 inline-block text-sm text-blue-300 underline">
+              <button onClick={onDone} className="mt-3 inline-block whitespace-nowrap text-sm text-blue-300 underline">
                 回個案頁面
               </button>
             </div>
@@ -130,19 +130,19 @@ export default function CameraCapture({
           <div className="flex gap-2 p-3">
             {capturedUrl ? (
               <>
-                <button onClick={retake} className="flex-1 rounded-md border border-slate-300 py-2 text-sm">
+                <button onClick={retake} className="flex-1 whitespace-nowrap rounded-md border border-slate-300 py-2 text-sm">
                   重拍
                 </button>
                 <button
                   onClick={confirmUpload}
                   disabled={status === "uploading"}
-                  className="flex-1 rounded-md bg-slate-900 py-2 text-sm font-medium text-white"
+                  className="flex-1 whitespace-nowrap rounded-md bg-slate-900 py-2 text-sm font-medium text-white"
                 >
                   {status === "uploading" ? "上傳中..." : "確認上傳"}
                 </button>
               </>
             ) : (
-              <button onClick={capture} className="w-full rounded-md bg-slate-900 py-2 text-sm font-medium text-white">
+              <button onClick={capture} className="w-full whitespace-nowrap rounded-md bg-slate-900 py-2 text-sm font-medium text-white">
                 拍照
               </button>
             )}

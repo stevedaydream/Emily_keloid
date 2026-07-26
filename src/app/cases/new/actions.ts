@@ -11,7 +11,7 @@ export async function createCaseAction(formData: FormData) {
   const operator = (await getCurrentOperator()) ?? "未知操作者";
 
   const doctorId = formData.get("doctor_id") as string;
-  const bodySite = formData.get("body_site") as string;
+  const bodyPartZoneId = (formData.get("body_part_zone_id") as string) || null;
   const phoneNumber = formData.get("phone_number") as string;
   const scheduleTemplateId = formData.get("schedule_template_id") as string;
   const consentSignedAt = formData.get("consent_signed_at") as string;
@@ -22,6 +22,12 @@ export async function createCaseAction(formData: FormData) {
     .eq("id", doctorId)
     .single();
   if (!doctor) throw new Error("找不到醫師代碼");
+
+  let bodySite: string | null = null;
+  if (bodyPartZoneId) {
+    const { data: zone } = await supabase.from("body_part_zones").select("display_name").eq("id", bodyPartZoneId).single();
+    bodySite = zone?.display_name ?? null;
+  }
 
   const year = new Date().getFullYear();
   const { researchId, sequenceNo } = await generateResearchId(
@@ -38,7 +44,8 @@ export async function createCaseAction(formData: FormData) {
       doctor_id: doctorId,
       enrollment_year: year,
       sequence_no: sequenceNo,
-      body_site: bodySite || null,
+      body_site: bodySite,
+      body_part_zone_id: bodyPartZoneId,
       phone_number: phoneNumber || null,
       schedule_template_id: scheduleTemplateId || null,
       consent_signed_at: consentSignedAt || null,
