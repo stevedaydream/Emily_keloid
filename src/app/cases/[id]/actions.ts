@@ -241,3 +241,73 @@ export async function updateConsentAction(formData: FormData) {
   await logAudit({ caseId, operatorName: operator, action: "update_consent", entity: "cases", detail: { consentSignedAt } });
   revalidatePath(`/cases/${caseId}`);
 }
+
+export async function updateDemographicsAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const sex = (formData.get("sex") as string) || null;
+  const ageRaw = formData.get("age_at_enrollment") as string;
+  const keloidHistory = (formData.get("keloid_history") as string) || null;
+  const keloidSize = (formData.get("keloid_size") as string) || null;
+  const familyHistory = (formData.get("family_history") as string) || null;
+  const jswScore = (formData.get("jsw_score") as string) || null;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  await supabase
+    .from("cases")
+    .update({
+      sex,
+      age_at_enrollment: ageRaw ? Number(ageRaw) : null,
+      keloid_history: keloidHistory,
+      keloid_size: keloidSize,
+      family_history: familyHistory,
+      jsw_score: jswScore,
+    })
+    .eq("id", caseId);
+
+  await logAudit({ caseId, operatorName: operator, action: "update_demographics", entity: "cases" });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+export async function updateOutcomeAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const recurrenceStatus = (formData.get("recurrence_status") as string) || null;
+  const recurrenceDate = (formData.get("recurrence_date") as string) || null;
+  const daysToRecurrenceRaw = formData.get("days_to_recurrence") as string;
+  const followupCutoffDate = (formData.get("followup_cutoff_date") as string) || null;
+  const overOneYearFlag = formData.get("over_one_year_flag") === "on";
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  await supabase
+    .from("cases")
+    .update({
+      recurrence_status: recurrenceStatus,
+      recurrence_date: recurrenceDate,
+      days_to_recurrence: daysToRecurrenceRaw ? Number(daysToRecurrenceRaw) : null,
+      followup_cutoff_date: followupCutoffDate,
+      over_one_year_flag: overOneYearFlag,
+    })
+    .eq("id", caseId);
+
+  await logAudit({ caseId, operatorName: operator, action: "update_outcome", entity: "cases" });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+export async function updateLegacyBiobankAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const paraffinBlockNo = (formData.get("paraffin_block_no") as string) || null;
+  const cryotubeLocation = (formData.get("cryotube_location") as string) || null;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  await supabase
+    .from("biobank_samples")
+    .upsert(
+      { case_id: caseId, paraffin_block_no: paraffinBlockNo, cryotube_location: cryotubeLocation },
+      { onConflict: "case_id" }
+    );
+
+  await logAudit({ caseId, operatorName: operator, action: "update_legacy_biobank", entity: "biobank_samples" });
+  revalidatePath(`/cases/${caseId}`);
+}

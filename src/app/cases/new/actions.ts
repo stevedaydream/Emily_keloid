@@ -15,6 +15,9 @@ export async function createCaseAction(formData: FormData) {
   const phoneNumber = formData.get("phone_number") as string;
   const scheduleTemplateId = formData.get("schedule_template_id") as string;
   const consentSignedAt = formData.get("consent_signed_at") as string;
+  const sex = (formData.get("sex") as string) || null;
+  const ageRaw = formData.get("age_at_enrollment") as string;
+  const ageAtEnrollment = ageRaw ? Number(ageRaw) : null;
 
   const { data: doctor } = await supabase
     .from("doctors")
@@ -46,6 +49,8 @@ export async function createCaseAction(formData: FormData) {
       sequence_no: sequenceNo,
       body_site: bodySite,
       body_part_zone_id: bodyPartZoneId,
+      sex,
+      age_at_enrollment: ageAtEnrollment,
       phone_number: phoneNumber || null,
       schedule_template_id: scheduleTemplateId || null,
       consent_signed_at: consentSignedAt || null,
