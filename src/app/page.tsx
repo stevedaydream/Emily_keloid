@@ -85,9 +85,9 @@ export default async function HomePage() {
       </section>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">快速測試病人端（模擬 LINE/LIFF 畫面）</h2>
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">快速前往待處理項目</h2>
         <p className="mb-2 text-xs text-slate-400">
-          點選下方任一待處理時程項目的連結，直接開啟病人端模擬畫面，不需先進個案頁面。
+          點選下方任一待處理時程項目的連結，直接開啟填問卷/拍照頁面，不需先進個案頁面。
         </p>
         <ul className="space-y-1">
           {(dueSoon ?? []).map((item) => {

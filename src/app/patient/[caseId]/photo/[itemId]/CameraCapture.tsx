@@ -1,22 +1,27 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { maskShapeForCategory, DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
 import { uploadPhotoAction } from "./actions";
 
 export default function CameraCapture({
   caseId,
   itemId,
-  bodySite,
-  maskType,
-  maskShape,
+  zoneKey,
+  zoneDisplayName,
+  doseCategory,
+  onBack,
+  onDone,
 }: {
   caseId: string;
   itemId: string;
-  bodySite: string | null;
-  maskType: string;
-  maskShape: string;
+  zoneKey: string;
+  zoneDisplayName: string;
+  doseCategory: string;
+  onBack: () => void;
+  onDone: () => void;
 }) {
+  const maskShape = maskShapeForCategory(doseCategory);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -32,7 +37,7 @@ export default function CameraCapture({
         stream = s;
         if (videoRef.current) videoRef.current.srcObject = s;
       })
-      .catch(() => setCameraError("無法取得相機權限，請確認瀏覽器權限設定（demo 模擬頁面需要 HTTPS 與相機存取權限）"));
+      .catch(() => setCameraError("無法取得相機權限，請確認瀏覽器已允許存取相機（需 HTTPS）"));
     return () => {
       stream?.getTracks().forEach((t) => t.stop());
     };
@@ -62,8 +67,7 @@ export default function CameraCapture({
       const formData = new FormData();
       formData.append("case_id", caseId);
       formData.append("item_id", itemId);
-      formData.append("body_site", bodySite ?? "");
-      formData.append("mask_type", maskType);
+      formData.append("zone_key", zoneKey);
       formData.append("file", blob, "photo.jpg");
       const result = await uploadPhotoAction(formData);
       setMessage(result.message);
@@ -73,19 +77,23 @@ export default function CameraCapture({
 
   return (
     <div className="mx-auto max-w-sm">
-      <div className="overflow-hidden rounded-2xl border border-slate-300 shadow-sm">
-        <div className="bg-[#06C755] px-4 py-3 text-white">
-          <p className="text-sm font-semibold">蟹足腫研究小幫手（模擬拍照頁面）</p>
-          <p className="text-xs opacity-80">部位：{bodySite ?? "通用"} ・ 對齊蒙板：{maskShape}</p>
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2">
+          <button type="button" onClick={onBack} className="text-xs text-slate-400 underline">
+            ← 重新選部位
+          </button>
+          <p className="text-sm font-medium text-slate-700">
+            {zoneDisplayName}（{DOSE_CATEGORY_LABEL[doseCategory]}）
+          </p>
         </div>
 
         <div className="relative bg-black">
           {status === "done" ? (
             <div className="p-8 text-center text-white">
               <p className="text-lg">✓ {message}</p>
-              <Link href={`/cases/${caseId}`} className="mt-3 inline-block text-sm text-blue-300 underline">
-                回個案頁面（診間端視角）
-              </Link>
+              <button onClick={onDone} className="mt-3 inline-block text-sm text-blue-300 underline">
+                回個案頁面
+              </button>
             </div>
           ) : capturedUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -93,7 +101,6 @@ export default function CameraCapture({
           ) : (
             <>
               <video ref={videoRef} autoPlay playsInline muted className="w-full" />
-              {/* 對齊蒙板：通用十字＋比例尺參照框 */}
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                 <div
                   className={`border-2 border-dashed border-white/80 ${
@@ -120,7 +127,7 @@ export default function CameraCapture({
         </div>
 
         {status !== "done" && (
-          <div className="flex gap-2 bg-white p-3">
+          <div className="flex gap-2 p-3">
             {capturedUrl ? (
               <>
                 <button onClick={retake} className="flex-1 rounded-md border border-slate-300 py-2 text-sm">
@@ -129,22 +136,21 @@ export default function CameraCapture({
                 <button
                   onClick={confirmUpload}
                   disabled={status === "uploading"}
-                  className="flex-1 rounded-md bg-[#06C755] py-2 text-sm font-medium text-white"
+                  className="flex-1 rounded-md bg-slate-900 py-2 text-sm font-medium text-white"
                 >
                   {status === "uploading" ? "上傳中..." : "確認上傳"}
                 </button>
               </>
             ) : (
-              <button onClick={capture} className="w-full rounded-md bg-[#06C755] py-2 text-sm font-medium text-white">
+              <button onClick={capture} className="w-full rounded-md bg-slate-900 py-2 text-sm font-medium text-white">
                 拍照
               </button>
             )}
           </div>
         )}
-        {status === "error" && <p className="bg-white px-3 pb-2 text-xs text-red-500">{message}</p>}
+        {status === "error" && <p className="px-3 pb-2 text-xs text-red-500">{message}</p>}
       </div>
       <canvas ref={canvasRef} className="hidden" />
-      <p className="mt-2 text-center text-xs text-slate-400">（Demo 模擬畫面，正式版將透過 LINE LIFF 呈現）</p>
     </div>
   );
 }

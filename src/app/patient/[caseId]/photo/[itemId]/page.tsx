@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase";
-import CameraCapture from "./CameraCapture";
+import PhotoCaptureFlow from "./PhotoCaptureFlow";
 
-export default async function PatientPhotoPage({
+export default async function CasePhotoCapturePage({
   params,
 }: {
   params: Promise<{ caseId: string; itemId: string }>;
@@ -10,24 +10,24 @@ export default async function PatientPhotoPage({
   const { caseId, itemId } = await params;
   const supabase = supabaseServer();
 
-  const { data: caseRow } = await supabase.from("cases").select("id, body_site").eq("id", caseId).single();
+  const [{ data: caseRow }, { data: zones }] = await Promise.all([
+    supabase.from("cases").select("id, body_part_zones(zone_key)").eq("id", caseId).single(),
+    supabase
+      .from("body_part_zones")
+      .select("id, zone_key, view, display_name, dose_category")
+      .eq("active", true)
+      .order("sort_order"),
+  ]);
+
   if (!caseRow) return notFound();
-
-  const { data: mask } = await supabase
-    .from("body_site_masks")
-    .select("mask_type, mask_config")
-    .eq("site_name", caseRow.body_site ?? "")
-    .maybeSingle();
-
-  const maskConfig = mask?.mask_config as { shape?: string } | undefined;
+  const currentZone = Array.isArray(caseRow.body_part_zones) ? caseRow.body_part_zones[0] : caseRow.body_part_zones;
 
   return (
-    <CameraCapture
+    <PhotoCaptureFlow
       caseId={caseId}
       itemId={itemId}
-      bodySite={caseRow.body_site}
-      maskType={mask?.mask_type ?? "generic"}
-      maskShape={maskConfig?.shape ?? "crosshair_ruler"}
+      zones={zones ?? []}
+      currentZoneKey={currentZone?.zone_key ?? null}
     />
   );
 }
