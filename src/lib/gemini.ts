@@ -1,5 +1,5 @@
 // Gemini API 免費層呼叫（決策 2026-07-26：僅能依後台衛教資料庫內容回答，不帶入病人個資）。
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_MODEL = "gemini-flash-latest";
 
 export async function askGeminiWithKb(question: string, kbEntries: { topic: string; content: string }[]) {
   const apiKey = process.env.GEMINI_API_KEY;
