@@ -9,7 +9,7 @@ export const PIPELINE_STAGES = [
   { key: "step_diagnosis", label: "診斷", en: "Diagnosis", anchor: "section-diagnosis" },
   { key: "step_treatment", label: "治療紀錄", en: "Treatment", anchor: "section-treatment" },
   { key: "step_schedule", label: "追蹤時程", en: "Schedule", anchor: "section-schedule" },
-  { key: "step_followup", label: "追蹤進行", en: "Follow-up", anchor: "section-schedule" },
+  { key: "step_followup", label: "治療後追蹤", en: "Follow-up", anchor: "section-schedule" },
   { key: "step_complete", label: "資料完整", en: "Complete", anchor: "section-completeness" },
 ] as const;
 
@@ -30,6 +30,9 @@ export type CasePipelineRow = {
   next_due_date: string | null;
   overdue_count: number;
   pending_fields: number;
+  // 「治療後追蹤」的三態版本：時程尚未建立／已建立但還有 pending 項目／全部跑完。
+  // step_followup（布林）保留給 steps_done／progress_pct 計算，前端顯示改看這欄位。
+  step_followup_status: "not_started" | "in_progress" | "done";
 } & Record<PipelineStageKey, boolean>;
 
 // 依完成度給進度條顏色（單一色相的順序色階，符合 magnitude 用色原則）。

@@ -242,12 +242,13 @@ export default async function DashboardPage({
                     </div>
                   </td>
                   {PIPELINE_STAGES.map((s) => {
+                    const inProgress = s.key === "step_followup" && row.step_followup_status === "in_progress";
                     const dot = (
                       <span
-                        className={row[s.key] ? "text-brand-500" : "text-ink/20"}
-                        title={`${s.label}：${row[s.key] ? "已完成" : "未完成"}`}
+                        className={row[s.key] ? "text-brand-500" : inProgress ? "text-accent-500" : "text-ink/20"}
+                        title={`${s.label}：${row[s.key] ? "已完成" : inProgress ? "進行中" : "未完成"}`}
                       >
-                        {row[s.key] ? "●" : "○"}
+                        {row[s.key] ? "●" : inProgress ? "◐" : "○"}
                       </span>
                     );
                     return (
