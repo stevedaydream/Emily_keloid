@@ -1,5 +1,5 @@
 import { supabaseServer } from "@/lib/supabase";
-import { addIcdCodeAction, toggleIcdActiveAction, updateIcdCodeAction, deleteIcdCodeAction } from "./actions";
+import { addIcdPairAction, toggleIcdActiveAction, updateIcdCodeAction, deleteIcdCodeAction } from "./actions";
 import SubmitButton from "@/components/ui/SubmitButton";
 import EditableListItem from "@/components/admin/EditableListItem";
 
@@ -75,40 +75,56 @@ export default async function IcdAdminPage() {
     <div className="max-w-3xl space-y-4">
       <h1 className="font-heading text-xl font-medium text-brand-900">ICD-9/10 常用碼清單</h1>
       <p className="text-sm text-ink/50">
-        僅收錄蟹足腫相關的精簡常用碼，非完整 ICD 碼表。
-        <b className="text-ink/70">填相同「對照鍵」的 ICD-9 與 ICD-10 會互相對照</b>
-        ，個案頁面選任一邊都會自動顯示另一邊。對照鍵可自訂（例：<code className="font-data">acne_keloid</code>），共病參考等沒有跨系統對照的碼留空即可。
+        僅收錄蟹足腫相關的精簡常用碼，非完整 ICD 碼表。新增時一次輸入一組 ICD-9 ＋ ICD-10，
+        兩筆會共用同一個「對照鍵」而互為對照；個案頁面用 ICD-9 / ICD-10 開關切換系統時，會依對照鍵換算顯示。
+        沒有對照的碼（例如共病參考用）只填一邊即可。
       </p>
 
-      <form action={addIcdCodeAction} className="space-y-2 rounded-lg border border-brand-100 bg-paper-raised p-4">
-        <div className="flex flex-wrap gap-2">
-          <select name="system" className="rounded-md border border-brand-200 px-2 py-1.5 text-sm">
-            {SYSTEM_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <input name="code" placeholder="代碼，例：L910" required className="w-32 rounded-md border border-brand-200 px-2 py-1.5 text-sm" />
+      {/* 一次輸入一組對照：兩邊都填就自動配成對；只填一邊也可以（不強制有對照） */}
+      <form action={addIcdPairAction} className="space-y-3 rounded-lg border border-brand-100 bg-paper-raised p-4">
+        <p className="text-sm font-semibold text-brand-900">新增一組診斷（ICD-9 ＋ ICD-10）</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 rounded-md border border-brand-50 p-2">
+            <p className="text-xs font-medium text-ink/60">ICD-9</p>
+            <input name="icd9_code" placeholder="代碼，例：7014" className="w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm" />
+            <input
+              name="icd9_description"
+              placeholder="診斷全文（留空則沿用下方共用全文）"
+              className="w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div className="space-y-1.5 rounded-md border border-brand-50 p-2">
+            <p className="text-xs font-medium text-ink/60">ICD-10</p>
+            <input name="icd10_code" placeholder="代碼，例：L910" className="w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm" />
+            <input
+              name="icd10_description"
+              placeholder="診斷全文（留空則沿用下方共用全文）"
+              className="w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            />
+          </div>
+        </div>
+        <input
+          name="description_full"
+          placeholder="共用診斷全文（兩邊文字相同時只填這裡即可，例：Hypertrophic scar）"
+          className="w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+        />
+        <div className="flex flex-wrap items-center gap-2">
           <input
             name="mapping_key"
-            placeholder="對照鍵（選填，例：acne_keloid）"
+            placeholder="對照鍵（選填，留空自動產生）"
             list="icd-mapping-keys"
-            className="w-56 rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            className="w-64 rounded-md border border-brand-200 px-2 py-1.5 text-sm"
           />
           <datalist id="icd-mapping-keys">
             {[...pairs.keys()].map((k) => (
               <option key={k} value={k} />
             ))}
           </datalist>
+          <SubmitButton pendingText="新增中…">新增</SubmitButton>
         </div>
-        <input
-          name="description_full"
-          placeholder="完整診斷全文說明"
-          required
-          className="w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-        />
-        <SubmitButton pendingText="新增中…">新增</SubmitButton>
+        <p className="text-xs text-ink/40">
+          只有其中一個系統有碼時，另一邊留空即可（不強制成對）；之後要補上對照，把新碼的「對照鍵」填成跟既有那筆一樣就會自動配對。
+        </p>
       </form>
 
       <div>

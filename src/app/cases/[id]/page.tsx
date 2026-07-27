@@ -15,7 +15,7 @@ import {
 } from "./actions";
 import TreatmentForm from "./TreatmentForm";
 import TermRecordForm from "./TermRecordForm";
-import DiagnosisPicker from "./DiagnosisPicker";
+import DiagnosisSection from "./DiagnosisSection";
 import PipelineProgress from "./PipelineProgress";
 import IntakeOptionForm from "./IntakeOptionForm";
 import DeletePhotoButton from "./DeletePhotoButton";
@@ -90,7 +90,7 @@ export default async function CaseDetailPage({
     { data: questionnaireTemplates },
   ] = await Promise.all([
     supabase.from("cases").select("*, doctors(code, name)").eq("id", id).single(),
-    supabase.from("case_diagnoses").select("id, is_primary, icd_codes(code, system, description_full, mapping_key)").eq("case_id", id),
+    supabase.from("case_diagnoses").select("id, is_primary, icd_codes(id, code, system, description_full, mapping_key)").eq("case_id", id),
     supabase
       .from("icd_codes")
       .select("id, code, system, description_full, mapping_key")
@@ -526,31 +526,17 @@ export default async function CaseDetailPage({
       <section id="section-diagnosis" data-nav-section data-nav-label="診斷（ICD-9/10）" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           診斷（ICD-9/10）
-          <InfoTooltip text="從蟹足腫相關的常用碼清單選擇診斷，可複選（主診斷＋共病）。選單選任一邊會即時顯示對應的另一個系統的碼（ICD-9 ↔ ICD-10 雙向對照，對照關係於後台 ICD 維護頁設定）。" />
+          <InfoTooltip text="用上方的 ICD-9 / ICD-10 開關切換要用哪個系統：選單只列出該系統的碼，已記錄的診斷也會換算成該系統顯示，對照碼附在後方。對照關係於後台 ICD 維護頁設定。" />
         </h2>
-        <ul className="mb-3 flex flex-wrap gap-2">
-          {(diagnoses ?? []).map((d) => {
-            const icd = Array.isArray(d.icd_codes) ? d.icd_codes[0] : d.icd_codes;
-            // 已記錄的診斷也一併顯示對照碼，方便直接抄另一個系統的碼
-            const mates = icd?.mapping_key
-              ? (icdCodes ?? []).filter((x) => x.mapping_key === icd.mapping_key && x.code !== icd.code)
-              : [];
-            return (
-              <li key={d.id} className="min-w-0 max-w-full rounded bg-ink/10 px-2 py-1 text-xs">
-                [{icd?.system === "ICD9" ? "ICD-9" : "ICD-10"}] <b className="font-data">{icd?.code}</b>{" "}
-                {icd?.description_full}
-                {mates.map((m) => (
-                  <span key={m.id} className="ml-1 whitespace-nowrap text-ink/50">
-                    ↔ [{m.system === "ICD9" ? "ICD-9" : "ICD-10"}] <b className="font-data">{m.code}</b>
-                  </span>
-                ))}
-                {d.is_primary && <span className="ml-1 whitespace-nowrap text-blue-600">（主診斷）</span>}
-              </li>
-            );
-          })}
-          {(!diagnoses || diagnoses.length === 0) && <li className="text-xs text-ink/40">尚未記錄診斷</li>}
-        </ul>
-        <DiagnosisPicker caseId={id} codes={icdCodes ?? []} />
+        <DiagnosisSection
+          caseId={id}
+          codes={icdCodes ?? []}
+          diagnoses={(diagnoses ?? []).map((d) => ({
+            id: d.id,
+            is_primary: d.is_primary,
+            icd: (Array.isArray(d.icd_codes) ? d.icd_codes[0] : d.icd_codes) ?? null,
+          }))}
+        />
       </section>
 
       {/* 醫學術語紀錄 */}
