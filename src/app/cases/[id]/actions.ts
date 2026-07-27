@@ -68,6 +68,7 @@ export async function addTreatmentRecordAction(formData: FormData) {
   const recurrenceDescription = (formData.get("recurrence_description") as string) || null;
   const bloodDrawn = formData.get("blood_drawn") === "on";
   const bloodDrawnNote = (formData.get("blood_drawn_note") as string) || null;
+  const bodySite = (formData.get("body_site") as string) || null;
 
   const { data: treatmentTypes } = await supabase
     .from("treatment_types")
@@ -97,6 +98,7 @@ export async function addTreatmentRecordAction(formData: FormData) {
         field_values: fieldValues,
         free_text: freeText,
         treatment_date: treatmentDate,
+        body_site: bodySite,
         recorded_by: operator,
         recurrence_observed: recurrenceObserved,
         recurrence_description: recurrenceDescription,

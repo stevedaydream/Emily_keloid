@@ -68,10 +68,12 @@ export default function TreatmentForm({
   caseId,
   treatmentTypes,
   presets,
+  siteSuggestions,
 }: {
   caseId: string;
   treatmentTypes: TreatmentType[];
   presets: Preset[];
+  siteSuggestions: string[];
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -114,14 +116,30 @@ export default function TreatmentForm({
         </div>
       )}
 
-      <div>
-        <label className="block text-xs font-medium text-slate-600">治療/追蹤日期</label>
-        <input
-          type="date"
-          name="treatment_date"
-          required
-          className="mt-1 w-48 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-        />
+      <div className="flex flex-wrap gap-3">
+        <div>
+          <label className="block text-xs font-medium text-slate-600">治療/追蹤日期</label>
+          <input
+            type="date"
+            name="treatment_date"
+            required
+            className="mt-1 w-48 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-600">部位（此筆紀錄對應的部位）</label>
+          <input
+            name="body_site"
+            list="treatment-site-suggestions"
+            placeholder="例：左耳垂"
+            className="mt-1 w-48 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          />
+          <datalist id="treatment-site-suggestions">
+            {siteSuggestions.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        </div>
       </div>
 
       <div className="rounded-md border border-amber-100 bg-amber-50 p-3">
