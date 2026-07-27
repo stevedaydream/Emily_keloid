@@ -234,6 +234,8 @@
 - Migration：`20260727070000_family_disease_options_seed.sql`（含放寬 `case_intake_option_lists` 的 category CHECK constraint）、`20260727080000_keloid_history_type_and_lesions.sql`。
 - 已用瀏覽器實測：家族史/疾病史彈窗、keloid history 勾選新增紀錄、病灶測量新增（左耳垂 2.5cm 測試資料）皆正確寫入並顯示。
 
+**2026-07-27 追加：個案頁面區塊順序調整**：「主要蟹足腫部位」（`section-bodyzone`）從原本排在「病史與過往治療」之後，移到「病人基本資料」區塊內的「現存病灶大小測量」下方（同樣在「病史與過往治療」之前），流程上大小測量與部位標記相鄰更直覺。純調整 `src/app/cases/[id]/page.tsx` 內 JSX 區塊順序，無資料庫/元件變動。
+
 **仍未處理 / 待確認**：
 - 治療紀錄目前仍依賴個案層級的主要部位，沒有「每筆治療紀錄各自的部位」欄位（如同一個案在不同部位分開治療會無法區分）
 - Lab 數據尚未併入結構化資料匯出
