@@ -238,6 +238,14 @@
 
 **2026-07-27 追加：治療紀錄新增每筆各自的部位欄位**：`treatment_records` 新增 `body_site` 欄位（migration `20260727090000_treatment_record_body_site.sql`），不建外鍵、純文字，因為同一個案在不同部位分開治療時，原本只能靠個案層級的主要部位判斷，無法區分是哪一筆治療對應哪個部位。`TreatmentForm.tsx` 新增「部位」欄位（`<input list>` + `<datalist>`），建議清單來自個案目前的主要部位＋「現存病灶大小測量」已登記的各部位，也可自由輸入新部位；同一次送出（可複選多種治療方式）目前共用同一個部位值，跟「治療/追蹤日期」的設計方式一致。已用瀏覽器實測：新增一筆「病灶內注射」勾選部位「左耳垂」，個案頁列表正確顯示「部位：左耳垂」標籤。結構化匯出（`/api/export/structured-data`）用 `select("*")`，新欄位會自動包含不需額外改動。
 
+**2026-07-27 追加：收案一條龍「追蹤進行」改為三態＋更名「治療後追蹤」**（使用者反映：個案還有 6 個月/12 個月時程未跑完，這個階段卻已經打勾，容易誤判）：
+- 舊邏輯：只要「曾經」有一項時程完成、或有任一問卷回覆、或有任一張照片，就判定 `step_followup = true`（恆亮 ✓），沒有考慮還有其他時程項目仍是 pending。
+- 新邏輯（`v_case_pipeline_progress` view，`20260727100000_pipeline_followup_tristate.sql`）：改成看 `case_schedule_items.status`，分三態：尚未建立時程（灰色數字圈）／已建立但還有 pending 項目＝**進行中**（琥珀色 `…`／`◐`）／全部時程項目都不是 pending＝**已完成**（綠色 ✓）。新增 `step_followup_status` 文字欄位（`not_started`/`in_progress`/`done`）供前端畫三態圖示；`step_followup` 布林值保留＝done，用於 8 步驟進度計算（steps_done／progress_pct）不受影響，只是現在門檻更嚴謹，計算結果可能比之前低。
+- 「追蹤時程」（`step_schedule`）維持原意不變：打勾＝這個個案已經套用時程範本、建立了時程項目列（不代表全部跑完，門診/助理排程時看到打勾只代表「有排」，細節仍要點進時程本身看）。
+- 前端：`src/lib/pipeline.ts`（label 改「治療後追蹤」＋新增 `step_followup_status` 型別）、`src/app/cases/[id]/PipelineProgress.tsx`（個案頁一條龍圖示）、`src/app/page.tsx`（dashboard 總覽表格圖示）都同步改成三態渲染。
+- `v_dashboard_stats` 依賴 `v_case_pipeline_progress`，Postgres 的 `CREATE OR REPLACE VIEW` 不能在既有欄位中間插入新欄位，所以這次改用 `DROP VIEW ... CASCADE` 後把兩個 view 一起重建（含 grant）。
+- 已用瀏覽器實測：CHN-2026-001（時程還有 2 項 pending）從舊版「7/8・88%・追蹤進行✓」變成新版「6/8・75%・治療後追蹤 `…`（琥珀色）」；dashboard 總覽表格全部案例「治療後追蹤」欄目前皆顯示琥珀色 `◐`（因為目前沒有案例把所有時程項目都跑完）。
+
 **仍未處理 / 待確認**：
 - Lab 數據尚未併入結構化資料匯出
 - 追蹤時程範本的問卷指定：目前是後台 `/admin/schedules` 設定時程範本時，每個時間點各自指定固定的 `questionnaire_id`（可維護、非寫死在程式碼），但套用範本產生個案實際時程後，該筆的問卷是複製自範本、事後不能在個案頁面單獨換成別份問卷——如果需要「同一個時間點事後可以改填別份問卷」，需要額外加編輯功能

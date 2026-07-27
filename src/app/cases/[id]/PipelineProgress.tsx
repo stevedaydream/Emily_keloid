@@ -24,17 +24,23 @@ export default function PipelineProgress({ row }: { row: CasePipelineRow }) {
       <ol className="flex flex-wrap gap-x-2 gap-y-3">
         {PIPELINE_STAGES.map((stage, i) => {
           const done = row[stage.key];
+          // 「治療後追蹤」是三態（尚未開始／進行中／已完成），其餘階段維持原本的二態（打勾／數字圈）。
+          const inProgress = stage.key === "step_followup" && row.step_followup_status === "in_progress";
           const dot = (
             <>
               <span
                 className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${
-                  done ? "bg-emerald-500 text-white" : "border border-slate-300 bg-white text-slate-400"
+                  done
+                    ? "bg-emerald-500 text-white"
+                    : inProgress
+                    ? "bg-accent-400 text-white"
+                    : "border border-slate-300 bg-white text-slate-400"
                 }`}
-                title={stage.en}
+                title={inProgress ? "進行中" : stage.en}
               >
-                {done ? "✓" : i + 1}
+                {done ? "✓" : inProgress ? "…" : i + 1}
               </span>
-              <span className={`whitespace-nowrap text-xs ${done ? "text-slate-700" : "text-slate-400"}`}>
+              <span className={`whitespace-nowrap text-xs ${done || inProgress ? "text-slate-700" : "text-slate-400"}`}>
                 {stage.label}
               </span>
             </>
