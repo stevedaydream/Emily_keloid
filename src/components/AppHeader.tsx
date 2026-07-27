@@ -13,7 +13,6 @@ const QUICK_LINKS = [
 const NAV_LINKS = [
   { href: "/admin", label: "後台管理" },
   { href: "/export", label: "資料匯出" },
-  { href: "/local-tools/mrn-mapping", label: "病歷號對照" },
 ];
 
 export default function AppHeader({ operator }: { operator: string }) {

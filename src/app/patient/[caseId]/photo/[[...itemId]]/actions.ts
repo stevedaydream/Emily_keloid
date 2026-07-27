@@ -9,6 +9,7 @@ export async function uploadPhotoAction(formData: FormData) {
   const itemId = formData.get("item_id") as string;
   const zoneKey = formData.get("zone_key") as string;
   const file = formData.get("file") as File;
+  const thumb = formData.get("thumb") as File | null;
 
   if (!file || file.size === 0) {
     return { ok: false, message: "沒有收到照片" };
@@ -23,7 +24,8 @@ export async function uploadPhotoAction(formData: FormData) {
     .eq("zone_key", zoneKey)
     .single();
 
-  const path = `${caseId}/${Date.now()}.jpg`;
+  const timestamp = Date.now();
+  const path = `${caseId}/${timestamp}.jpg`;
   const { error: uploadError } = await supabase.storage
     .from("wound-photos")
     .upload(path, file, { contentType: "image/jpeg" });
@@ -31,10 +33,21 @@ export async function uploadPhotoAction(formData: FormData) {
     return { ok: false, message: `上傳失敗：${uploadError.message}` };
   }
 
+  let thumbnailPath: string | null = null;
+  if (thumb && thumb.size > 0) {
+    const candidatePath = `thumbs/${caseId}/${timestamp}.jpg`;
+    const { error: thumbError } = await supabase.storage
+      .from("wound-photos")
+      .upload(candidatePath, thumb, { contentType: "image/jpeg" });
+    // 縮圖上傳失敗不影響原圖已上傳成功的結果，前端會 fallback 顯示原圖。
+    if (!thumbError) thumbnailPath = candidatePath;
+  }
+
   await supabase.from("photos").insert({
     case_id: caseId,
     schedule_item_id: itemId || null,
     file_path: path,
+    thumbnail_path: thumbnailPath,
     body_site: zone?.display_name ?? null,
     body_part_zone_id: zone?.id ?? null,
     mask_type: "generic",

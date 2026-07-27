@@ -62,17 +62,35 @@ export default function CameraCapture({
     const canvas = canvasRef.current;
     if (!canvas) return;
     setStatus("uploading");
-    canvas.toBlob(async (blob) => {
-      if (!blob) return;
-      const formData = new FormData();
-      formData.append("case_id", caseId);
-      formData.append("item_id", itemId);
-      formData.append("zone_key", zoneKey);
-      formData.append("file", blob, "photo.jpg");
-      const result = await uploadPhotoAction(formData);
-      setMessage(result.message);
-      setStatus(result.ok ? "done" : "error");
-    }, "image/jpeg");
+
+    const toBlob = (c: HTMLCanvasElement, quality?: number) =>
+      new Promise<Blob | null>((resolve) => c.toBlob(resolve, "image/jpeg", quality));
+
+    const blob = await toBlob(canvas);
+    if (!blob) {
+      setStatus("error");
+      setMessage("拍照失敗，請重試");
+      return;
+    }
+
+    // 縮圖：individual grid 顯示用小尺寸版本，降低瀏覽流量，只有點開大圖才載入原始解析度。
+    const maxDim = 400;
+    const scale = Math.min(1, maxDim / Math.max(canvas.width, canvas.height));
+    const thumbCanvas = document.createElement("canvas");
+    thumbCanvas.width = Math.round(canvas.width * scale);
+    thumbCanvas.height = Math.round(canvas.height * scale);
+    thumbCanvas.getContext("2d")?.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+    const thumbBlob = await toBlob(thumbCanvas, 0.8);
+
+    const formData = new FormData();
+    formData.append("case_id", caseId);
+    formData.append("item_id", itemId);
+    formData.append("zone_key", zoneKey);
+    formData.append("file", blob, "photo.jpg");
+    if (thumbBlob) formData.append("thumb", thumbBlob, "thumb.jpg");
+    const result = await uploadPhotoAction(formData);
+    setMessage(result.message);
+    setStatus(result.ok ? "done" : "error");
   }
 
   return (
