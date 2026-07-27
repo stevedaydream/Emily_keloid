@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase";
 import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
+import { computeJSSClassification } from "@/lib/scoring";
 
 export async function submitQuestionnaireAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
@@ -19,12 +20,13 @@ export async function submitQuestionnaireAction(formData: FormData) {
     .single();
   if (error || !response) throw error ?? new Error("送出問卷失敗");
 
-  const { data: questions } = await supabase
-    .from("questionnaire_questions")
-    .select("id, question_type")
-    .eq("questionnaire_id", questionnaireId);
+  const [{ data: template }, { data: questions }] = await Promise.all([
+    supabase.from("questionnaire_templates").select("name").eq("id", questionnaireId).single(),
+    supabase.from("questionnaire_questions").select("id, order_no, question_type").eq("questionnaire_id", questionnaireId),
+  ]);
 
   const answerRows = [];
+  const answersByOrder: Record<number, unknown> = {};
   for (const q of questions ?? []) {
     if (q.question_type === "multi") {
       const values = formData.getAll(`q_${q.id}`) as string[];
@@ -34,11 +36,21 @@ export async function submitQuestionnaireAction(formData: FormData) {
       if (raw !== null && raw !== "") {
         const value = q.question_type === "number" ? Number(raw) : raw;
         answerRows.push({ response_id: response.id, question_id: q.id, answer_value: value });
+        answersByOrder[q.order_no] = value;
       }
     }
   }
   if (answerRows.length > 0) {
     await supabase.from("questionnaire_answers").insert(answerRows);
+  }
+
+  // JSS 疤痕診斷分類表送出後，直接把算出來的分數＋判定寫回個案基本資料的 JSW score 欄位，
+  // 這樣「病人基本資料」區塊就不用再手動謄一次分數。
+  if (template?.name === "JSS 疤痕診斷分類表") {
+    const result = computeJSSClassification(answersByOrder);
+    if (result) {
+      await supabase.from("cases").update({ jsw_score: `${result.total}分（${result.categoryLabel}）` }).eq("id", caseId);
+    }
   }
 
   await logAudit({ caseId, operatorName: operator, action: "submit_questionnaire", entity: "questionnaire_responses", entityId: response.id });
