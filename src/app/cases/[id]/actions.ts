@@ -431,3 +431,26 @@ export async function addLabResultAction(formData: FormData) {
   await logAudit({ caseId, operatorName: operator, action: "add_lab_result", entity: "lab_results", entityId: result.id, detail: { markerId, sampleDate } });
   revalidatePath(`/cases/${caseId}`);
 }
+
+export async function deletePhotoAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const photoId = formData.get("photo_id") as string;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  const { data: photo } = await supabase
+    .from("photos")
+    .select("file_path, thumbnail_path")
+    .eq("id", photoId)
+    .single();
+  if (!photo) return;
+
+  const paths = [photo.file_path, photo.thumbnail_path].filter((p): p is string => Boolean(p));
+  if (paths.length > 0) {
+    await supabase.storage.from("wound-photos").remove(paths);
+  }
+  await supabase.from("photos").delete().eq("id", photoId);
+
+  await logAudit({ caseId, operatorName: operator, action: "delete_photo", entity: "photos", entityId: photoId });
+  revalidatePath(`/cases/${caseId}`);
+}

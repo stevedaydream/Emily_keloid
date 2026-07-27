@@ -25,8 +25,14 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
       className={`${BUTTON_BASE} ${BUTTON_JUSTIFY[justify]} ${BUTTON_VARIANTS[variant]} ${BUTTON_SIZES[size]} ${className}`}
       {...props}
     >
-      {pending && <Spinner className={size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5"} />}
-      {pending && pendingText ? pendingText : children}
+      {pending ? (
+        <>
+          <Spinner className={size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5"} />
+          {pendingText}
+        </>
+      ) : (
+        children
+      )}
     </button>
   );
 });

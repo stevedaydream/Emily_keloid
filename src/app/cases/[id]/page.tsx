@@ -18,6 +18,7 @@ import TreatmentForm from "./TreatmentForm";
 import PipelineProgress from "./PipelineProgress";
 import IntakeOptionForm from "./IntakeOptionForm";
 import BodyZonePicker from "./BodyZonePicker";
+import DeletePhotoButton from "./DeletePhotoButton";
 import InfoTooltip from "@/components/InfoTooltip";
 import SubmitButton from "@/components/ui/SubmitButton";
 import type { CasePipelineRow } from "@/lib/pipeline";
@@ -109,7 +110,7 @@ export default async function CaseDetailPage({
       )
       .eq("case_id", id)
       .order("submitted_at", { ascending: false }),
-    supabase.from("photos").select("id, taken_at, body_site, file_path").eq("case_id", id).order("taken_at", { ascending: false }),
+    supabase.from("photos").select("id, taken_at, body_site, file_path, thumbnail_path").eq("case_id", id).order("taken_at", { ascending: false }),
     supabase.from("case_data_completeness").select("*").eq("case_id", id),
     supabase.from("v_case_pipeline_progress").select("*").eq("case_id", id).single(),
     supabase.from("body_part_zones").select("id, zone_key, view, display_name, dose_category").eq("active", true).order("sort_order"),
@@ -152,11 +153,17 @@ export default async function CaseDetailPage({
     return answers;
   }
 
-  // wound-photos 是私有 bucket，需個別產生短期簽章網址才能顯示縮圖（不能用公開網址）。
+  // wound-photos 是私有 bucket，需個別產生短期簽章網址才能顯示圖片（不能用公開網址）。
+  // grid 用縮圖網址（流量小），點開大圖才用原圖網址；舊照片沒有縮圖時 fallback 用原圖。
   const photosWithUrl = await Promise.all(
     (photos ?? []).map(async (p) => {
-      const { data } = await supabase.storage.from("wound-photos").createSignedUrl(p.file_path, 3600);
-      return { ...p, signedUrl: data?.signedUrl ?? null };
+      const [{ data: fullData }, thumbData] = await Promise.all([
+        supabase.storage.from("wound-photos").createSignedUrl(p.file_path, 3600),
+        p.thumbnail_path
+          ? supabase.storage.from("wound-photos").createSignedUrl(p.thumbnail_path, 3600)
+          : Promise.resolve({ data: null }),
+      ]);
+      return { ...p, signedUrl: fullData?.signedUrl ?? null, thumbSignedUrl: thumbData?.data?.signedUrl ?? null };
     })
   );
 
@@ -1023,24 +1030,22 @@ export default async function CaseDetailPage({
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
           {photosWithUrl.map((p) =>
             p.signedUrl ? (
-              <a
-                key={p.id}
-                href={p.signedUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="group overflow-hidden rounded-lg border border-brand-100 bg-ink/5"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={p.signedUrl}
-                  alt={p.body_site ?? "傷口照片"}
-                  className="aspect-square w-full object-cover transition-opacity group-hover:opacity-90"
-                />
-                <div className="p-2 text-xs text-ink/60">
-                  <div className="truncate">{p.body_site ?? "—"}</div>
-                  <div className="text-ink/40">{new Date(p.taken_at).toLocaleDateString("zh-TW")}</div>
-                </div>
-              </a>
+              <div key={p.id} className="group relative overflow-hidden rounded-lg border border-brand-100 bg-ink/5">
+                <a href={p.signedUrl} target="_blank" rel="noreferrer">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={p.thumbSignedUrl ?? p.signedUrl}
+                    alt={p.body_site ?? "傷口照片"}
+                    loading="lazy"
+                    className="aspect-square w-full object-cover transition-opacity group-hover:opacity-90"
+                  />
+                  <div className="p-2 text-xs text-ink/60">
+                    <div className="truncate">{p.body_site ?? "—"}</div>
+                    <div className="text-ink/40">{new Date(p.taken_at).toLocaleDateString("zh-TW")}</div>
+                  </div>
+                </a>
+                <DeletePhotoButton caseId={id} photoId={p.id} />
+              </div>
             ) : (
               <div key={p.id} className="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-600">
                 圖片載入失敗（{p.body_site ?? "—"} ・ {new Date(p.taken_at).toLocaleDateString("zh-TW")}）
