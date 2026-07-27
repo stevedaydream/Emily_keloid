@@ -30,19 +30,19 @@ function BarList({ rows }: { rows: { label: string; value: number }[] }) {
     <ul className="space-y-2">
       {rows.map((r) => (
         <li key={r.label} className="flex items-center gap-3 text-sm">
-          <span className="w-32 shrink-0 truncate text-slate-600" title={r.label}>
+          <span className="w-32 shrink-0 truncate text-ink/60" title={r.label}>
             {r.label}
           </span>
-          <span className="relative h-4 flex-1 overflow-hidden rounded bg-slate-100">
+          <span className="relative h-4 flex-1 overflow-hidden rounded bg-brand-50">
             <span
-              className="absolute left-0 top-0 h-full rounded bg-sky-500"
+              className="absolute left-0 top-0 h-full rounded bg-brand-500"
               style={{ width: `${(r.value / max) * 100}%` }}
             />
           </span>
-          <span className="w-8 shrink-0 text-right tabular-nums text-slate-500">{r.value}</span>
+          <span className="w-8 shrink-0 text-right font-data text-ink/50">{r.value}</span>
         </li>
       ))}
-      {rows.length === 0 && <li className="text-sm text-slate-400">尚無資料</li>}
+      {rows.length === 0 && <li className="text-sm text-ink/40">尚無資料</li>}
     </ul>
   );
 }
@@ -60,19 +60,19 @@ function StatTile({
 }) {
   const content = (
     <>
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{value}</div>
-      {hint && <div className="mt-0.5 text-xs text-slate-400">{hint}</div>}
+      <div className="text-xs text-ink/50">{label}</div>
+      <div className="mt-1 font-data text-2xl font-medium text-brand-900">{value}</div>
+      {hint && <div className="mt-0.5 text-xs text-ink/40">{hint}</div>}
     </>
   );
   if (href) {
     return (
-      <Link href={href} className="block rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-400 hover:bg-slate-50">
+      <Link href={href} className="block rounded-lg border border-brand-100 bg-paper-raised p-4 hover:border-brand-300 hover:bg-brand-50/40">
         {content}
       </Link>
     );
   }
-  return <div className="rounded-lg border border-slate-200 bg-white p-4">{content}</div>;
+  return <div className="rounded-lg border border-brand-100 bg-paper-raised p-4">{content}</div>;
 }
 
 function countBy<T>(rows: T[], key: (r: T) => string | null | undefined) {
@@ -125,8 +125,8 @@ export default async function DashboardPage({
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">統計儀表板 Dashboard</h1>
-        <Link href="/cases" className="text-sm text-slate-400 hover:underline">
+        <h1 className="font-heading text-xl font-medium text-brand-900">統計儀表板 Dashboard</h1>
+        <Link href="/cases" className="text-sm text-brand-700 hover:underline">
           個案列表 →
         </Link>
       </div>
@@ -178,39 +178,39 @@ export default async function DashboardPage({
       </section>
 
       {/* 收案一條龍進度看板 */}
-      <section id="pipeline-board" data-nav-section data-nav-label="收案一條龍進度看板" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+      <section id="pipeline-board" data-nav-section data-nav-label="收案一條龍進度看板" className="scroll-mt-4 rounded-lg border border-brand-100 bg-paper-raised">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-brand-100 px-4 py-3">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="whitespace-nowrap text-sm font-semibold text-slate-700">收案一條龍進度看板</h2>
+            <h2 className="whitespace-nowrap text-sm font-semibold text-brand-900">收案一條龍進度看板</h2>
             <InfoTooltip text="點下方階段標籤可篩選出「該階段尚未完成」的個案；表頭上的●/○也可以點擊直接跳到該個案對應的區塊。" />
           </div>
-          <span className="whitespace-nowrap text-xs text-slate-400">依完成度由低到高排序，優先處理落後個案</span>
+          <span className="whitespace-nowrap text-xs text-ink/40">依完成度由低到高排序，優先處理落後個案</span>
         </div>
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-2">
-          <span className="whitespace-nowrap text-xs text-slate-400">依階段篩選未完成：</span>
+        <div className="flex flex-wrap items-center gap-2 border-b border-brand-50 px-4 py-2">
+          <span className="whitespace-nowrap text-xs text-ink/40">依階段篩選未完成：</span>
           {incompleteCounts.map((s) => (
             <Link
               key={s.key}
               href={`/?stage=${s.key}#pipeline-board`}
               className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
                 stageFilter === s.key
-                  ? "bg-slate-900 text-white"
-                  : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                  ? "bg-brand-700 text-white"
+                  : "bg-accent-100 text-accent-800 hover:bg-accent-200"
               }`}
             >
               {s.label} {s.missing}
             </Link>
           ))}
-          {incompleteCounts.length === 0 && <span className="text-xs text-slate-300">全部個案各階段皆已完成</span>}
+          {incompleteCounts.length === 0 && <span className="text-xs text-ink/30">全部個案各階段皆已完成</span>}
           {activeStage && (
-            <Link href="/#pipeline-board" className="whitespace-nowrap text-xs text-slate-400 underline">
+            <Link href="/#pipeline-board" className="whitespace-nowrap text-xs text-brand-700 underline">
               清除篩選
             </Link>
           )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50 text-left text-slate-500">
+            <thead className="border-b border-brand-100 bg-brand-50/60 text-left text-ink/50">
               <tr>
                 <th className="whitespace-nowrap px-4 py-2 font-medium">研究編號</th>
                 <th className="whitespace-nowrap px-4 py-2 font-medium">進度</th>
@@ -224,27 +224,27 @@ export default async function DashboardPage({
             </thead>
             <tbody>
               {pipeline.map((row) => (
-                <tr key={row.case_id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                <tr key={row.case_id} className="border-b border-brand-50 last:border-0 hover:bg-brand-50/40">
                   <td className="whitespace-nowrap px-4 py-2">
-                    <Link href={`/cases/${row.case_id}`} className="font-medium text-slate-900 underline">
+                    <Link href={`/cases/${row.case_id}`} className="font-medium text-brand-800 underline">
                       {row.research_id}
                     </Link>
                   </td>
                   <td className="whitespace-nowrap px-4 py-2">
                     <div className="flex items-center gap-2">
-                      <span className="relative h-2 w-20 overflow-hidden rounded-full bg-slate-100">
+                      <span className="relative h-2 w-20 overflow-hidden rounded-full bg-brand-50">
                         <span
                           className={`absolute left-0 top-0 h-full rounded-full ${progressTone(row.progress_pct)}`}
                           style={{ width: `${row.progress_pct}%` }}
                         />
                       </span>
-                      <span className="tabular-nums text-xs text-slate-500">{row.progress_pct}%</span>
+                      <span className="font-data text-xs text-ink/50">{row.progress_pct}%</span>
                     </div>
                   </td>
                   {PIPELINE_STAGES.map((s) => {
                     const dot = (
                       <span
-                        className={row[s.key] ? "text-emerald-500" : "text-slate-300"}
+                        className={row[s.key] ? "text-brand-500" : "text-ink/20"}
                         title={`${s.label}：${row[s.key] ? "已完成" : "未完成"}`}
                       >
                         {row[s.key] ? "●" : "○"}
@@ -264,17 +264,17 @@ export default async function DashboardPage({
                   })}
                   <td className="whitespace-nowrap px-4 py-2 text-xs">
                     <div className="flex items-center gap-1">
-                      {row.next_due_date && <span className="text-slate-500">{row.next_due_date}</span>}
+                      {row.next_due_date && <span className="text-ink/50">{row.next_due_date}</span>}
                       {row.overdue_count > 0 && (
                         <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">逾期 {row.overdue_count}</span>
                       )}
                       {row.pending_fields > 0 && (
-                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700">
+                        <span className="rounded bg-accent-100 px-1.5 py-0.5 text-accent-800">
                           待補 {row.pending_fields}
                         </span>
                       )}
                       {!row.next_due_date && row.overdue_count === 0 && row.pending_fields === 0 && (
-                        <span className="text-slate-300">—</span>
+                        <span className="text-ink/20">—</span>
                       )}
                     </div>
                   </td>
@@ -282,7 +282,7 @@ export default async function DashboardPage({
               ))}
               {pipeline.length === 0 && (
                 <tr>
-                  <td colSpan={3 + PIPELINE_STAGES.length} className="whitespace-nowrap px-4 py-6 text-center text-slate-400">
+                  <td colSpan={3 + PIPELINE_STAGES.length} className="whitespace-nowrap px-4 py-6 text-center text-ink/40">
                     {activeStage ? "沒有符合篩選條件的個案" : "尚無個案"}
                   </td>
                 </tr>
@@ -294,16 +294,16 @@ export default async function DashboardPage({
 
       {/* 世代分佈 */}
       <section id="section-cohort" data-nav-section data-nav-label="世代分佈" className="scroll-mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">依醫師 By doctor</h2>
+        <div className="rounded-lg border border-brand-100 bg-paper-raised p-4">
+          <h2 className="mb-3 text-sm font-semibold text-brand-900">依醫師 By doctor</h2>
           <BarList rows={byDoctor} />
         </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">依收案年份 By year</h2>
+        <div className="rounded-lg border border-brand-100 bg-paper-raised p-4">
+          <h2 className="mb-3 text-sm font-semibold text-brand-900">依收案年份 By year</h2>
           <BarList rows={byYear} />
         </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">依部位 By body site</h2>
+        <div className="rounded-lg border border-brand-100 bg-paper-raised p-4">
+          <h2 className="mb-3 text-sm font-semibold text-brand-900">依部位 By body site</h2>
           <BarList rows={bySite} />
         </div>
       </section>

@@ -24,21 +24,21 @@ export default function BodyDiagram({
   const zoneShapes = bodyZoneShapesFor(sex);
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
+    <div className="rounded-lg border border-brand-100 bg-paper-raised p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="whitespace-nowrap text-sm font-semibold text-slate-700">請點選蟹足腫部位</h2>
-        <div className="flex shrink-0 overflow-hidden rounded-md border border-slate-300 text-xs">
+        <h2 className="whitespace-nowrap text-sm font-semibold text-brand-900">請點選蟹足腫部位</h2>
+        <div className="flex shrink-0 overflow-hidden rounded-md border border-brand-200 text-xs">
           <button
             type="button"
             onClick={() => setView("front")}
-            className={`whitespace-nowrap px-3 py-1 ${view === "front" ? "bg-slate-900 text-white" : "bg-white text-slate-600"}`}
+            className={`whitespace-nowrap px-3 py-1 ${view === "front" ? "bg-brand-700 text-white" : "bg-white text-ink/70"}`}
           >
             正面
           </button>
           <button
             type="button"
             onClick={() => setView("back")}
-            className={`whitespace-nowrap px-3 py-1 ${view === "back" ? "bg-slate-900 text-white" : "bg-white text-slate-600"}`}
+            className={`whitespace-nowrap px-3 py-1 ${view === "back" ? "bg-brand-700 text-white" : "bg-white text-ink/70"}`}
           >
             背面
           </button>
@@ -53,7 +53,6 @@ export default function BodyDiagram({
           const isCurrent = z.zone_key === currentZoneKey;
           const color = DOSE_CATEGORY_COLOR[z.dose_category] ?? "#94a3b8";
           const commonProps = {
-            key: z.zone_key,
             fill: isCurrent ? color : `${color}55`,
             stroke: color,
             strokeWidth: isCurrent ? 2.5 : 1,
@@ -64,13 +63,13 @@ export default function BodyDiagram({
             className: "cursor-pointer transition-opacity hover:opacity-80",
           };
           if (shape.kind === "circle") {
-            return <circle {...commonProps} cx={shape.cx} cy={shape.cy} r={shape.r} />;
+            return <circle key={z.zone_key} {...commonProps} cx={shape.cx} cy={shape.cy} r={shape.r} />;
           }
-          return <rect {...commonProps} x={shape.x} y={shape.y} width={shape.w} height={shape.h} rx={shape.rx ?? 4} />;
+          return <rect key={z.zone_key} {...commonProps} x={shape.x} y={shape.y} width={shape.w} height={shape.h} rx={shape.rx ?? 4} />;
         })}
       </svg>
 
-      <div className="mt-2 h-5 text-center text-xs text-slate-500">
+      <div className="mt-2 h-5 text-center text-xs text-ink/50">
         {hoveredZone
           ? `${hoveredZone.display_name}（${DOSE_CATEGORY_LABEL[hoveredZone.dose_category]}）`
           : "點選圖上區塊選擇部位"}

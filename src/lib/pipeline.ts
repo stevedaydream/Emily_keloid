@@ -35,7 +35,7 @@ export type CasePipelineRow = {
 // 依完成度給進度條顏色（單一色相的順序色階，符合 magnitude 用色原則）。
 export function progressTone(pct: number): string {
   if (pct >= 100) return "bg-emerald-500";
-  if (pct >= 60) return "bg-sky-500";
-  if (pct >= 30) return "bg-sky-400";
-  return "bg-sky-300";
+  if (pct >= 60) return "bg-brand-500";
+  if (pct >= 30) return "bg-brand-400";
+  return "bg-accent-400";
 }
