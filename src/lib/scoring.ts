@@ -184,27 +184,16 @@ function sumOrders(answers: AnswerMap, orders: number[]): number | null {
   return values.reduce((s, v) => s + v, 0);
 }
 
-export type JSSCategory = "mature" | "hypertrophic" | "keloid";
-
-export const JSS_CATEGORY_LABEL: Record<JSSCategory, string> = {
-  mature: "成熟疤痕",
-  hypertrophic: "肥厚性疤痕",
-  keloid: "蟹足腫",
-};
-
 export interface JSSClassificationResult {
-  total: number;
-  category: JSSCategory;
-  categoryLabel: string;
+  total: number; // 0-25
 }
 
-// 診斷分類表（7題：4項臨床特徵 0/1/3 分 + 部位 1/2/3 分 + 家族史/個人史各 0/2 分）。
-// 0-5分成熟疤痕、6-15分肥厚性疤痕、16分以上蟹足腫。
+// JSW Scar Scale（JSS 2015）診斷分類表：12 項，選項 value 即分數，加總為總分（0-25），分數越高越偏向蟹足腫。
+// 依規格文件僅回報總分，不做自動分類（文件未提供分類切點，分類由臨床判讀）。
 export function computeJSSClassification(answers: AnswerMap): JSSClassificationResult | null {
-  const total = sumOrders(answers, [1, 2, 3, 4, 5, 6, 7]);
+  const total = sumOrders(answers, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   if (total === null) return null;
-  const category: JSSCategory = total <= 5 ? "mature" : total <= 15 ? "hypertrophic" : "keloid";
-  return { total, category, categoryLabel: JSS_CATEGORY_LABEL[category] };
+  return { total };
 }
 
 // 症狀與治療追蹤評估表（6題，各0-3分，總分0-18分，分數越高病況越嚴重）。
