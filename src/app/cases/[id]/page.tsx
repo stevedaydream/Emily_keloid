@@ -618,7 +618,15 @@ export default async function CaseDetailPage({
 
       {/* 問卷回覆 */}
       <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">問卷回覆紀錄</h2>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-700">問卷回覆紀錄</h2>
+          <Link
+            href={`/patient/${id}/questionnaire`}
+            className="whitespace-nowrap rounded-md bg-slate-900 px-3 py-1.5 text-xs text-white hover:bg-slate-800"
+          >
+            填寫問卷
+          </Link>
+        </div>
         <ul className="space-y-1">
           {(responses ?? []).map((r) => {
             const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
