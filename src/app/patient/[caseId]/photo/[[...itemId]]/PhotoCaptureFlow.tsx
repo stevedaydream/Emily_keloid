@@ -6,6 +6,10 @@ import BodyDiagram from "@/components/BodyDiagram";
 import CameraCapture from "./CameraCapture";
 
 type Zone = { id: string; zone_key: string; view: "front" | "back"; display_name: string; dose_category: string };
+type Site = { id: string; site_no: number | null; body_site: string; note: string | null; photoCount: number };
+
+// 相機需要的部位資訊：從個案部位清單挑選時 zoneKey 為空、劑量分類用通用蒙板；從身體圖挑選時帶入該區塊資訊。
+type Target = { zoneKey: string; displayName: string; doseCategory: string; lesionId: string | null };
 
 export default function PhotoCaptureFlow({
   caseId,
@@ -13,34 +17,92 @@ export default function PhotoCaptureFlow({
   zones,
   currentZoneKey,
   sex,
+  sites,
 }: {
   caseId: string;
   itemId: string;
   zones: Zone[];
   currentZoneKey?: string | null;
   sex?: string | null;
+  sites?: Site[];
 }) {
-  const [selected, setSelected] = useState<Zone | null>(null);
+  const [target, setTarget] = useState<Target | null>(null);
+  const [showDiagram, setShowDiagram] = useState((sites ?? []).length === 0);
   const router = useRouter();
 
-  if (!selected) {
+  if (target) {
     return (
-      <div className="mx-auto max-w-sm space-y-2">
-        <h1 className="text-center text-lg font-semibold text-slate-800">部位標記與拍照</h1>
-        <BodyDiagram zones={zones} currentZoneKey={currentZoneKey} onSelect={setSelected} sex={sex} />
-      </div>
+      <CameraCapture
+        caseId={caseId}
+        itemId={itemId}
+        zoneKey={target.zoneKey}
+        zoneDisplayName={target.displayName}
+        doseCategory={target.doseCategory}
+        lesionId={target.lesionId}
+        onBack={() => setTarget(null)}
+        onDone={() => router.push(`/cases/${caseId}`)}
+      />
     );
   }
 
+  const caseSites = sites ?? [];
+
   return (
-    <CameraCapture
-      caseId={caseId}
-      itemId={itemId}
-      zoneKey={selected.zone_key}
-      zoneDisplayName={selected.display_name}
-      doseCategory={selected.dose_category}
-      onBack={() => setSelected(null)}
-      onDone={() => router.push(`/cases/${caseId}`)}
-    />
+    <div className="mx-auto max-w-sm space-y-3">
+      <h1 className="text-center text-lg font-semibold text-slate-800">部位標記與拍照</h1>
+
+      {caseSites.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs text-slate-500">此個案已設定 {caseSites.length} 個部位，點選要拍照的部位：</p>
+          <ul className="space-y-1.5">
+            {caseSites.map((s) => {
+              const done = s.photoCount > 0;
+              return (
+                <li key={s.id}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setTarget({ zoneKey: "", displayName: `部位${s.site_no ?? ""} ${s.body_site}`.trim(), doseCategory: "other", lesionId: s.id })
+                    }
+                    className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm hover:border-slate-400"
+                  >
+                    <span>
+                      <b>部位{s.site_no}</b>
+                      <span className="ml-2">{s.body_site}</span>
+                      {s.note && <span className="ml-2 text-xs text-slate-400">（{s.note}）</span>}
+                    </span>
+                    <span
+                      className={`shrink-0 rounded px-2 py-0.5 text-xs ${
+                        done ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                      }`}
+                    >
+                      {done ? `已拍 ${s.photoCount} 張` : "尚未拍照"}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {!showDiagram && (
+            <button
+              type="button"
+              onClick={() => setShowDiagram(true)}
+              className="w-full rounded-md border border-dashed border-slate-300 py-2 text-xs text-slate-500 hover:border-slate-400"
+            >
+              ＋ 其他部位（用身體圖選擇）
+            </button>
+          )}
+        </div>
+      )}
+
+      {showDiagram && (
+        <BodyDiagram
+          zones={zones}
+          currentZoneKey={currentZoneKey}
+          onSelect={(z) => setTarget({ zoneKey: z.zone_key, displayName: z.display_name, doseCategory: z.dose_category, lesionId: null })}
+          sex={sex}
+        />
+      )}
+    </div>
   );
 }
