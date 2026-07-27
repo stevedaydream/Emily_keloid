@@ -102,7 +102,7 @@ export default async function CaseDetailPage({
     supabase
       .from("treatment_records")
       .select(
-        "id, treatment_date, field_values, free_text, recorded_by, recurrence_observed, recurrence_description, blood_drawn, blood_drawn_note, treatment_types(name)"
+        "id, treatment_date, body_site, field_values, free_text, recorded_by, recurrence_observed, recurrence_description, blood_drawn, blood_drawn_note, treatment_types(name)"
       )
       .eq("case_id", id)
       .order("treatment_date", { ascending: false }),
@@ -146,6 +146,13 @@ export default async function CaseDetailPage({
   const biobankByKey = new Map((biobankItems ?? []).map((b) => [b.item_key, b]));
   const termsByStage: Record<string, { id: string; term: string }[]> = { pre: [], intra: [], post: [] };
   (termLibrary ?? []).forEach((t) => termsByStage[t.stage]?.push(t));
+
+  const siteSuggestions = Array.from(
+    new Set([
+      ...(bodyZone ? [bodyZone.display_name] : []),
+      ...(keloidLesions ?? []).map((l) => l.body_site),
+    ])
+  );
 
   const familyDiseaseOptions = (intakeOptions ?? []).filter((o) => o.category === "family_disease");
   const keloidHistoryTypeOptions = (intakeOptions ?? []).filter((o) => o.category === "keloid_history_type");
@@ -545,14 +552,18 @@ export default async function CaseDetailPage({
           <InfoTooltip text="選擇治療類型並填寫對應欄位；若有常用套組可直接選擇帶入數值，再視情況微調後儲存。若登打「手術切除」且已標記部位，會自動產生放射治療排程。" />
         </h2>
         <div className="mb-4">
-          <TreatmentForm caseId={id} treatmentTypes={treatmentTypes ?? []} presets={presets ?? []} />
+          <TreatmentForm caseId={id} treatmentTypes={treatmentTypes ?? []} presets={presets ?? []} siteSuggestions={siteSuggestions} />
         </div>
         <ul className="space-y-1">
           {(treatmentRecords ?? []).map((r) => {
             const tt = Array.isArray(r.treatment_types) ? r.treatment_types[0] : r.treatment_types;
             return (
               <li key={r.id} className="break-words text-sm text-ink/70">
-                <span className="font-medium">{r.treatment_date}</span> ・ {tt?.name} ・{" "}
+                <span className="font-medium">{r.treatment_date}</span> ・ {tt?.name}
+                {r.body_site && (
+                  <span className="ml-1 rounded bg-brand-50 px-1.5 py-0.5 text-xs text-brand-800">部位：{r.body_site}</span>
+                )}{" "}
+                ・{" "}
                 {r.free_text || Object.entries(r.field_values ?? {}).map(([k, v]) => `${k}: ${v}`).join(", ")}
                 <span className="ml-2 text-xs text-ink/40">記錄人：{r.recorded_by}</span>
                 {r.recurrence_observed && (
