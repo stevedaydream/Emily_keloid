@@ -19,3 +19,20 @@ export async function toggleKbActiveAction(formData: FormData) {
   await supabase.from("health_education_kb").update({ active: !active }).eq("id", id);
   revalidatePath("/admin/health-kb");
 }
+
+export async function updateKbEntryAction(formData: FormData) {
+  const id = formData.get("id") as string;
+  const topic = (formData.get("topic") as string)?.trim();
+  const content = (formData.get("content") as string)?.trim();
+  if (!id || !topic || !content) return;
+  const supabase = supabaseServer();
+  await supabase.from("health_education_kb").update({ topic, content }).eq("id", id);
+  revalidatePath("/admin/health-kb");
+}
+
+export async function deleteKbEntryAction(formData: FormData) {
+  const id = formData.get("id") as string;
+  const supabase = supabaseServer();
+  await supabase.from("health_education_kb").delete().eq("id", id);
+  revalidatePath("/admin/health-kb");
+}
