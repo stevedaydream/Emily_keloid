@@ -464,10 +464,21 @@ export async function addKeloidLesionAction(formData: FormData) {
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
 
+  // 部位編號（部位1,2,…）：取該個案目前最大編號 +1，讓拍照時可依序點選對應部位。
+  const { data: lastSite } = await supabase
+    .from("case_keloid_lesions")
+    .select("site_no")
+    .eq("case_id", caseId)
+    .order("site_no", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const nextSiteNo = (lastSite?.site_no ?? 0) + 1;
+
   const { data: lesion, error } = await supabase
     .from("case_keloid_lesions")
     .insert({
       case_id: caseId,
+      site_no: nextSiteNo,
       body_site: bodySite,
       length_cm: lengthRaw ? Number(lengthRaw) : null,
       width_cm: widthRaw ? Number(widthRaw) : null,
