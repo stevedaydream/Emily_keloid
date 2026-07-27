@@ -1,17 +1,25 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Noto_Serif_TC, Noto_Sans_TC, IBM_Plex_Mono } from "next/font/google";
 import { cookies } from "next/headers";
 import AppHeader from "@/components/AppHeader";
 import BackToTopButton from "@/components/BackToTopButton";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const notoSerifTC = Noto_Serif_TC({
+  variable: "--font-noto-serif-tc",
+  weight: ["500", "700"],
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const notoSansTC = Noto_Sans_TC({
+  variable: "--font-noto-sans-tc",
+  weight: ["400", "500", "700"],
+  subsets: ["latin"],
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  variable: "--font-ibm-plex-mono",
+  weight: ["400", "500", "600"],
   subsets: ["latin"],
 });
 
@@ -32,9 +40,9 @@ export default async function RootLayout({
   return (
     <html
       lang="zh-Hant"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${notoSerifTC.variable} ${notoSansTC.variable} ${ibmPlexMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
+      <body className="min-h-full flex flex-col font-body text-ink">
         {session === "ok" && operator && <AppHeader operator={operator} />}
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
           {children}

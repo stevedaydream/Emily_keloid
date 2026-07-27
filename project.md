@@ -194,6 +194,23 @@
 - 個案頁面「問卷回覆紀錄」：分類表顯示總分＋判定；評估表顯示總分，並自動算 **Delta Score**（以個案最早一筆評估回覆的總分當基準，跟每筆回覆相減，正值代表改善）。
 - 結構化匯出新增對應欄位（分類總分/判定、評估初次總分/最近總分/Delta Score）。
 
-**仍未處理**：
+**2026-07-27 追加：視覺設計系統（黃綠色醫學機構風格）與按鈕/連結互動優化**：
+- `src/app/globals.css` 新增 `@theme` 品牌色階（`brand-*` 松綠、`accent-*` 暖金黃、`ink`/`paper` 中性色），全站背景改為淡雅的雙色放射狀漸層取代純白
+- 字型：`layout.tsx` 改用 `next/font/google` 載入 Noto Serif TC（標題，`font-heading`）／Noto Sans TC（內文，`font-body`）／IBM Plex Mono（數據/表格數字，`font-data`），取代原本沒有中文字重的 Geist
+- 全站按鈕/連結互動回饋（`globals.css`）：所有 `<button>`/`<a>` 統一有 `:active` 按下縮小+變暗效果與 `:focus-visible` 焦點框，不需個別頁面處理，任何按鈕都看得出「有沒有按到」
+- 新增共用元件 `src/components/ui/`：`Button.tsx`（variant: primary/accent/outline/ghost/danger，`pending` prop 顯示 loading 圈圈）、`SubmitButton.tsx`（用 React `useFormStatus()` 自動反映所在 `<form action={...}>` 的送出中狀態，不需每個表單手動管理 loading state）、`Spinner.tsx`、`BrandMark.tsx`（品牌識別圖案）、`buttonStyles.ts`（純樣式函式 `buttonClasses()`，給 `<Link>` 等非 button 元素套用同款樣式；**注意**：`Button.tsx` 有 `"use client"`，Server Component 要用樣式必須從 `buttonStyles.ts` 直接 import，不能從 `Button.tsx` re-export，否則會炸「Attempted to call from server but function is on the client」)
+- 已套用新視覺＋SubmitButton 的頁面：`/login`、`/operator`、`AppHeader`、`/`（dashboard）、`/cases`、`/cases/new`、`/cases/[id]`（含所有子表單提交鈕，逐一手動轉換，共 12 個）
+- `src/lib/pipeline.ts` 的 `progressTone()` 改用品牌綠階取代 sky 藍
+
+**2026-07-27 追加：個案頁面互動與資料呈現修正**（使用者實測回饋）：
+- **主要蟹足腫部位改為直接人形圖點選**：新增 `src/app/cases/[id]/BodyZonePicker.tsx`（client component），取代原本「變更主要部位」下拉選單，直接嵌入 `BodyDiagram` 讓使用者點圖選部位、選好後按鈕才會啟用送出，不用先點連結跳去拍照頁才能改部位
+- **傷口照片改為顯示縮圖**：`wound-photos` bucket 是私有（非公開），原本個案頁面只印出 `file_path` 文字、看不到照片本身；現在改為個案頁面渲染時對每張照片呼叫 `supabase.storage.from("wound-photos").createSignedUrl()` 產生 1 小時效期的簽章網址，用縮圖 grid 呈現，點擊可開大圖（新分頁）
+- **收案一條龍「資料完整度」燈號修正**（`v_case_pipeline_progress` view，`supabase/migrations/20260727060000_pipeline_basic_info_completeness.sql`）：原本 `step_complete` 只檢查 `case_data_completeness` 表，但那張表只有舊資料回溯建檔的個案才會有列，正常收案的個案永遠沒有 pending 列、導致這個燈號恆亮，形同虛設。修正為：舊資料回溯建檔維持原邏輯；正常收案改為直接檢查性別/年齡/主要部位是否都已填寫
+- **追蹤時程卡片對齊既有卡片風格**：`section-schedule` 的每一項從「一行 flex-wrap（標籤/狀態/連結全部擠在一起，手機上會亂換行）」改成跟 `/cases` 頁「快速前往待處理項目」一樣的堆疊卡片版型（上方資訊自由換行、下方動作列水平捲動不換行）
+- `BodyDiagram.tsx` 順便修掉一個既有的 React 警告（`key` 透過 `{...commonProps}` 展開傳遞，改成直接寫在 JSX 上）
+
+**仍未處理 / 待確認**：
 - 治療紀錄目前仍依賴個案層級的主要部位，沒有「每筆治療紀錄各自的部位」欄位（如同一個案在不同部位分開治療會無法區分）
 - Lab 數據尚未併入結構化資料匯出
+- 追蹤時程範本的問卷指定：目前是後台 `/admin/schedules` 設定時程範本時，每個時間點各自指定固定的 `questionnaire_id`（可維護、非寫死在程式碼），但套用範本產生個案實際時程後，該筆的問卷是複製自範本、事後不能在個案頁面單獨換成別份問卷——如果需要「同一個時間點事後可以改填別份問卷」，需要額外加編輯功能
+- 傷口照片檢視目前用短效期簽章網址（1小時），如果之後要在個案頁面停留很久或分享連結給別人看，需考慮改用重新整理時即時產生，或是提供「重新產生連結」的按鈕

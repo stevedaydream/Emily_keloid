@@ -1,5 +1,7 @@
 import { supabaseServer } from "@/lib/supabase";
 import { setOperatorAction } from "./actions";
+import SubmitButton from "@/components/ui/SubmitButton";
+import BrandMark from "@/components/ui/BrandMark";
 
 export default async function OperatorPage({
   searchParams,
@@ -15,38 +17,26 @@ export default async function OperatorPage({
     .order("name");
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50">
-      <div className="w-full max-w-sm space-y-4 rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
-        <div>
-          <h1 className="text-lg font-semibold text-slate-900">
-            請選擇目前操作者
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            用於稽核紀錄，不需輸入密碼
-          </p>
+    <div className="flex min-h-screen items-center justify-center px-4">
+      <div className="w-full max-w-sm space-y-5 rounded-2xl border border-brand-100 bg-paper-raised p-8 shadow-[0_1px_2px_rgba(27,35,24,0.06),0_12px_32px_-16px_rgba(27,35,24,0.25)]">
+        <div className="flex flex-col items-center text-center">
+          <BrandMark />
+          <h1 className="mt-3 font-heading text-lg font-medium text-brand-900">請選擇目前操作者</h1>
+          <p className="mt-1 text-sm text-ink/60">用於稽核紀錄，不需輸入密碼</p>
         </div>
         <div className="space-y-2">
           {(operators ?? []).map((op) => (
             <form action={setOperatorAction} key={op.id}>
               <input type="hidden" name="next" value={next} />
               <input type="hidden" name="name" value={op.name} />
-              <button
-                type="submit"
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-left text-sm hover:border-slate-500 hover:bg-slate-50"
-              >
+              <SubmitButton variant="outline" justify="start" pendingText="切換中…" className="w-full text-left">
                 {op.name}
-                {op.role ? (
-                  <span className="ml-2 text-xs text-slate-400">
-                    {op.role}
-                  </span>
-                ) : null}
-              </button>
+                {op.role ? <span className="ml-2 text-xs text-ink/40">{op.role}</span> : null}
+              </SubmitButton>
             </form>
           ))}
           {(!operators || operators.length === 0) && (
-            <p className="text-sm text-slate-400">
-              尚未設定操作者清單，請先至後台新增
-            </p>
+            <p className="text-sm text-ink/40">尚未設定操作者清單，請先至後台新增</p>
           )}
         </div>
       </div>

@@ -1,26 +1,84 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* 品牌色：仿國泰醫院黃綠配色──主色為沉穩的松綠，輔以暖金黃強調色 */
+@theme {
+  --color-brand-50: #f1f7ec;
+  --color-brand-100: #dfedd2;
+  --color-brand-200: #c0dba8;
+  --color-brand-300: #98c377;
+  --color-brand-400: #74a951;
+  --color-brand-500: #578c39;
+  --color-brand-600: #3f6f2b;
+  --color-brand-700: #325823;
+  --color-brand-800: #29461e;
+  --color-brand-900: #213a1a;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-accent-50: #fdf7e6;
+  --color-accent-100: #faecc0;
+  --color-accent-200: #f4d787;
+  --color-accent-300: #edbf50;
+  --color-accent-400: #e3a930;
+  --color-accent-500: #cf9122;
+  --color-accent-600: #a8721a;
+  --color-accent-700: #815717;
+  --color-accent-800: #5f4014;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-ink: #1b2318;
+  --color-paper: #fbfaf5;
+  --color-paper-raised: #ffffff;
+
+  --font-heading: var(--font-noto-serif-tc), "Noto Serif TC", "PMingLiU", serif;
+  --font-body: var(--font-noto-sans-tc), "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --font-data: var(--font-ibm-plex-mono), "IBM Plex Mono", ui-monospace, monospace;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(1200px 480px at 12% -10%, color-mix(in srgb, var(--color-brand-100) 55%, transparent), transparent),
+    radial-gradient(900px 420px at 100% 0%, color-mix(in srgb, var(--color-accent-100) 45%, transparent), transparent),
+    var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+}
+
+h1, h2, h3 {
+  font-family: var(--font-heading);
+  letter-spacing: 0.01em;
+}
+
+.font-data,
+.tabular-nums {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 全站按鈕/連結互動回饋 ----
+   目的：不管哪個頁面的按鈕或連結，按下去都要有明確的「有按到」回饋，
+   且鍵盤操作也要有清楚的焦點樣式（無障礙）。純 CSS，不需 JS 就對全站生效。 */
+a, button {
+  transition: transform 120ms ease, filter 120ms ease, opacity 120ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+button:not(:disabled):active,
+a:active {
+  transform: scale(0.97);
+  filter: brightness(0.96);
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-brand-400);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-accent-200);
+  color: var(--color-ink);
 }

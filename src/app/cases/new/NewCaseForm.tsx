@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import BodyDiagram from "@/components/BodyDiagram";
+import Button from "@/components/ui/Button";
 import { createCaseAction } from "./actions";
 import {
   isFileSystemAccessSupported,
@@ -129,12 +130,12 @@ export default function NewCaseForm({
   }
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-slate-200 bg-white p-6">
+    <form ref={formRef} onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-brand-100 bg-paper-raised p-6">
       <input type="hidden" name="body_part_zone_id" value={selectedZone?.id ?? ""} />
 
       <div>
-        <label className="block text-sm font-medium text-slate-700">負責醫師</label>
-        <select name="doctor_id" required className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+        <label className="block text-sm font-medium text-ink/80">負責醫師</label>
+        <select name="doctor_id" required className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500">
           {doctors.map((d) => (
             <option key={d.id} value={d.id}>
               {d.code} — {d.name}
@@ -143,16 +144,16 @@ export default function NewCaseForm({
         </select>
       </div>
 
-      <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-        <label className="block text-sm font-medium text-slate-700">病歷號（僅存本機，不上雲端）</label>
+      <div className="rounded-md border border-accent-200 bg-accent-50 p-3">
+        <label className="block text-sm font-medium text-ink/80">病歷號（僅存本機，不上雲端）</label>
         <input
           name="mrn"
           value={mrn}
           onChange={(e) => setMrn(e.target.value)}
           placeholder="留空則不建立病歷號對照"
-          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className="mt-1 w-full rounded-md border border-accent-300 px-3 py-2 text-sm outline-none focus:border-accent-500"
         />
-        <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-ink/50">
           <span>
             {!supported
               ? "此瀏覽器不支援本機檔案存取，需使用 Chrome 或 Edge"
@@ -161,7 +162,7 @@ export default function NewCaseForm({
               : "尚未設定本機對照表檔案（送出時會請你選擇）"}
           </span>
           {supported && (
-            <button type="button" onClick={handleChooseFile} className="whitespace-nowrap text-xs text-slate-500 underline">
+            <button type="button" onClick={handleChooseFile} className="whitespace-nowrap text-xs text-accent-700 underline">
               {fileHandle ? "更換對照表位置" : "選擇對照表位置"}
             </button>
           )}
@@ -170,12 +171,12 @@ export default function NewCaseForm({
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-sm font-medium text-slate-700">性別</label>
+          <label className="block text-sm font-medium text-ink/80">性別</label>
           <select
             name="sex"
             value={sex}
             onChange={(e) => setSex(e.target.value)}
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
           >
             <option value="">未填</option>
             <option value="F">女</option>
@@ -184,21 +185,21 @@ export default function NewCaseForm({
           </select>
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700">年齡</label>
+          <label className="block text-sm font-medium text-ink/80">年齡</label>
           <input
             type="number"
             name="age_at_enrollment"
             min={0}
             max={130}
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
           />
         </div>
       </div>
 
       <div>
-        <label className="mb-1 block text-sm font-medium text-slate-700">蟹足腫部位</label>
+        <label className="mb-1 block text-sm font-medium text-ink/80">蟹足腫部位</label>
         <BodyDiagram zones={zones} currentZoneKey={selectedZone?.zone_key} onSelect={setSelectedZone} sex={sex} />
-        <p className="mt-1 text-xs text-slate-500">
+        <p className="mt-1 text-xs text-ink/50">
           {selectedZone
             ? `已選擇：${selectedZone.display_name}`
             : "點選人形圖上的部位（可之後在個案頁面或拍照時變更）"}
@@ -206,17 +207,17 @@ export default function NewCaseForm({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700">病人手機號碼</label>
+        <label className="block text-sm font-medium text-ink/80">病人手機號碼</label>
         <input
           name="phone_number"
           placeholder="供 LINE 綁定通知使用（不存姓名/病歷號）"
-          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
         />
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700">套用追蹤時程範本</label>
-        <select name="schedule_template_id" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+        <label className="block text-sm font-medium text-ink/80">套用追蹤時程範本</label>
+        <select name="schedule_template_id" className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500">
           <option value="">不套用（之後再手動設定）</option>
           {templates.map((t) => (
             <option key={t.id} value={t.id}>
@@ -227,13 +228,13 @@ export default function NewCaseForm({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700">知情同意書已簽署日期</label>
+        <label className="block text-sm font-medium text-ink/80">知情同意書已簽署日期</label>
         <input
           type="date"
           name="consent_signed_at"
-          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
         />
-        <p className="mt-1 text-xs text-slate-400">紙本簽署流程不變，此欄位僅記錄狀態；未填代表尚未簽署。</p>
+        <p className="mt-1 text-xs text-ink/40">紙本簽署流程不變，此欄位僅記錄狀態；未填代表尚未簽署。</p>
       </div>
 
       {error && (
@@ -251,13 +252,9 @@ export default function NewCaseForm({
         </div>
       )}
 
-      <button
-        type="submit"
-        disabled={submitting}
-        className="w-full whitespace-nowrap rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-      >
-        {submitting ? "建立中…" : "建立個案"}
-      </button>
+      <Button type="submit" pending={submitting} pendingText="建立中…" className="w-full">
+        建立個案
+      </Button>
     </form>
   );
 }

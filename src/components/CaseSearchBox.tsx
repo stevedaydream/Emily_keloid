@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { getConfiguredHandle, readAllRows } from "@/lib/localMrnStore";
+import Button from "@/components/ui/Button";
 
 // 搜尋研究編號/醫師/部位可以直接送到伺服器查；但病歷號只存在本機對照表，
 // 所以先在瀏覽器本機把病歷號換成研究編號，再用研究編號去查詢（跟新增個案頁同一套原則）。
@@ -47,15 +48,11 @@ export default function CaseSearchBox({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder={placeholder}
-        className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-1.5 text-sm sm:w-64"
+        className="w-full min-w-0 rounded-md border border-brand-200 px-3 py-1.5 text-sm outline-none focus:border-brand-500 sm:w-64"
       />
-      <button
-        type="submit"
-        disabled={searching}
-        className="whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
-      >
-        {searching ? "搜尋中…" : "搜尋"}
-      </button>
+      <Button type="submit" variant="outline" size="sm" pending={searching} pendingText="搜尋中…">
+        搜尋
+      </Button>
     </form>
   );
 }
