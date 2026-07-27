@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BODY_ZONE_SHAPES, DOSE_CATEGORY_COLOR, DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
+import { bodyZoneShapesFor, silhouetteImageFor, BODY_DIAGRAM_VIEWBOX, DOSE_CATEGORY_COLOR, DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
 
 type Zone = { id: string; zone_key: string; view: "front" | "back"; display_name: string; dose_category: string };
 
@@ -9,16 +9,19 @@ export default function BodyDiagram({
   zones,
   currentZoneKey,
   onSelect,
+  sex,
 }: {
   zones: Zone[];
   currentZoneKey?: string | null;
   onSelect: (zone: Zone) => void;
+  sex?: string | null;
 }) {
   const [view, setView] = useState<"front" | "back">("front");
   const [hovered, setHovered] = useState<string | null>(null);
 
   const visibleZones = zones.filter((z) => z.view === view);
   const hoveredZone = zones.find((z) => z.zone_key === hovered);
+  const zoneShapes = bodyZoneShapesFor(sex);
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -42,9 +45,10 @@ export default function BodyDiagram({
         </div>
       </div>
 
-      <svg viewBox="0 0 200 320" className="mx-auto h-80 w-full max-w-xs touch-manipulation">
+      <svg viewBox={BODY_DIAGRAM_VIEWBOX} className="mx-auto h-80 w-full max-w-xs touch-manipulation">
+        <image href={silhouetteImageFor(view, sex)} x={0} y={0} width={940} height={1136} preserveAspectRatio="xMidYMid meet" />
         {visibleZones.map((z) => {
-          const shape = BODY_ZONE_SHAPES[z.zone_key];
+          const shape = zoneShapes[z.zone_key];
           if (!shape) return null;
           const isCurrent = z.zone_key === currentZoneKey;
           const color = DOSE_CATEGORY_COLOR[z.dose_category] ?? "#94a3b8";

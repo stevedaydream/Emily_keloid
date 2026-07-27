@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { supabaseServer } from "@/lib/supabase";
 import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
+import { computeSF36, computePSQI, SF36_SCALES, computeJSSClassification, computeJSSEvaluation } from "@/lib/scoring";
 
 // 匯出格式比照院內既有的「raw data」寬表（見 c:\...\20230912_keloid病人治療table(1)-2.xlsm），
 // 一人一列，欄位順序與命名沿用舊表，2026 平台新增的結構化欄位接在最後一組（決策 2026-07-27）。
@@ -28,6 +29,7 @@ export async function GET() {
     { data: photos },
     { data: responses },
     { data: answers },
+    { data: intakeRecords },
   ] = await Promise.all([
     supabase.from("cases").select("*, doctors(name), body_part_zones(display_name, dose_category)"),
     supabase.from("case_diagnoses").select("case_id, is_primary, icd_codes(code, description_full)"),
@@ -40,8 +42,11 @@ export async function GET() {
     supabase.from("biobank_checklist_items").select("*"),
     supabase.from("biobank_samples").select("*"),
     supabase.from("photos").select("case_id"),
-    supabase.from("questionnaire_responses").select("id, case_id, questionnaire_templates(category)"),
+    supabase.from("questionnaire_responses").select("id, case_id, submitted_at, questionnaire_templates(name, category)"),
     supabase.from("questionnaire_answers").select("response_id, answer_value, questionnaire_questions(order_no)"),
+    supabase
+      .from("case_intake_option_records")
+      .select("case_id, category, case_intake_option_record_items(case_intake_option_lists(label))"),
   ]);
 
   const byCase = (rows: unknown[] | null): Map<string, any[]> => {
@@ -64,6 +69,16 @@ export async function GET() {
   const photoCountByCase = new Map<string, number>();
   for (const p of photos ?? []) photoCountByCase.set(p.case_id, (photoCountByCase.get(p.case_id) ?? 0) + 1);
 
+  const intakeByCase = byCase(intakeRecords as any);
+  const intakeLabelsFor = (caseId: string, category: string) =>
+    (intakeByCase.get(caseId) ?? [])
+      .filter((r: any) => r.category === category)
+      .flatMap((r: any) =>
+        (r.case_intake_option_record_items ?? []).map((it: any) => first(it.case_intake_option_lists)?.label)
+      )
+      .filter(Boolean)
+      .join("、");
+
   const answersByResponse = new Map<string, { order_no: number; value: unknown }[]>();
   for (const a of answers ?? []) {
     const q = first(a.questionnaire_questions) as { order_no?: number } | undefined;
@@ -72,13 +87,41 @@ export async function GET() {
     answersByResponse.set(a.response_id, arr);
   }
   const vssByCase = new Map<string, Record<number, number>>();
+  const sf36ByCase = new Map<string, Record<number, unknown>>();
+  const psqiByCase = new Map<string, Record<number, unknown>>();
+  const jssClassByCase = new Map<string, Record<number, unknown>>();
+  const jssEvalEntriesByCase = new Map<string, { submitted_at: string; total: number }[]>();
   for (const r of responses ?? []) {
-    const q = first(r.questionnaire_templates) as { category?: string } | undefined;
-    if (q?.category !== "scale") continue;
+    const q = first(r.questionnaire_templates) as { name?: string; category?: string } | undefined;
     const ans = answersByResponse.get(r.id) ?? [];
-    const byOrder: Record<number, number> = {};
-    for (const a of ans) byOrder[a.order_no] = Number(a.value);
-    vssByCase.set(r.case_id, byOrder); // 取最後一筆 VSS 覆蓋（依 responses 查詢順序）
+    const byOrder: Record<number, unknown> = {};
+    for (const a of ans) byOrder[a.order_no] = a.value;
+    // 同一個案若有多筆同份問卷回覆，取查詢順序中最後一筆覆蓋（與既有 VSS 邏輯一致）
+    if (q?.category === "scale") {
+      const numOrder: Record<number, number> = {};
+      for (const a of ans) numOrder[a.order_no] = Number(a.value);
+      vssByCase.set(r.case_id, numOrder);
+    } else if (q?.name === "SF-36 健康調查簡表") {
+      sf36ByCase.set(r.case_id, byOrder);
+    } else if (q?.name === "匹茲堡睡眠品質量表（PSQI）") {
+      psqiByCase.set(r.case_id, byOrder);
+    } else if (q?.name === "JSS 疤痕診斷分類表") {
+      jssClassByCase.set(r.case_id, byOrder);
+    } else if (q?.name === "JSS 症狀與治療追蹤評估表") {
+      const total = computeJSSEvaluation(byOrder);
+      if (total !== null) {
+        const arr = jssEvalEntriesByCase.get(r.case_id) ?? [];
+        arr.push({ submitted_at: r.submitted_at, total });
+        jssEvalEntriesByCase.set(r.case_id, arr);
+      }
+    }
+  }
+  const jssEvalByCase = new Map<string, { baseline: number; latest: number; delta: number }>();
+  for (const [caseId, entries] of jssEvalEntriesByCase) {
+    const sorted = [...entries].sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime());
+    const baseline = sorted[0].total;
+    const latest = sorted[sorted.length - 1].total;
+    jssEvalByCase.set(caseId, { baseline, latest, delta: baseline - latest });
   }
 
   const maxFollowUps = Math.min(30, Math.max(5, ...[...scheduleByCase.values()].map((v) => v.length), 0));
@@ -109,7 +152,14 @@ export async function GET() {
     "VSS總分", "VSS-血管分布", "VSS-色素沉澱", "VSS-柔軟度", "VSS-高度",
     ...BIOBANK_KEYS.map((k) => BIOBANK_LABELS[k] + "(狀態)"),
     ...BIOBANK_KEYS.map((k) => BIOBANK_LABELS[k] + "(日期)"),
+    "生資-細胞量", "生資-儲存盤數",
     "放療進度", "LINE綁定", "資料來源",
+    "蟹足腫初次發生時間", "疾病史", "之前治療醫師", "之前類固醇注射史", "之前中醫治療史", "之前小川令貼布史", "之前放射線治療史",
+    "發生原因", "得知看診資訊", "飲食衛教紀錄", "運動禁忌衛教紀錄",
+    "全部治療方式彙總", "復發觀察次數", "復發情形彙總", "抽血次數（含非常規）", "非常規抽血備註彙總",
+    ...SF36_SCALES.map((s) => `SF36-${s.label}`),
+    "PSQI-主觀睡眠品質", "PSQI-睡眠潛伏期", "PSQI-睡眠時數", "PSQI-睡眠效率", "PSQI-睡眠困擾", "PSQI-安眠藥物使用", "PSQI-日間功能障礙", "PSQI總分", "PSQI睡眠品質判定",
+    "JSS分類總分", "JSS分類判定", "JSS評估-初次總分", "JSS評估-最近總分", "JSS評估-Delta Score",
   ];
 
   const wb = new ExcelJS.Workbook();
@@ -212,6 +262,19 @@ export async function GET() {
 
     const legacyBio = first(legacyBiobankByCase.get(c.id) as any[]) as any;
 
+    const allTreatments = treatmentsByCase.get(c.id) ?? [];
+    const treatmentMethodsSummary = [...new Set(allTreatments.map((t: any) => first(t.treatment_types)?.name).filter(Boolean))].join("、");
+    const recurrenceRecords = allTreatments.filter((t: any) => t.recurrence_observed);
+    const bloodDrawnRecords = allTreatments.filter((t: any) => t.blood_drawn);
+
+    const sf36Answers = sf36ByCase.get(c.id);
+    const sf36Scales = sf36Answers ? computeSF36(sf36Answers).scales : null;
+    const psqiAnswers = psqiByCase.get(c.id);
+    const psqi = psqiAnswers ? computePSQI(psqiAnswers) : null;
+    const jssClassAnswers = jssClassByCase.get(c.id);
+    const jssClass = jssClassAnswers ? computeJSSClassification(jssClassAnswers) : null;
+    const jssEval = jssEvalByCase.get(c.id);
+
     const row = [
       // 基本資料
       c.research_id,
@@ -272,9 +335,36 @@ export async function GET() {
       vss?.[4] ?? "",
       ...BIOBANK_KEYS.map((k) => (biobankMap.get(k)?.collected ? "已收" : "待收")),
       ...BIOBANK_KEYS.map((k) => biobankMap.get(k)?.collected_date ?? ""),
+      legacyBio?.cell_quantity ?? "",
+      legacyBio?.storage_plate_count ?? "",
       sessions.length ? `${doneSessions}/${sessions.length}` : "",
       c.line_bound ? "Y" : "N",
       c.data_source === "legacy_import" ? "舊資料回溯建檔" : "正常收案",
+      c.keloid_onset_date ?? "",
+      c.disease_history ?? "",
+      c.prior_treatment_physician ?? "",
+      c.prior_steroid_treatment ?? "",
+      c.prior_tcm_treatment ?? "",
+      c.prior_ogawa_patch ?? "",
+      c.prior_radiation_treatment ?? "",
+      intakeLabelsFor(c.id, "onset_cause"),
+      intakeLabelsFor(c.id, "referral_source"),
+      intakeLabelsFor(c.id, "diet_education"),
+      intakeLabelsFor(c.id, "exercise_restriction"),
+      treatmentMethodsSummary,
+      recurrenceRecords.length,
+      recurrenceRecords.map((t: any) => t.recurrence_description).filter(Boolean).join("; "),
+      bloodDrawnRecords.length,
+      bloodDrawnRecords.map((t: any) => t.blood_drawn_note).filter(Boolean).join("; "),
+      ...SF36_SCALES.map((s) => sf36Scales?.find((r) => r.key === s.key)?.score ?? ""),
+      ...(psqi ? psqi.components.map((c) => c.score ?? "") : Array(7).fill("")),
+      psqi?.global ?? "",
+      psqi?.global === null || psqi === null ? "" : psqi.poorSleep ? "睡眠品質不佳" : "睡眠品質尚可",
+      jssClass?.total ?? "",
+      jssClass?.categoryLabel ?? "",
+      jssEval?.baseline ?? "",
+      jssEval?.latest ?? "",
+      jssEval?.delta ?? "",
     ];
 
     ws.addRow(row);

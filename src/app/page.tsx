@@ -2,6 +2,7 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase";
 import { PIPELINE_STAGES, type CasePipelineRow, progressTone } from "@/lib/pipeline";
 import InfoTooltip from "@/components/InfoTooltip";
+import CaseSearchBox from "@/components/CaseSearchBox";
 
 type DashboardStats = {
   total_cases: number;
@@ -123,12 +124,14 @@ export default async function DashboardPage({
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">統計儀表板 Dashboard</h1>
         <Link href="/cases" className="text-sm text-slate-400 hover:underline">
           個案列表 →
         </Link>
       </div>
+
+      <CaseSearchBox redirectTo="/cases" />
 
       {/* KPI 卡片 */}
       <section id="section-kpi" data-nav-section data-nav-label="KPI 卡片" className="scroll-mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">

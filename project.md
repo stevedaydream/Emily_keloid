@@ -138,3 +138,62 @@
 - **問卷/拍照頁面**：已移除模擬 LINE 對話框視覺包裝，改為一般診間表單/相機頁面；`submitted_via`/`uploaded_via` 預設值改為 `staff`。
 - **衛教機器人**：`/admin/health-kb` 維護資料庫內容，`/kb-chat` 為示範對話頁（`src/lib/gemini.ts`），呼叫 Gemini API 並在 system instruction 中強制限定只能依資料庫內容回答。**尚未設定 `GEMINI_API_KEY` 環境變數**，需要使用者提供金鑰（Google AI Studio 免費層）才能實際測試；未設定金鑰時頁面會顯示提示訊息而非報錯。
 - **未變動**：`v_case_pipeline_progress` 的 8 階段定義本次未擴充（仍是通用的建檔/同意書/LINE/診斷/治療/時程/追蹤/完整度），新功能（部位/放療/生物資料庫）目前是個案頁面上的獨立區塊，未整合進階段進度條的 8 個燈號，之後如需要可再擴充。
+
+### 2026-07-27：對照《Keloid 收案資料平台建置》需求文件補齊落差
+
+使用者提供部長端的完整需求文件（docx＋截圖），逐項比對後發現多處欄位缺漏或資料模型不一致，已補齊以下部分：
+
+- **通用「後台可維護選單＋個案多選紀錄」機制**：新增 `case_intake_option_lists`／`case_intake_option_records`／`case_intake_option_record_items`（比照醫學術語庫模式），涵蓋四類：發生原因、如何得知看診資訊、飲食衛教、運動禁忌衛教——**飲食衛教/運動禁忌衛教特別要求做成可維護清單，不能只是單一勾選**（決策）。後台管理頁：`/admin/intake-options`。
+- **病史與過往治療**：`cases` 新增 `keloid_onset_date`（初次發生時間）、`disease_history`（一般疾病史，與 keloid_history 不同）、`prior_treatment_physician`／`prior_steroid_treatment`／`prior_tcm_treatment`／`prior_ogawa_patch`／`prior_radiation_treatment`（收案前的治療史，與平台內 treatment_records 追蹤的「收案後」治療是不同概念）。個案頁面新增「病史與過往治療」區塊。
+- **治療方式改為單次可複選多筆**：`TreatmentForm.tsx` 從單選改成 checkbox 多選，選中的每種方式各自展開欄位區塊，送出時每種方式各自建立一筆 `treatment_records`（同一天可有多筆），共用同一個治療/追蹤日期。新增「藥膏」「貼片」「追蹤（無治療）」三種治療類型。
+- **復發改為每次追蹤都可記錄**：`treatment_records` 新增 `recurrence_observed`／`recurrence_description` 欄位，取代原本只能在個案層級記一次的做法；`cases.recurrence_status` 等欄位保留（仍作為統計截止時的個案層級結果快照，供舊資料 Excel 對齊使用），兩者並存、用途不同。
+- **抽血從固定兩時間點放寬為任何追蹤時間點**：`treatment_records` 新增 `blood_drawn`／`blood_drawn_note`，任何一筆治療/追蹤紀錄都可勾選抽血並於備註註記是否為非常規時間點；原本 `biobank_checklist_items` 的術前/術後第一天兩個固定項目保留不動（仍是生物資料庫檢體收取的主要追蹤方式）。
+- **生物資料庫補欄位**：`biobank_samples` 新增 `cell_quantity`（細胞量）、`storage_plate_count`（儲存盤數，與 `cryotube_location` 凍管位置是不同資訊）。
+- **匯出同步更新**：`/api/export/structured-data` 的「2026平台新增欄位」群組新增上述所有欄位（含依個案彙總的治療方式清單、復發次數與情形、抽血次數與非常規備註等）。
+
+**2026-07-27 追加：SF-36／PSQI 題目已建置完成**（`supabase/migrations/20260727030000_sf36_psqi_questionnaires_seed.sql`）：
+- SF-36 健康調查簡表：36 道子題，`category='other'`（刻意不用 `'scale'`，避免跟 VSS 匯出邏輯裡假設 order_no 1-4 的計分寫死邏輯衝突）
+- 匹茲堡睡眠品質量表 PSQI：18 道子題（含4題時間類用 text/number、10題睡眠困擾頻率單選、1題其他原因文字說明、4題整體評估單選）
+- 兩者皆已可透過個案頁面「填寫問卷」直接選用並收資料
+- **正式標準化計分公式尚未實作**（SF-36 各分量表轉換為0-100分；PSQI 7面向組合計算0-21分），目前只會收原始逐題答案，計分邏輯留待下一階段依需求撰寫
+
+**2026-07-27 追加：Lab 生物標記數據模組已建置完成**：
+- 新增 `lab_marker_definitions`（後台可維護標記清單，比照 term_library 模式，已預先塞入 IgE/Exosome/IL-1α/IL-1β/IL-6/TNF-α/MMP2/MMP9 共 8 項含單位）與 `lab_results`（個案＋標記＋採檢日期＋數值，`value` 存數字、`value_text` 保留無法轉數字的原始字串如 `<0.35` 等檢驗報告常見寫法）
+- 後台管理頁：`/admin/lab-markers`（新增標記／停用啟用）
+- 個案頁面新增「Lab 生物標記數據」區塊：選標記＋採檢日期＋數值＋備註即可新增，列表依採檢日期新到舊排序
+- **尚未串接**：結構化資料匯出（`/api/export/structured-data`）目前還沒有把 lab 數據併入匯出欄位；因為同一個案可能有多標記×多次採檢，wide-table 格式怎麼攤平需要再確認（例如「每標記最新一筆」或「每標記每次採檢各一欄」），先收資料，匯出邏輯留待下一步
+
+**2026-07-27 追加：SF-36／PSQI 正式標準化計分公式已實作**（`src/lib/scoring.ts`）：
+- SF-36：採用 RAND Corporation 公版「RAND 36-Item Health Survey 1.0」計分法（公開資料，非需授權的 QualityMetric SF-36 版本），依 order_no 1-36 對照官方 Table 1（子題→0-100分重新編碼表）與 Table 2（8 個分量表各自平均的子題清單），輸出生理功能/生理健康角色限制/情緒問題角色限制/活力疲勞/情緒健康/社交功能/身體疼痛/一般健康感受 8 個 0-100 分數，缺題採「已答題目平均」（官方規則），非整份問卷作廢
+- PSQI：採用 Buysse et al. 1989 原始計分演算法，7 面向各 0-3 分（主觀睡眠品質/睡眠潛伏期/睡眠時數/睡眠效率/睡眠困擾/安眠藥物使用/日間功能障礙），總分 0-21 分，>5 分＝睡眠品質不佳。**已知限制**：本平台第5j題（其他睡眠困擾原因）只收文字說明未收 0-3 頻率評分（官方要求 5b-5j 共9小題加總，本平台只加總 5b-5i 共8小題），會讓極少數重度個案的睡眠困擾面向分數略為低估，其餘6面向不受影響；睡眠效率計算需解析 Q1/Q3 的時間文字欄位與 Q4 的時數文字欄位，格式無法解析時該筆與總分回傳 null（顯示「資料不足」）而非用 0 頂替
+- 個案頁面「問卷回覆紀錄」區塊：SF-36/PSQI 回覆會即時顯示計算後的分量表分數徽章
+- 結構化資料匯出：`NEW_HEADERS` 新增 SF-36 8 分量表欄位＋PSQI 7 面向＋總分＋睡眠品質判定欄位
+
+**2026-07-27 追加：人形部位圖蒙板對齊已完成**：使用者提供的 Gemini 生成人形參考圖（2x2：男/女×正/背面）經像素量測後確認可用——關鍵是原本用 alpha 通道判斷輪廓的腳本失敗（格線背景是烘焙進 RGB 像素、非真透明），改用白色 RGB 門檻（r,g,b>210）量測後成功取得正面/背面輪廓的真實邊界（頭頂/下巴/肩線/手臂末端/髖部/膝蓋等 y 座標與寬度剖面）。後續處理：
+- 取男性版本裁切圖作為通用輪廓（正背面各一張，未做男女差異化，比照原本「非解剖寫實、去性別」的簡化人形圖設計原則）
+- 去背並統一填色為淺灰（slate-300），輸出至 `public/body-diagram/front.png`、`back.png`
+- `src/lib/bodyZones.ts` 的 18 個正面／15 個背面熱區座標，依實測的頭/頸/肩/軀幹/手臂/髖/腿真實像素邊界重新校正（viewBox 從原本憑空猜測的 `0 0 200 320` 改為對齊圖片實際像素的 `0 0 940 1136`），zone_key 命名不變，資料庫 `body_part_zones` 不需異動
+- `BodyDiagram.tsx` 新增 `<image>` 背景圖層渲染輪廓圖，熱區色塊疊加其上；用 Pillow 疊圖腳本實測驗證對齊效果良好（頭/肩/軀幹/四肢/腿部熱區與輪廓吻合，僅少數手部熱區有些微超出輪廓，可接受，畢竟是點選熱區而非精細解剖遮罩）
+
+**2026-07-27 追加：人形部位圖依性別切換男/女蒙板**：`src/lib/bodyZones.ts` 新增 `BODY_ZONE_SHAPES_FEMALE`（獨立一套座標，實測女性輪廓圖裁切位置的頭/頸/肩/胸/腰/四肢真實像素邊界，不能沿用男性座標，因兩張裁切圖的水平中心點與姿勢比例不同），並新增 `bodyZoneShapesFor(sex)`／`silhouetteImageFor(view, sex)` 依性別回傳對應座標與底圖（`front-female.png`/`back-female.png`，同樣的白色門檻去背處理）；未填/其他性別預設沿用男性版本。`BodyDiagram.tsx` 新增 `sex` prop；`/cases/new` 表單將性別選單移到人形圖之前並用 client state 即時連動；既有個案的拍照流程（`/patient/[caseId]/photo`）從 `cases.sex` 帶入。
+
+**2026-07-27 追加：病歷號↔研究編號本機對照機制**（決策#1的實作落地）：
+- 核心原則：病歷號絕對不送到 Vercel/Supabase，但頁面本身可以放在同一個網站上——差別在於「存檔邏輯是否呼叫伺服器」，不在於「頁面網址在哪」。
+- `src/lib/localMrnStore.ts`：全部函式皆為瀏覽器端執行（`"use client"`），用 File System Access API（僅 Chrome/Edge 桌面版支援）直接讀寫使用者選定的本機 CSV 檔案；檔案 handle 存在 IndexedDB，同一瀏覽器下次造訪可重用（仍需依規範重新確認權限，但不必重選檔案）。權限確認（`requestPermission`）務必在使用者手勢觸發的當下呼叫，不能包在無關的 await 之後，否則瀏覽器會拒絕彈出授權。
+- `/cases/new`：新增「病歷號」欄位（明確標示「僅存本機，不上雲端」），送出邏輯改成 client-side 手動兩段式：①用不含病歷號的 FormData 呼叫 `createCaseAction`（改為 return `{caseId, researchId}` 而非直接 `redirect`）建立雲端個案 ②用回傳的研究編號＋本機保留的病歷號寫入本機 CSV。若本機寫入失敗，個案仍已建立成功，畫面會顯示待補資訊與「重試寫入」按鈕，避免這筆對應憑空遺失。
+- `/local-tools/mrn-mapping`（新增頁，NAV_LINKS 可進入）：檢視/搜尋本機對照表、手動補登舊資料的對照（用研究編號查 `lookupCaseIdByResearchId` server action 帶出個案 id，這支 action 只接受研究編號，不接受病歷號參數）。
+- `CaseSearchBox`（`/cases`、`/` 首頁皆有）：輸入病歷號時，先在瀏覽器本機比對對照表換成研究編號，再用研究編號查詢 Supabase（`?q=` 參數，`/cases` 頁面對 research_id/醫師代碼與姓名/部位做子字串比對）。
+- 型別補丁：`src/types/file-system-access.d.ts` 補齊 TS lib.dom.d.ts 缺少的 `queryPermission`/`requestPermission`/`showSaveFilePicker` 宣告。
+
+**2026-07-27 追加：發生原因/衛教選單「其他」可填詳細說明**：`IntakeOptionForm.tsx`（新拆出的 client component）用 checkbox 狀態偵測是否勾選了 label 以「其他」開頭的選項，勾選時才顯示一個 `notes` 文字輸入框（`case_intake_option_records.notes` 欄位原本就有、只是先前 UI 沒開放輸入）。判斷純靠 label 前綴，哪個分類有「其他」選項由後台 `/admin/intake-options` 自行決定，不寫死在程式碼。
+
+**2026-07-27 追加：JSS 疤痕量表（JSW Scar Scale, 2015版）已建置**（`supabase/migrations/20260727050000_jss_scar_scale_seed.sql`、計分邏輯在 `src/lib/scoring.ts`）：
+- 拆成兩份獨立問卷（`category='other'`，原因同 SF-36/PSQI，避免跟 VSS 的 `category='scale'` 加總邏輯衝突）：
+  - **JSS 疤痕診斷分類表**（初診用，7題）：4項臨床特徵（高度隆起/發紅血管/硬度浸潤/生長趨勢，各0/1/3分）＋部位風險（1/2/3分，單選三個風險等級）＋家族史／個人史（各0/2分）。選項的 value 就是計分點數，加總即總分：0-5分成熟疤痕、6-15分肥厚性疤痕、16分以上蟹足腫。
+  - **JSS 症狀與治療追蹤評估表**（每次追蹤用，6題）：硬度/隆起高度/發紅程度/充血範圍/疼痛感/瘙癢感，各0-3分，總分0-18分。
+- 個案頁面「問卷回覆紀錄」：分類表顯示總分＋判定；評估表顯示總分，並自動算 **Delta Score**（以個案最早一筆評估回覆的總分當基準，跟每筆回覆相減，正值代表改善）。
+- 結構化匯出新增對應欄位（分類總分/判定、評估初次總分/最近總分/Delta Score）。
+
+**仍未處理**：
+- 治療紀錄目前仍依賴個案層級的主要部位，沒有「每筆治療紀錄各自的部位」欄位（如同一個案在不同部位分開治療會無法區分）
+- Lab 數據尚未併入結構化資料匯出

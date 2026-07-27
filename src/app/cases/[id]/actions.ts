@@ -55,42 +55,73 @@ export async function addTermRecordAction(formData: FormData) {
 
 export async function addTreatmentRecordAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
-  const treatmentTypeId = formData.get("treatment_type_id") as string;
-  const presetId = (formData.get("preset_id") as string) || null;
+  const treatmentTypeIds = formData.getAll("type_ids") as string[];
   const treatmentDate = formData.get("treatment_date") as string;
-  const freeText = (formData.get("free_text") as string) || null;
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
 
-  // 從動態欄位收集 field_values（欄位名稱以 field__ 前綴傳入）
-  const fieldValues: Record<string, string> = {};
-  for (const [key, value] of formData.entries()) {
-    if (key.startsWith("field__") && typeof value === "string") {
-      fieldValues[key.replace("field__", "")] = value;
+  if (treatmentTypeIds.length === 0) throw new Error("請至少選擇一種治療方式");
+
+  // 當次追蹤共同的觀察欄位（決策 2026-07-27：治療方式可複選多筆，
+  // 復發與抽血改為每次追蹤都可記錄，非個案層級單一快照）
+  const recurrenceObserved = formData.has("recurrence_observed") ? formData.get("recurrence_observed") === "on" : null;
+  const recurrenceDescription = (formData.get("recurrence_description") as string) || null;
+  const bloodDrawn = formData.get("blood_drawn") === "on";
+  const bloodDrawnNote = (formData.get("blood_drawn_note") as string) || null;
+
+  const { data: treatmentTypes } = await supabase
+    .from("treatment_types")
+    .select("id, name")
+    .in("id", treatmentTypeIds);
+
+  const createdRecordIds: { id: string; typeName: string | undefined }[] = [];
+
+  for (const typeId of treatmentTypeIds) {
+    const presetId = (formData.get(`preset__${typeId}`) as string) || null;
+    const freeText = (formData.get(`freetext__${typeId}`) as string) || null;
+
+    const fieldValues: Record<string, string> = {};
+    const prefix = `field__${typeId}__`;
+    for (const [key, value] of formData.entries()) {
+      if (key.startsWith(prefix) && typeof value === "string" && value !== "") {
+        fieldValues[key.replace(prefix, "")] = value;
+      }
     }
+
+    const { data: record, error } = await supabase
+      .from("treatment_records")
+      .insert({
+        case_id: caseId,
+        treatment_type_id: typeId,
+        preset_id: presetId,
+        field_values: fieldValues,
+        free_text: freeText,
+        treatment_date: treatmentDate,
+        recorded_by: operator,
+        recurrence_observed: recurrenceObserved,
+        recurrence_description: recurrenceDescription,
+        blood_drawn: bloodDrawn,
+        blood_drawn_note: bloodDrawnNote,
+      })
+      .select("id")
+      .single();
+    if (error || !record) throw error ?? new Error("建立治療紀錄失敗");
+
+    createdRecordIds.push({ id: record.id, typeName: treatmentTypes?.find((t) => t.id === typeId)?.name });
   }
 
-  const { data: record, error } = await supabase
-    .from("treatment_records")
-    .insert({
-      case_id: caseId,
-      treatment_type_id: treatmentTypeId,
-      preset_id: presetId,
-      field_values: fieldValues,
-      free_text: freeText,
-      treatment_date: treatmentDate,
-      recorded_by: operator,
-    })
-    .select("id")
-    .single();
-  if (error || !record) throw error ?? new Error("建立治療紀錄失敗");
-
-  await logAudit({ caseId, operatorName: operator, action: "add_treatment_record", entity: "treatment_records", entityId: record.id });
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "add_treatment_record",
+    entity: "treatment_records",
+    detail: { typeIds: treatmentTypeIds, count: createdRecordIds.length },
+  });
 
   // 登打「手術切除」時，依個案部位分類自動產生放療待辦（決策 2026-07-26）
-  const { data: treatmentType } = await supabase.from("treatment_types").select("name").eq("id", treatmentTypeId).single();
-  if (treatmentType?.name === "手術切除") {
-    await generateRadiotherapySessions(supabase, caseId, treatmentDate, record.id);
+  const surgeryRecord = createdRecordIds.find((r) => r.typeName === "手術切除");
+  if (surgeryRecord) {
+    await generateRadiotherapySessions(supabase, caseId, treatmentDate, surgeryRecord.id);
   }
 
   revalidatePath(`/cases/${caseId}`);
@@ -298,16 +329,105 @@ export async function updateLegacyBiobankAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
   const paraffinBlockNo = (formData.get("paraffin_block_no") as string) || null;
   const cryotubeLocation = (formData.get("cryotube_location") as string) || null;
+  const cellQuantity = (formData.get("cell_quantity") as string) || null;
+  const storagePlateCount = (formData.get("storage_plate_count") as string) || null;
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
 
   await supabase
     .from("biobank_samples")
     .upsert(
-      { case_id: caseId, paraffin_block_no: paraffinBlockNo, cryotube_location: cryotubeLocation },
+      {
+        case_id: caseId,
+        paraffin_block_no: paraffinBlockNo,
+        cryotube_location: cryotubeLocation,
+        cell_quantity: cellQuantity,
+        storage_plate_count: storagePlateCount,
+      },
       { onConflict: "case_id" }
     );
 
   await logAudit({ caseId, operatorName: operator, action: "update_legacy_biobank", entity: "biobank_samples" });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+export async function updatePriorHistoryAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  const fields = [
+    "keloid_onset_date",
+    "disease_history",
+    "prior_treatment_physician",
+    "prior_steroid_treatment",
+    "prior_tcm_treatment",
+    "prior_ogawa_patch",
+    "prior_radiation_treatment",
+  ] as const;
+
+  const update: Record<string, string | null> = {};
+  for (const f of fields) update[f] = (formData.get(f) as string) || null;
+
+  await supabase.from("cases").update(update).eq("id", caseId);
+
+  await logAudit({ caseId, operatorName: operator, action: "update_prior_history", entity: "cases" });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+export async function addIntakeOptionRecordAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const category = formData.get("category") as string;
+  const optionIds = formData.getAll("option_ids") as string[];
+  const notes = (formData.get("notes") as string) || null;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  const { data: record, error } = await supabase
+    .from("case_intake_option_records")
+    .insert({ case_id: caseId, category, recorded_by: operator, notes })
+    .select("id")
+    .single();
+  if (error || !record) throw error ?? new Error("建立紀錄失敗");
+
+  if (optionIds.length > 0) {
+    await supabase
+      .from("case_intake_option_record_items")
+      .insert(optionIds.map((optionId) => ({ record_id: record.id, option_id: optionId })));
+  }
+
+  await logAudit({ caseId, operatorName: operator, action: "add_intake_option_record", entity: "case_intake_option_records", entityId: record.id, detail: { category, optionIds } });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+export async function addLabResultAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const markerId = formData.get("marker_id") as string;
+  const sampleDate = (formData.get("sample_date") as string) || new Date().toISOString().slice(0, 10);
+  const rawValue = (formData.get("value") as string)?.trim();
+  const note = (formData.get("note") as string) || null;
+  if (!markerId) return;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  const numericValue = rawValue && !Number.isNaN(Number(rawValue)) ? Number(rawValue) : null;
+  const valueText = rawValue && numericValue === null ? rawValue : null;
+
+  const { data: result, error } = await supabase
+    .from("lab_results")
+    .insert({
+      case_id: caseId,
+      marker_id: markerId,
+      sample_date: sampleDate,
+      value: numericValue,
+      value_text: valueText,
+      note,
+      recorded_by: operator,
+    })
+    .select("id")
+    .single();
+  if (error || !result) throw error ?? new Error("建立 Lab 數據失敗");
+
+  await logAudit({ caseId, operatorName: operator, action: "add_lab_result", entity: "lab_results", entityId: result.id, detail: { markerId, sampleDate } });
   revalidatePath(`/cases/${caseId}`);
 }
