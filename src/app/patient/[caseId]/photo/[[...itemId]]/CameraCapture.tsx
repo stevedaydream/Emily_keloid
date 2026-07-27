@@ -10,6 +10,7 @@ export default function CameraCapture({
   zoneKey,
   zoneDisplayName,
   doseCategory,
+  lesionId,
   onBack,
   onDone,
 }: {
@@ -18,6 +19,7 @@ export default function CameraCapture({
   zoneKey: string;
   zoneDisplayName: string;
   doseCategory: string;
+  lesionId?: string | null;
   onBack: () => void;
   onDone: () => void;
 }) {
@@ -86,6 +88,7 @@ export default function CameraCapture({
     formData.append("case_id", caseId);
     formData.append("item_id", itemId);
     formData.append("zone_key", zoneKey);
+    if (lesionId) formData.append("lesion_id", lesionId);
     formData.append("file", blob, "photo.jpg");
     if (thumbBlob) formData.append("thumb", thumbBlob, "thumb.jpg");
     const result = await uploadPhotoAction(formData);

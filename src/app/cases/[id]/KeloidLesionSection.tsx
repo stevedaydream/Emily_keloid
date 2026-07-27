@@ -5,6 +5,7 @@ import { addKeloidLesionAction, deleteKeloidLesionAction } from "./actions";
 
 type Lesion = {
   id: string;
+  site_no: number | null;
   body_site: string;
   length_cm: number | null;
   width_cm: number | null;
@@ -22,13 +23,14 @@ export default function KeloidLesionSection({ caseId, lesions }: { caseId: strin
   return (
     <div>
       <label className="block text-xs font-medium text-ink/70">
-        現存病灶大小測量（目前仍存在的蟹足腫，可能不只一處）
+        蟹足腫部位（可多處，依序編號 1、2…，各自可填描述與尺寸；拍照時可直接點選對應部位）
       </label>
 
       <ul className="mt-1 space-y-1">
         {lesions.map((l) => (
           <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-brand-100 px-3 py-1.5 text-sm">
             <span>
+              <b className="mr-1 text-brand-700">部位{l.site_no}</b>
               <b>{l.body_site}</b>
               <span className="ml-2 font-data text-ink/60">{formatSize(l)}</span>
               {l.note && <span className="ml-2 text-xs text-ink/40">（{l.note}）</span>}
