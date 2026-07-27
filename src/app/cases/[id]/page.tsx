@@ -979,10 +979,10 @@ export default async function CaseDetailPage({
                       <div className="mt-1">
                         {result ? (
                           <span className="whitespace-nowrap rounded bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">
-                            總分 {result.total} 分 ・ {result.categoryLabel}
+                            JSS 總分 {result.total} / 25
                           </span>
                         ) : (
-                          <span className="text-xs text-ink/40">資料不足，無法判定</span>
+                          <span className="text-xs text-ink/40">資料不足，無法計分</span>
                         )}
                       </div>
                     );

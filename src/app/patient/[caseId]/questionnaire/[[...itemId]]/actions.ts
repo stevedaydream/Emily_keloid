@@ -49,7 +49,7 @@ export async function submitQuestionnaireAction(formData: FormData) {
   if (template?.name === "JSS 疤痕診斷分類表") {
     const result = computeJSSClassification(answersByOrder);
     if (result) {
-      await supabase.from("cases").update({ jsw_score: `${result.total}分（${result.categoryLabel}）` }).eq("id", caseId);
+      await supabase.from("cases").update({ jsw_score: `${result.total} / 25` }).eq("id", caseId);
     }
   }
 
