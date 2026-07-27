@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import { supabaseServer } from "@/lib/supabase";
 import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
-import { computeSF36, computePSQI, SF36_SCALES, computeJSSClassification, computeJSSEvaluation } from "@/lib/scoring";
+import { computeSF36, computePSQI, SF36_SCALES, computeJSSClassification } from "@/lib/scoring";
 
 // 匯出格式比照院內既有的「raw data」寬表（見 c:\...\20230912_keloid病人治療table(1)-2.xlsm），
 // 一人一列，欄位順序與命名沿用舊表，2026 平台新增的結構化欄位接在最後一組（決策 2026-07-27）。
@@ -141,8 +141,9 @@ export async function GET() {
   const vssByCase = new Map<string, Record<number, number>>();
   const sf36ByCase = new Map<string, Record<number, unknown>>();
   const psqiByCase = new Map<string, Record<number, unknown>>();
-  const jssClassByCase = new Map<string, Record<number, unknown>>();
-  const jssEvalEntriesByCase = new Map<string, { submitted_at: string; total: number }[]>();
+  // JSS 疤痕診斷分類表（JSW Scar Scale 2015）每次追蹤重複施測，逐筆收集總分後算初次/最近/Delta
+  // （2026-07-27 決策：原本另有一份 6 題追蹤評估表，已刪除只留這份正式量表）
+  const jssEntriesByCase = new Map<string, { submitted_at: string; total: number }[]>();
   for (const r of responses ?? []) {
     const q = first(r.questionnaire_templates) as { name?: string; category?: string } | undefined;
     const ans = answersByResponse.get(r.id) ?? [];
@@ -158,22 +159,20 @@ export async function GET() {
     } else if (q?.name === "匹茲堡睡眠品質量表（PSQI）") {
       psqiByCase.set(r.case_id, byOrder);
     } else if (q?.name === "JSS 疤痕診斷分類表") {
-      jssClassByCase.set(r.case_id, byOrder);
-    } else if (q?.name === "JSS 症狀與治療追蹤評估表") {
-      const total = computeJSSEvaluation(byOrder);
-      if (total !== null) {
-        const arr = jssEvalEntriesByCase.get(r.case_id) ?? [];
+      const total = computeJSSClassification(byOrder)?.total;
+      if (total !== undefined) {
+        const arr = jssEntriesByCase.get(r.case_id) ?? [];
         arr.push({ submitted_at: r.submitted_at, total });
-        jssEvalEntriesByCase.set(r.case_id, arr);
+        jssEntriesByCase.set(r.case_id, arr);
       }
     }
   }
-  const jssEvalByCase = new Map<string, { baseline: number; latest: number; delta: number }>();
-  for (const [caseId, entries] of jssEvalEntriesByCase) {
+  const jssByCase = new Map<string, { baseline: number; latest: number; delta: number }>();
+  for (const [caseId, entries] of jssEntriesByCase) {
     const sorted = [...entries].sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime());
     const baseline = sorted[0].total;
     const latest = sorted[sorted.length - 1].total;
-    jssEvalByCase.set(caseId, { baseline, latest, delta: baseline - latest });
+    jssByCase.set(caseId, { baseline, latest, delta: baseline - latest });
   }
 
   const maxFollowUps = Math.min(30, Math.max(5, ...[...scheduleByCase.values()].map((v) => v.length), 0));
@@ -239,7 +238,7 @@ export async function GET() {
     "全部治療方式彙總", "復發觀察次數", "復發情形彙總", "抽血次數（含非常規）", "非常規抽血備註彙總",
     ...SF36_SCALES.map((s) => `SF36-${s.label}`),
     "PSQI-主觀睡眠品質", "PSQI-睡眠潛伏期", "PSQI-睡眠時數", "PSQI-睡眠效率", "PSQI-睡眠困擾", "PSQI-安眠藥物使用", "PSQI-日間功能障礙", "PSQI總分", "PSQI睡眠品質判定",
-    "JSS分類總分", "JSS評估-初次總分", "JSS評估-最近總分", "JSS評估-Delta Score",
+    "JSS-初次總分", "JSS-最近總分", "JSS-Delta Score",
     ...LAB_HEADERS,
   ];
 
@@ -386,9 +385,7 @@ export async function GET() {
     const sf36Scales = sf36Answers ? computeSF36(sf36Answers).scales : null;
     const psqiAnswers = psqiByCase.get(c.id);
     const psqi = psqiAnswers ? computePSQI(psqiAnswers) : null;
-    const jssClassAnswers = jssClassByCase.get(c.id);
-    const jssClass = jssClassAnswers ? computeJSSClassification(jssClassAnswers) : null;
-    const jssEval = jssEvalByCase.get(c.id);
+    const jss = jssByCase.get(c.id);
 
     const row = [
       // 基本資料
@@ -478,10 +475,9 @@ export async function GET() {
       ...(psqi ? psqi.components.map((c) => c.score ?? "") : Array(7).fill("")),
       psqi?.global ?? "",
       psqi?.global === null || psqi === null ? "" : psqi.poorSleep ? "睡眠品質不佳" : "睡眠品質尚可",
-      jssClass?.total ?? "",
-      jssEval?.baseline ?? "",
-      jssEval?.latest ?? "",
-      jssEval?.delta ?? "",
+      jss?.baseline ?? "",
+      jss?.latest ?? "",
+      jss?.delta ?? "",
       ...labMarkerList.flatMap((m) => {
         const rows = labByCaseMarker.get(c.id)?.get(m.id) ?? [];
         const latest = rows[rows.length - 1];

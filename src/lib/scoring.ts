@@ -171,7 +171,9 @@ function bucket(value: number, thresholds: [number, number, number]): number {
 }
 
 // ---------- JSS 疤痕量表（JSW Scar Scale, 2015 版）----------
-// 兩份問卷的選項 value 本身就是計分點數，直接加總即為總分，不需重新編碼。
+// 選項 value 本身就是計分點數，直接加總即為總分，不需重新編碼。
+// 2026-07-27 決策：原本另有一份 6 題的「JSS 症狀與治療追蹤評估表」，已刪除只留這份正式量表；
+// 追蹤改為同一份量表重複施測（疤痕量表的標準用法），Delta Score 以歷次總分相減計算。
 
 function sumOrders(answers: AnswerMap, orders: number[]): number | null {
   const values = orders
@@ -196,7 +198,3 @@ export function computeJSSClassification(answers: AnswerMap): JSSClassificationR
   return { total };
 }
 
-// 症狀與治療追蹤評估表（6題，各0-3分，總分0-18分，分數越高病況越嚴重）。
-export function computeJSSEvaluation(answers: AnswerMap): number | null {
-  return sumOrders(answers, [1, 2, 3, 4, 5, 6]);
-}

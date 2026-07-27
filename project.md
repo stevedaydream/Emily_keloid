@@ -286,9 +286,14 @@
 - 個案頁：診斷選單抽成 `DiagnosisPicker.tsx`（client component），**選單選任一邊即時顯示對應的另一邊**；已記錄的診斷標籤也附帶顯示對照碼（`↔ [ICD-9] 7014`）。
 - 後台 `/admin/icd`：改為「雙向對照組」（同 key 的碼一組顯示，只有單邊時標示「無法雙向對照」）＋「未對照」兩區，新增/編輯表單都可填「對照鍵」（附 datalist 帶出既有 key）。
 
+**2026-07-27 追加：JSS 量表只留一份** — migration `20260727170000_drop_jss_evaluation_questionnaire.sql`：
+- 保留「JSS 疤痕診斷分類表」（12 題／總分 0-25，規格文件的正式 JSW Scar Scale 2015），刪除「JSS 症狀與治療追蹤評估表」（6 題／總分 0-18）。刪除當下該問卷 0 筆回覆，無資料損失；migration 仍先把指向它的 `case_schedule_items`／`schedule_template_items.questionnaire_id` 解除指定再刪。
+- **追蹤改為同一份正式量表重複施測**（疤痕量表的標準用法），Delta Score 從「追蹤評估表的歷次總分」改為「分類表的歷次總分」相減（`src/lib/scoring.ts` 移除 `computeJSSEvaluation`；個案頁「問卷回覆紀錄」的分類表回覆第二次以後會附 Delta 徽章）。
+- 匯出欄位：`JSS分類總分／JSS評估-初次總分／JSS評估-最近總分／JSS評估-Delta Score` 四欄改為 `JSS-初次總分／JSS-最近總分／JSS-Delta Score` 三欄。
+- 送出分類表時自動回填 `cases.jsw_score` 的既有邏輯不變。
+
 **仍未處理 / 待確認**：
-- **ICD 對照 migration 尚未套用**：`20260727160000_icd_cgh_bidirectional_mapping.sql` 需在 Supabase SQL Editor 執行
-- **JSS 量表目前有兩份，使用者要求只留一份**（「JSS 疤痕診斷分類表」12題/0-25分＝正式 JSW Scar Scale 2015；「JSS 症狀與治療追蹤評估表」6題/0-18分），待確認留哪一份後再處理（兩份目前都是 0 筆回覆，刪除不會影響既有資料；若留分類表，Delta Score 邏輯需改掛到分類表的歷次總分上）
+- **兩支 migration 尚未套用**：`20260727160000_icd_cgh_bidirectional_mapping.sql`、`20260727170000_drop_jss_evaluation_questionnaire.sql`，需在 Supabase SQL Editor 依序執行
 - 有 4 筆先前手動新增的病灶沒有部位分類可回填（CHN-2026-001 左耳垂、CHN-2026-003 右耳垂、YAN-2026-005 左胸與右上背），需在個案頁病灶清單用下拉選單補指定，否則該部位不會自動排放療；連帶有 4 筆舊放療列（CHN-2026-001 一次、YAN-2026-005 三次）掛不到部位，會歸在放療區塊的「未指定部位」組
 - 舊治療紀錄 14 筆只有 1 筆掛到 `lesion_id`：多數舊紀錄 `body_site` 是空的（建立時還沒這個欄位），YAN-2026-005 那幾筆寫「右肩胛」但該個案病灶叫「左胸」「右上背」，文字對不上
 - 上述 lab 匯出／改問卷／照片網址三項改動已通過 `tsc --noEmit` 與 `next build`，但**尚未實際跑過瀏覽器實測**（本機缺 `.env.local`，無法連 Supabase 起 dev server）；部署後建議實測三件事：匯出檔第二張工作表有資料、個案頁換問卷後連結指向新問卷、照片頁停留超過 1 小時仍看得到圖

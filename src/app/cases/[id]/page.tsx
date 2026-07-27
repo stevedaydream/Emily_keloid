@@ -26,7 +26,7 @@ import InfoTooltip from "@/components/InfoTooltip";
 import SubmitButton from "@/components/ui/SubmitButton";
 import type { CasePipelineRow } from "@/lib/pipeline";
 import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
-import { computeSF36, computePSQI, computeJSSClassification, computeJSSEvaluation } from "@/lib/scoring";
+import { computeSF36, computePSQI, computeJSSClassification } from "@/lib/scoring";
 
 const STAGE_LABEL: Record<string, string> = { pre: "術前", intra: "術中", post: "術後" };
 const COMPLETENESS_LABEL: Record<string, string> = {
@@ -250,20 +250,22 @@ export default async function CaseDetailPage({
   ].filter((g) => g.photos.length > 0 || g.key !== "unassigned");
   const photoCountByLesion = new Map(photoGroups.map((g) => [g.key, g.photos.length]));
 
-  // JSS 症狀追蹤評估表：以個案最早一筆回覆的總分當基準，計算每筆回覆的 Delta Score（基準分-本次分，正值代表改善）。
-  const jssEvalDeltaById = new Map<string, number>();
+  // JSS 疤痕診斷分類表（JSW Scar Scale 2015）：同一份量表每次追蹤重複施測，
+  // 以個案最早一筆回覆的總分當基準，計算每筆回覆的 Delta Score（基準分-本次分，正值代表改善）。
+  // （2026-07-27 決策：原本另有一份 6 題追蹤評估表，已刪除只留這份正式量表。）
+  const jssDeltaById = new Map<string, number>();
   {
-    const evalResponses = (responses ?? [])
+    const jssResponses = (responses ?? [])
       .filter((r) => {
         const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
-        return q?.name === "JSS 症狀與治療追蹤評估表";
+        return q?.name === "JSS 疤痕診斷分類表";
       })
-      .map((r) => ({ id: r.id, submitted_at: r.submitted_at, total: computeJSSEvaluation(extractAnswers(r)) }))
+      .map((r) => ({ id: r.id, submitted_at: r.submitted_at, total: computeJSSClassification(extractAnswers(r))?.total ?? null }))
       .filter((r): r is { id: string; submitted_at: string; total: number } => r.total !== null)
       .sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime());
-    const baseline = evalResponses[0]?.total ?? null;
+    const baseline = jssResponses[0]?.total ?? null;
     if (baseline !== null) {
-      for (const r of evalResponses) jssEvalDeltaById.set(r.id, baseline - r.total);
+      for (const r of jssResponses) jssDeltaById.set(r.id, baseline - r.total);
     }
   }
 
@@ -1020,7 +1022,6 @@ export default async function CaseDetailPage({
             const isSF36 = q?.name === "SF-36 健康調查簡表";
             const isPSQI = q?.name === "匹茲堡睡眠品質量表（PSQI）";
             const isJSSClassification = q?.name === "JSS 疤痕診斷分類表";
-            const isJSSEvaluation = q?.name === "JSS 症狀與治療追蹤評估表";
             return (
               <li key={r.id} className="rounded-md border border-brand-50 p-2 text-sm text-ink/70">
                 <div>
@@ -1065,8 +1066,10 @@ export default async function CaseDetailPage({
                 {isJSSClassification &&
                   (() => {
                     const result = computeJSSClassification(answers);
+                    // 同一份量表重複施測，第二次以後會附上跟初次總分相比的 Delta Score
+                    const delta = jssDeltaById.get(r.id);
                     return (
-                      <div className="mt-1">
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
                         {result ? (
                           <span className="whitespace-nowrap rounded bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">
                             JSS 總分 {result.total} / 25
@@ -1074,18 +1077,6 @@ export default async function CaseDetailPage({
                         ) : (
                           <span className="text-xs text-ink/40">資料不足，無法計分</span>
                         )}
-                      </div>
-                    );
-                  })()}
-                {isJSSEvaluation &&
-                  (() => {
-                    const total = computeJSSEvaluation(answers);
-                    const delta = jssEvalDeltaById.get(r.id);
-                    return (
-                      <div className="mt-1 flex flex-wrap items-center gap-2">
-                        <span className="whitespace-nowrap rounded bg-violet-50 px-2 py-0.5 text-xs text-violet-700">
-                          總分：{total ?? "資料不足"} / 18
-                        </span>
                         {delta !== undefined && (
                           <span
                             className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
