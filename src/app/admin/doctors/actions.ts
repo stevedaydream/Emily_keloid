@@ -24,3 +24,21 @@ export async function toggleDoctorActiveAction(formData: FormData) {
   await supabase.from("doctors").update({ active: !active }).eq("id", id);
   revalidatePath("/admin/doctors");
 }
+
+export async function updateDoctorAction(formData: FormData) {
+  const id = formData.get("id") as string;
+  const code = (formData.get("code") as string)?.toUpperCase().trim();
+  const name = (formData.get("name") as string)?.trim();
+  if (!id || !code || !name) return;
+  const supabase = supabaseServer();
+  await supabase.from("doctors").update({ code, name }).eq("id", id);
+  revalidatePath("/admin/doctors");
+}
+
+export async function deleteDoctorAction(formData: FormData) {
+  const id = formData.get("id") as string;
+  const supabase = supabaseServer();
+  // 若已有個案使用此醫師代碼，外鍵限制會讓刪除失敗（不影響既有資料），請改用停用。
+  await supabase.from("doctors").delete().eq("id", id);
+  revalidatePath("/admin/doctors");
+}
