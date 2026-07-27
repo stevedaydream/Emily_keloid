@@ -6,6 +6,7 @@ import { addTreatmentRecordAction } from "./actions";
 type FieldSchema = { key: string; label: string; type: string };
 type TreatmentType = { id: string; name: string; field_schema: FieldSchema[] };
 type Preset = { id: string; treatment_type_id: string; name: string; field_values: Record<string, string> };
+export type LesionOption = { id: string; site_no: number | null; body_site: string; doseCategoryLabel: string | null };
 
 function TypeBlock({ type, presets }: { type: TreatmentType; presets: Preset[] }) {
   const [presetId, setPresetId] = useState("");
@@ -68,18 +69,25 @@ export default function TreatmentForm({
   caseId,
   treatmentTypes,
   presets,
-  siteSuggestions,
+  lesions,
 }: {
   caseId: string;
   treatmentTypes: TreatmentType[];
   presets: Preset[];
-  siteSuggestions: string[];
+  lesions: LesionOption[];
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedLesionIds, setSelectedLesionIds] = useState<string[]>([]);
 
   function toggle(id: string) {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
+
+  function toggleLesion(id: string) {
+    setSelectedLesionIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  const surgerySelected = selectedIds.some((id) => treatmentTypes.find((t) => t.id === id)?.name === "手術切除");
 
   return (
     <form action={addTreatmentRecordAction} className="space-y-3 rounded-md border border-slate-200 p-4">
@@ -126,20 +134,52 @@ export default function TreatmentForm({
             className="mt-1 w-48 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           />
         </div>
-        <div>
-          <label className="block text-xs font-medium text-slate-600">部位（此筆紀錄對應的部位）</label>
+      </div>
+
+      {/* 部位：勾選的每個部位各建一筆紀錄，手術切除才能依各部位自己的劑量分類各排一組放療 */}
+      <div>
+        <label className="mb-1 block text-xs font-medium text-slate-600">
+          部位（可複選，勾選的每個部位各建一筆紀錄）
+        </label>
+        {lesions.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {lesions.map((l) => (
+              <label
+                key={l.id}
+                className="flex items-center gap-1 whitespace-nowrap rounded border border-slate-200 px-2 py-1 text-xs"
+              >
+                <input
+                  type="checkbox"
+                  name="lesion_ids"
+                  value={l.id}
+                  checked={selectedLesionIds.includes(l.id)}
+                  onChange={() => toggleLesion(l.id)}
+                />
+                部位{l.site_no} {l.body_site}
+                <span className={l.doseCategoryLabel ? "text-slate-400" : "text-amber-600"}>
+                  （{l.doseCategoryLabel ?? "未指定分類"}）
+                </span>
+              </label>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-slate-400">
+            此個案尚未登記病灶部位，可在上方「現存病灶大小測量」以人形圖新增，或直接於下方自由輸入部位。
+          </p>
+        )}
+        <div className="mt-2">
+          <label className="block text-[11px] text-slate-500">其他部位（未登記在病灶清單者，自由輸入，另建一筆）</label>
           <input
             name="body_site"
-            list="treatment-site-suggestions"
             placeholder="例：左耳垂"
-            className="mt-1 w-48 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            className="mt-0.5 w-48 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           />
-          <datalist id="treatment-site-suggestions">
-            {siteSuggestions.map((s) => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
         </div>
+        {surgerySelected && (
+          <p className="mt-1.5 text-[11px] text-amber-700">
+            已勾「手術切除」：送出後會為每個「已指定分類」的部位各產生一組放療排程（自由輸入的部位無分類，不會自動排程）。
+          </p>
+        )}
       </div>
 
       <div className="rounded-md border border-amber-100 bg-amber-50 p-3">

@@ -6,27 +6,44 @@ import BodyDiagram from "@/components/BodyDiagram";
 import CameraCapture from "./CameraCapture";
 
 type Zone = { id: string; zone_key: string; view: "front" | "back"; display_name: string; dose_category: string };
-type Site = { id: string; site_no: number | null; body_site: string; note: string | null; photoCount: number };
+type Site = {
+  id: string;
+  site_no: number | null;
+  body_site: string;
+  note: string | null;
+  zoneKey: string;
+  doseCategory: string;
+  photoCount: number;
+};
 
-// 相機需要的部位資訊：從個案部位清單挑選時 zoneKey 為空、劑量分類用通用蒙板；從身體圖挑選時帶入該區塊資訊。
+// 相機需要的部位資訊：從個案部位清單挑選時帶入該病灶自己的 zone/劑量分類；從身體圖挑選時帶入該區塊資訊。
 type Target = { zoneKey: string; displayName: string; doseCategory: string; lesionId: string | null };
+
+const targetForSite = (s: Site): Target => ({
+  zoneKey: s.zoneKey,
+  displayName: `部位${s.site_no ?? ""} ${s.body_site}`.trim(),
+  doseCategory: s.doseCategory,
+  lesionId: s.id,
+});
 
 export default function PhotoCaptureFlow({
   caseId,
   itemId,
   zones,
-  currentZoneKey,
   sex,
   sites,
+  initialLesionId,
 }: {
   caseId: string;
   itemId: string;
   zones: Zone[];
-  currentZoneKey?: string | null;
   sex?: string | null;
   sites?: Site[];
+  /** 從個案頁面的「拍這個部位」進來時直接跳到該部位的相機畫面 */
+  initialLesionId?: string | null;
 }) {
-  const [target, setTarget] = useState<Target | null>(null);
+  const initialSite = initialLesionId ? (sites ?? []).find((s) => s.id === initialLesionId) : undefined;
+  const [target, setTarget] = useState<Target | null>(initialSite ? targetForSite(initialSite) : null);
   const [showDiagram, setShowDiagram] = useState((sites ?? []).length === 0);
   const router = useRouter();
 
@@ -61,9 +78,7 @@ export default function PhotoCaptureFlow({
                 <li key={s.id}>
                   <button
                     type="button"
-                    onClick={() =>
-                      setTarget({ zoneKey: "", displayName: `部位${s.site_no ?? ""} ${s.body_site}`.trim(), doseCategory: "other", lesionId: s.id })
-                    }
+                    onClick={() => setTarget(targetForSite(s))}
                     className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm hover:border-slate-400"
                   >
                     <span>
@@ -98,7 +113,6 @@ export default function PhotoCaptureFlow({
       {showDiagram && (
         <BodyDiagram
           zones={zones}
-          currentZoneKey={currentZoneKey}
           onSelect={(z) => setTarget({ zoneKey: z.zone_key, displayName: z.display_name, doseCategory: z.dose_category, lesionId: null })}
           sex={sex}
         />

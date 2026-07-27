@@ -197,12 +197,12 @@ export default function NewCaseForm({
       </div>
 
       <div>
-        <label className="mb-1 block text-sm font-medium text-ink/80">蟹足腫部位</label>
+        <label className="mb-1 block text-sm font-medium text-ink/80">蟹足腫部位（第一處）</label>
         <BodyDiagram zones={zones} currentZoneKey={selectedZone?.zone_key} onSelect={setSelectedZone} sex={sex} />
         <p className="mt-1 text-xs text-ink/50">
           {selectedZone
-            ? `已選擇：${selectedZone.display_name}`
-            : "點選人形圖上的部位（可之後在個案頁面或拍照時變更）"}
+            ? `已選擇：${selectedZone.display_name}（將建立為「部位1」，之後可在個案頁面新增其他部位並填尺寸）`
+            : "點選人形圖上的部位，建檔後會成為此個案的「部位1」；多處病灶可在個案頁面陸續新增"}
         </p>
       </div>
 
