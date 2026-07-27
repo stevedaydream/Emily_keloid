@@ -12,21 +12,22 @@ const SECTIONS = [
   { href: "/admin/health-kb", title: "衛教資料庫", desc: "Gemini 衛教機器人的回答內容來源" },
   { href: "/admin/intake-options", title: "發生原因/得知看診/衛教選單", desc: "個案頁面收案問診四類可複選清單維護" },
   { href: "/admin/lab-markers", title: "Lab 生物標記清單", desc: "IgE/Exosome/IL-1α/IL-1β/IL-6/TNF-α/MMP2/MMP9 等標記維護" },
+  { href: "/local-tools/mrn-mapping", title: "病歷號對照設定", desc: "設定本機對照表檔案位置，並可查詢/補登病歷號↔研究編號對照（純本機，不上雲端）" },
 ];
 
 export default function AdminHubPage() {
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">後台管理</h1>
+      <h1 className="font-heading text-xl font-medium text-brand-900">後台管理</h1>
       <div className="grid grid-cols-2 gap-4">
         {SECTIONS.map((s) => (
           <Link
             key={s.href}
             href={s.href}
-            className="rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-400"
+            className="rounded-lg border border-brand-100 bg-paper-raised p-4 hover:border-brand-300 hover:bg-brand-50/40"
           >
-            <h2 className="text-sm font-semibold text-slate-800">{s.title}</h2>
-            <p className="mt-1 text-xs text-slate-500">{s.desc}</p>
+            <h2 className="text-sm font-semibold text-brand-900">{s.title}</h2>
+            <p className="mt-1 text-xs text-ink/50">{s.desc}</p>
           </Link>
         ))}
       </div>
