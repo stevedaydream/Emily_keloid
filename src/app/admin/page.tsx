@@ -10,6 +10,8 @@ const SECTIONS = [
   { href: "/admin/icd", title: "ICD-9/10 常用碼", desc: "蟹足腫相關診斷碼清單維護" },
   { href: "/admin/import", title: "舊資料匯入", desc: "Excel/CSV 匯入、欄位對應與檢視" },
   { href: "/admin/health-kb", title: "衛教資料庫", desc: "Gemini 衛教機器人的回答內容來源" },
+  { href: "/admin/intake-options", title: "發生原因/得知看診/衛教選單", desc: "個案頁面收案問診四類可複選清單維護" },
+  { href: "/admin/lab-markers", title: "Lab 生物標記清單", desc: "IgE/Exosome/IL-1α/IL-1β/IL-6/TNF-α/MMP2/MMP9 等標記維護" },
 ];
 
 export default function AdminHubPage() {

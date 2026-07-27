@@ -12,7 +12,7 @@ export default async function CasePhotoCapturePage({
   const supabase = supabaseServer();
 
   const [{ data: caseRow }, { data: zones }] = await Promise.all([
-    supabase.from("cases").select("id, body_part_zones(zone_key)").eq("id", caseId).single(),
+    supabase.from("cases").select("id, sex, body_part_zones(zone_key)").eq("id", caseId).single(),
     supabase
       .from("body_part_zones")
       .select("id, zone_key, view, display_name, dose_category")
@@ -29,6 +29,7 @@ export default async function CasePhotoCapturePage({
       itemId={itemId}
       zones={zones ?? []}
       currentZoneKey={currentZone?.zone_key ?? null}
+      sex={caseRow.sex ?? null}
     />
   );
 }

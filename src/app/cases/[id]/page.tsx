@@ -12,12 +12,16 @@ import {
   updateDemographicsAction,
   updateOutcomeAction,
   updateLegacyBiobankAction,
+  updatePriorHistoryAction,
+  addLabResultAction,
 } from "./actions";
 import TreatmentForm from "./TreatmentForm";
 import PipelineProgress from "./PipelineProgress";
+import IntakeOptionForm from "./IntakeOptionForm";
 import InfoTooltip from "@/components/InfoTooltip";
 import type { CasePipelineRow } from "@/lib/pipeline";
 import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
+import { computeSF36, computePSQI, computeJSSClassification, computeJSSEvaluation } from "@/lib/scoring";
 
 const STAGE_LABEL: Record<string, string> = { pre: "術前", intra: "術中", post: "術後" };
 const COMPLETENESS_LABEL: Record<string, string> = {
@@ -37,6 +41,13 @@ const BIOBANK_ITEMS = [
   { key: "tissue_periskin_fibroblast_culture", label: "Periskin fibroblast 原代培養", group: "組織" },
   { key: "blood_pre_op", label: "術前", group: "血液" },
   { key: "blood_post_op_day1", label: "術後治療第一天", group: "血液" },
+] as const;
+
+const INTAKE_CATEGORIES = [
+  { key: "onset_cause", label: "發生原因" },
+  { key: "referral_source", label: "如何得知看診資訊" },
+  { key: "diet_education", label: "飲食衛教" },
+  { key: "exercise_restriction", label: "運動禁忌衛教" },
 ] as const;
 
 export default async function CaseDetailPage({
@@ -65,6 +76,10 @@ export default async function CaseDetailPage({
     { data: radiotherapySessions },
     { data: biobankItems },
     { data: legacyBiobank },
+    { data: intakeOptions },
+    { data: intakeRecords },
+    { data: labMarkers },
+    { data: labResults },
   ] = await Promise.all([
     supabase.from("cases").select("*, doctors(code, name), body_part_zones(display_name, dose_category)").eq("id", id).single(),
     supabase.from("case_diagnoses").select("id, is_primary, icd_codes(code, system, description_full)").eq("case_id", id),
@@ -79,13 +94,17 @@ export default async function CaseDetailPage({
     supabase.from("treatment_presets").select("id, treatment_type_id, name, field_values").eq("active", true),
     supabase
       .from("treatment_records")
-      .select("id, treatment_date, field_values, free_text, recorded_by, treatment_types(name)")
+      .select(
+        "id, treatment_date, field_values, free_text, recorded_by, recurrence_observed, recurrence_description, blood_drawn, blood_drawn_note, treatment_types(name)"
+      )
       .eq("case_id", id)
       .order("treatment_date", { ascending: false }),
     supabase.from("case_schedule_items").select("*").eq("case_id", id).order("due_date"),
     supabase
       .from("questionnaire_responses")
-      .select("id, submitted_at, submitted_via, questionnaire_templates(name)")
+      .select(
+        "id, submitted_at, submitted_via, questionnaire_templates(name), questionnaire_answers(answer_value, questionnaire_questions(order_no))"
+      )
       .eq("case_id", id)
       .order("submitted_at", { ascending: false }),
     supabase.from("photos").select("id, taken_at, body_site, file_path").eq("case_id", id).order("taken_at", { ascending: false }),
@@ -95,6 +114,18 @@ export default async function CaseDetailPage({
     supabase.from("radiotherapy_sessions").select("*").eq("case_id", id).order("due_date"),
     supabase.from("biobank_checklist_items").select("*").eq("case_id", id),
     supabase.from("biobank_samples").select("*").eq("case_id", id).maybeSingle(),
+    supabase.from("case_intake_option_lists").select("id, category, label").eq("active", true).order("sort_order"),
+    supabase
+      .from("case_intake_option_records")
+      .select("id, category, recorded_at, recorded_by, notes, case_intake_option_record_items(case_intake_option_lists(label))")
+      .eq("case_id", id)
+      .order("recorded_at", { ascending: false }),
+    supabase.from("lab_marker_definitions").select("id, display_name, unit").eq("active", true).order("sort_order"),
+    supabase
+      .from("lab_results")
+      .select("id, sample_date, value, value_text, note, recorded_by, lab_marker_definitions(display_name, unit)")
+      .eq("case_id", id)
+      .order("sample_date", { ascending: false }),
   ]);
 
   if (!caseRow) {
@@ -106,6 +137,34 @@ export default async function CaseDetailPage({
   const biobankByKey = new Map((biobankItems ?? []).map((b) => [b.item_key, b]));
   const termsByStage: Record<string, { id: string; term: string }[]> = { pre: [], intra: [], post: [] };
   (termLibrary ?? []).forEach((t) => termsByStage[t.stage]?.push(t));
+
+  function extractAnswers(r: {
+    questionnaire_answers?: { answer_value: unknown; questionnaire_questions: { order_no?: number } | { order_no?: number }[] | null }[];
+  }): Record<number, unknown> {
+    const answers: Record<number, unknown> = {};
+    for (const a of r.questionnaire_answers ?? []) {
+      const question = Array.isArray(a.questionnaire_questions) ? a.questionnaire_questions[0] : a.questionnaire_questions;
+      if (question?.order_no !== undefined) answers[question.order_no] = a.answer_value;
+    }
+    return answers;
+  }
+
+  // JSS 症狀追蹤評估表：以個案最早一筆回覆的總分當基準，計算每筆回覆的 Delta Score（基準分-本次分，正值代表改善）。
+  const jssEvalDeltaById = new Map<string, number>();
+  {
+    const evalResponses = (responses ?? [])
+      .filter((r) => {
+        const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
+        return q?.name === "JSS 症狀與治療追蹤評估表";
+      })
+      .map((r) => ({ id: r.id, submitted_at: r.submitted_at, total: computeJSSEvaluation(extractAnswers(r)) }))
+      .filter((r): r is { id: string; submitted_at: string; total: number } => r.total !== null)
+      .sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime());
+    const baseline = evalResponses[0]?.total ?? null;
+    if (baseline !== null) {
+      for (const r of evalResponses) jssEvalDeltaById.set(r.id, baseline - r.total);
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -194,6 +253,113 @@ export default async function CaseDetailPage({
             更新基本資料
           </button>
         </form>
+      </section>
+
+      {/* 病史與過往治療 */}
+      <section id="section-priorhistory" data-nav-section data-nav-label="病史與過往治療" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          病史與過往治療
+          <InfoTooltip text="記錄蟹足腫初次發生時間、一般疾病史，以及收案「前」曾在其他院所/自行嘗試過的治療（跟下方治療紀錄追蹤的是收案後的治療不同）。" />
+        </h2>
+        <form action={updatePriorHistoryAction} className="grid grid-cols-2 gap-3 text-sm">
+          <input type="hidden" name="case_id" value={id} />
+          <div>
+            <label className="block text-xs font-medium text-slate-600">蟹足腫初次發生時間</label>
+            <input
+              name="keloid_onset_date"
+              placeholder="例：2019年初"
+              defaultValue={caseRow.keloid_onset_date ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">之前治療的醫師</label>
+            <input
+              name="prior_treatment_physician"
+              defaultValue={caseRow.prior_treatment_physician ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-600">疾病史（一般病史）</label>
+            <textarea
+              name="disease_history"
+              rows={2}
+              defaultValue={caseRow.disease_history ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">之前類固醇注射治療（多久/療程）</label>
+            <input
+              name="prior_steroid_treatment"
+              defaultValue={caseRow.prior_steroid_treatment ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">之前中醫治療</label>
+            <input
+              name="prior_tcm_treatment"
+              defaultValue={caseRow.prior_tcm_treatment ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">之前小川令貼布使用史</label>
+            <input
+              name="prior_ogawa_patch"
+              defaultValue={caseRow.prior_ogawa_patch ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">之前放射線治療史</label>
+            <input
+              name="prior_radiation_treatment"
+              defaultValue={caseRow.prior_radiation_treatment ?? ""}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <button
+            type="submit"
+            className="col-span-2 whitespace-nowrap rounded-md bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
+          >
+            更新病史與過往治療
+          </button>
+        </form>
+      </section>
+
+      {/* 發生原因 / 得知看診資訊 / 飲食運動衛教（後台可維護選單，決策 2026-07-27） */}
+      <section id="section-intake" data-nav-section data-nav-label="發生原因與衛教紀錄" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          發生原因 / 得知看診資訊 / 衛教紀錄
+          <InfoTooltip text="四類選單皆為後台可維護清單（非單純勾選），可複選並保留歷次紀錄；飲食衛教/運動禁忌衛教可隨診次重複記錄。" />
+        </h2>
+        {INTAKE_CATEGORIES.map((cat) => {
+          const options = (intakeOptions ?? []).filter((o) => o.category === cat.key);
+          const records = (intakeRecords ?? []).filter((r) => r.category === cat.key);
+          return (
+            <div key={cat.key} className="mb-4 last:mb-0">
+              <h3 className="mb-1 text-xs font-semibold text-slate-500">{cat.label}</h3>
+              <IntakeOptionForm caseId={id} category={cat.key} options={options} />
+              <ul className="space-y-1">
+                {records.map((r) => (
+                  <li key={r.id} className="break-words text-xs text-slate-500">
+                    {new Date(r.recorded_at).toLocaleDateString("zh-TW")} ・ {r.recorded_by} ・{" "}
+                    {(r.case_intake_option_record_items ?? [])
+                      .map((it: { case_intake_option_lists: { label: string } | { label: string }[] }) =>
+                        Array.isArray(it.case_intake_option_lists) ? it.case_intake_option_lists[0]?.label : it.case_intake_option_lists?.label
+                      )
+                      .join("、") || "（無勾選項目）"}
+                    {r.notes && <span className="text-slate-400">（{r.notes}）</span>}
+                  </li>
+                ))}
+                {records.length === 0 && <li className="text-xs text-slate-300">尚無紀錄</li>}
+              </ul>
+            </div>
+          );
+        })}
       </section>
 
       {/* 部位標記 */}
@@ -398,10 +564,20 @@ export default async function CaseDetailPage({
           {(treatmentRecords ?? []).map((r) => {
             const tt = Array.isArray(r.treatment_types) ? r.treatment_types[0] : r.treatment_types;
             return (
-              <li key={r.id} className="text-sm text-slate-600">
+              <li key={r.id} className="break-words text-sm text-slate-600">
                 <span className="font-medium">{r.treatment_date}</span> ・ {tt?.name} ・{" "}
                 {r.free_text || Object.entries(r.field_values ?? {}).map(([k, v]) => `${k}: ${v}`).join(", ")}
                 <span className="ml-2 text-xs text-slate-400">記錄人：{r.recorded_by}</span>
+                {r.recurrence_observed && (
+                  <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">
+                    復發：{r.recurrence_description || "（未填情形）"}
+                  </span>
+                )}
+                {r.blood_drawn && (
+                  <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs text-sky-700">
+                    抽血{r.blood_drawn_note ? `：${r.blood_drawn_note}` : ""}
+                  </span>
+                )}
               </li>
             );
           })}
@@ -482,7 +658,23 @@ export default async function CaseDetailPage({
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-600">細胞凍管位置</label>
+            <label className="block text-xs font-medium text-slate-600">細胞量</label>
+            <input
+              name="cell_quantity"
+              defaultValue={legacyBiobank?.cell_quantity ?? ""}
+              className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">儲存盤數</label>
+            <input
+              name="storage_plate_count"
+              defaultValue={legacyBiobank?.storage_plate_count ?? ""}
+              className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">凍管位置</label>
             <input
               name="cryotube_location"
               defaultValue={legacyBiobank?.cryotube_location ?? ""}
@@ -532,6 +724,67 @@ export default async function CaseDetailPage({
             </ul>
           </div>
         ))}
+      </section>
+
+      {/* Lab 生物標記數據 */}
+      <section id="section-lab" data-nav-section data-nav-label="Lab 生物標記數據" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          Lab 生物標記數據
+          <InfoTooltip text="記錄 IgE、Exosome、IL-1α/β、IL-6、TNF-α、MMP2/9 等生物標記檢驗結果，可依採檢日期多次登打；標記清單於後台「Lab 生物標記清單」維護。" />
+        </h2>
+        <form action={addLabResultAction} className="mb-3 flex flex-wrap items-end gap-3 rounded-md border border-slate-100 p-3 text-sm">
+          <input type="hidden" name="case_id" value={id} />
+          <div>
+            <label className="block text-xs font-medium text-slate-600">標記</label>
+            <select name="marker_id" required className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm">
+              <option value="">請選擇…</option>
+              {(labMarkers ?? []).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.display_name}
+                  {m.unit ? `（${m.unit}）` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">採檢日期</label>
+            <input
+              type="date"
+              name="sample_date"
+              defaultValue={new Date().toISOString().slice(0, 10)}
+              className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">數值</label>
+            <input name="value" placeholder="例如 12.5 或 <0.35" className="mt-1 w-32 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">備註</label>
+            <input name="note" className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+          </div>
+          <button type="submit" className="whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
+            新增
+          </button>
+        </form>
+        <ul className="divide-y divide-slate-100">
+          {(labResults ?? []).map((r) => {
+            const marker = Array.isArray(r.lab_marker_definitions) ? r.lab_marker_definitions[0] : r.lab_marker_definitions;
+            return (
+              <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 text-sm">
+                <span className="whitespace-nowrap font-medium text-slate-700">{marker?.display_name}</span>
+                <span className="whitespace-nowrap text-slate-600">
+                  {r.value !== null ? r.value : r.value_text}
+                  {marker?.unit ? ` ${marker.unit}` : ""}
+                </span>
+                <span className="whitespace-nowrap text-xs text-slate-400">{r.sample_date}</span>
+                {r.note && <span className="text-xs text-slate-400">・{r.note}</span>}
+                <span className="whitespace-nowrap text-xs text-slate-300">・{r.recorded_by}</span>
+              </li>
+            );
+          })}
+          {(labResults ?? []).length === 0 && <li className="py-1.5 text-sm text-slate-400">尚無 Lab 數據</li>}
+        </ul>
       </section>
 
       {/* 治療後追蹤結果（舊資料對齊欄位） */}
@@ -673,13 +926,95 @@ export default async function CaseDetailPage({
             填寫問卷
           </Link>
         </div>
-        <ul className="space-y-1">
+        <ul className="space-y-2">
           {(responses ?? []).map((r) => {
             const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
+            const answers = extractAnswers(r);
+            const isSF36 = q?.name === "SF-36 健康調查簡表";
+            const isPSQI = q?.name === "匹茲堡睡眠品質量表（PSQI）";
+            const isJSSClassification = q?.name === "JSS 疤痕診斷分類表";
+            const isJSSEvaluation = q?.name === "JSS 症狀與治療追蹤評估表";
             return (
-              <li key={r.id} className="text-sm text-slate-600">
-                {new Date(r.submitted_at).toLocaleString("zh-TW")} ・ {q?.name} ・ 填寫人：
-                {r.submitted_via === "line_sim" ? "舊LINE路徑（已停用）" : "診間人員"}
+              <li key={r.id} className="rounded-md border border-slate-100 p-2 text-sm text-slate-600">
+                <div>
+                  {new Date(r.submitted_at).toLocaleString("zh-TW")} ・ {q?.name} ・ 填寫人：
+                  {r.submitted_via === "line_sim" ? "舊LINE路徑（已停用）" : "診間人員"}
+                </div>
+                {isSF36 && (
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {computeSF36(answers).scales.map((s) => (
+                      <span key={s.key} className="whitespace-nowrap rounded bg-sky-50 px-2 py-0.5 text-xs text-sky-700">
+                        {s.label}：{s.score ?? "—"}
+                        {s.answeredCount < s.totalItems && <span className="text-sky-400">（{s.answeredCount}/{s.totalItems}題）</span>}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {isPSQI &&
+                  (() => {
+                    const psqi = computePSQI(answers);
+                    return (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        {psqi.components.map((c) => (
+                          <span key={c.key} className="whitespace-nowrap rounded bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">
+                            {c.label}：{c.score ?? "—"}
+                          </span>
+                        ))}
+                        <span
+                          className={`whitespace-nowrap rounded px-2 py-0.5 text-xs font-medium ${
+                            psqi.global === null
+                              ? "bg-slate-100 text-slate-400"
+                              : psqi.poorSleep
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-emerald-100 text-emerald-700"
+                          }`}
+                        >
+                          總分：{psqi.global ?? "資料不足"}
+                          {psqi.global !== null && `（${psqi.poorSleep ? "睡眠品質不佳" : "睡眠品質尚可"}）`}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                {isJSSClassification &&
+                  (() => {
+                    const result = computeJSSClassification(answers);
+                    return (
+                      <div className="mt-1">
+                        {result ? (
+                          <span className="whitespace-nowrap rounded bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">
+                            總分 {result.total} 分 ・ {result.categoryLabel}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-400">資料不足，無法判定</span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                {isJSSEvaluation &&
+                  (() => {
+                    const total = computeJSSEvaluation(answers);
+                    const delta = jssEvalDeltaById.get(r.id);
+                    return (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span className="whitespace-nowrap rounded bg-violet-50 px-2 py-0.5 text-xs text-violet-700">
+                          總分：{total ?? "資料不足"} / 18
+                        </span>
+                        {delta !== undefined && (
+                          <span
+                            className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
+                              delta > 0
+                                ? "bg-emerald-100 text-emerald-700"
+                                : delta < 0
+                                ? "bg-red-100 text-red-700"
+                                : "bg-slate-100 text-slate-500"
+                            }`}
+                          >
+                            Delta Score：{delta > 0 ? `+${delta}` : delta}（較初次{delta > 0 ? "改善" : delta < 0 ? "惡化" : "持平"}）
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
               </li>
             );
           })}

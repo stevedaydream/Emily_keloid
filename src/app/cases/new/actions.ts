@@ -1,12 +1,11 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase";
 import { generateResearchId } from "@/lib/researchId";
 import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
 
-export async function createCaseAction(formData: FormData) {
+export async function createCaseAction(formData: FormData): Promise<{ caseId: string; researchId: string }> {
   const supabase = supabaseServer();
   const operator = (await getCurrentOperator()) ?? "未知操作者";
 
@@ -96,5 +95,5 @@ export async function createCaseAction(formData: FormData) {
     detail: { research_id: researchId },
   });
 
-  redirect(`/cases/${newCase.id}`);
+  return { caseId: newCase.id, researchId };
 }

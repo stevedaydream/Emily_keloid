@@ -12,11 +12,13 @@ export default function PhotoCaptureFlow({
   itemId,
   zones,
   currentZoneKey,
+  sex,
 }: {
   caseId: string;
   itemId: string;
   zones: Zone[];
   currentZoneKey?: string | null;
+  sex?: string | null;
 }) {
   const [selected, setSelected] = useState<Zone | null>(null);
   const router = useRouter();
@@ -25,7 +27,7 @@ export default function PhotoCaptureFlow({
     return (
       <div className="mx-auto max-w-sm space-y-2">
         <h1 className="text-center text-lg font-semibold text-slate-800">部位標記與拍照</h1>
-        <BodyDiagram zones={zones} currentZoneKey={currentZoneKey} onSelect={setSelected} />
+        <BodyDiagram zones={zones} currentZoneKey={currentZoneKey} onSelect={setSelected} sex={sex} />
       </div>
     );
   }

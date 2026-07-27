@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase";
+import CaseSearchBox from "@/components/CaseSearchBox";
 
 const RECURRENCE_LABEL: Record<string, string> = {
   none: "無復發",
@@ -15,6 +16,7 @@ const FILTER_LABEL: Record<string, (v: string) => string> = {
   line: (v) => `LINE 綁定：${v === "bound" ? "已綁定" : "未綁定"}`,
   recurrence: (v) => `復發狀態：${RECURRENCE_LABEL[v] ?? v}`,
   overdue: () => "有逾期時程項目",
+  q: (v) => `搜尋：${v}`,
 };
 
 export default async function HomePage({
@@ -49,7 +51,16 @@ export default async function HomePage({
     query = query.in("id", ids.length > 0 ? ids : ["00000000-0000-0000-0000-000000000000"]);
   }
 
-  const { data: cases } = await query;
+  const { data: casesRaw } = await query;
+
+  const q = sp.q?.trim().toLowerCase();
+  const cases = q
+    ? (casesRaw ?? []).filter((c) => {
+        const doctor = Array.isArray(c.doctors) ? c.doctors[0] : c.doctors;
+        const haystack = [c.research_id, doctor?.code, doctor?.name, c.body_site].filter(Boolean).join(" ").toLowerCase();
+        return haystack.includes(q);
+      })
+    : casesRaw ?? [];
 
   const activeFilters = Object.entries(sp).filter(([, v]) => v);
 
@@ -62,7 +73,7 @@ export default async function HomePage({
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">個案列表</h1>
         <Link
           href="/cases/new"
@@ -71,6 +82,8 @@ export default async function HomePage({
           + 新增個案
         </Link>
       </div>
+
+      <CaseSearchBox defaultValue={sp.q ?? ""} redirectTo="/cases" />
 
       {activeFilters.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
