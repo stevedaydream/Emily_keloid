@@ -159,7 +159,7 @@ export async function GET() {
     "全部治療方式彙總", "復發觀察次數", "復發情形彙總", "抽血次數（含非常規）", "非常規抽血備註彙總",
     ...SF36_SCALES.map((s) => `SF36-${s.label}`),
     "PSQI-主觀睡眠品質", "PSQI-睡眠潛伏期", "PSQI-睡眠時數", "PSQI-睡眠效率", "PSQI-睡眠困擾", "PSQI-安眠藥物使用", "PSQI-日間功能障礙", "PSQI總分", "PSQI睡眠品質判定",
-    "JSS分類總分", "JSS分類判定", "JSS評估-初次總分", "JSS評估-最近總分", "JSS評估-Delta Score",
+    "JSS分類總分", "JSS評估-初次總分", "JSS評估-最近總分", "JSS評估-Delta Score",
   ];
 
   const wb = new ExcelJS.Workbook();
@@ -361,7 +361,6 @@ export async function GET() {
       psqi?.global ?? "",
       psqi?.global === null || psqi === null ? "" : psqi.poorSleep ? "睡眠品質不佳" : "睡眠品質尚可",
       jssClass?.total ?? "",
-      jssClass?.categoryLabel ?? "",
       jssEval?.baseline ?? "",
       jssEval?.latest ?? "",
       jssEval?.delta ?? "",
