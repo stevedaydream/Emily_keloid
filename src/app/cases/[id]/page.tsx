@@ -298,6 +298,33 @@ export default async function CaseDetailPage({
         </div>
       </section>
 
+      {/* 部位標記 */}
+      <section id="section-bodyzone" data-nav-section data-nav-label="主要蟹足腫部位" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-ink/80">
+            主要蟹足腫部位
+            <InfoTooltip text="點右上「立即拍照」在人形圖點選部位並拍照；系統會依部位自動判斷放射治療的劑量分類。也可在下方下拉選單直接變更部位。" />
+          </h2>
+          <Link
+            href={`/patient/${id}/photo`}
+            className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
+          >
+            立即拍照
+          </Link>
+        </div>
+        {bodyZone ? (
+          <p className="text-sm text-ink/70">
+            {bodyZone.display_name}
+            <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-700">
+              劑量分類：{DOSE_CATEGORY_LABEL[bodyZone.dose_category]}
+            </span>
+          </p>
+        ) : (
+          <p className="text-sm text-amber-600">尚未標記部位（可點右上「立即拍照」選部位，或於下方直接指定）</p>
+        )}
+        <BodyZonePicker caseId={id} zones={bodyZones ?? []} currentZoneKey={bodyZone?.zone_key} sex={caseRow.sex} />
+      </section>
+
       {/* 病史與過往治療 */}
       <section id="section-priorhistory" data-nav-section data-nav-label="病史與過往治療" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
@@ -367,33 +394,6 @@ export default async function CaseDetailPage({
             </div>
           );
         })}
-      </section>
-
-      {/* 部位標記 */}
-      <section id="section-bodyzone" data-nav-section data-nav-label="主要蟹足腫部位" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-ink/80">
-            主要蟹足腫部位
-            <InfoTooltip text="點右上「立即拍照」在人形圖點選部位並拍照；系統會依部位自動判斷放射治療的劑量分類。也可在下方下拉選單直接變更部位。" />
-          </h2>
-          <Link
-            href={`/patient/${id}/photo`}
-            className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
-          >
-            立即拍照
-          </Link>
-        </div>
-        {bodyZone ? (
-          <p className="text-sm text-ink/70">
-            {bodyZone.display_name}
-            <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-700">
-              劑量分類：{DOSE_CATEGORY_LABEL[bodyZone.dose_category]}
-            </span>
-          </p>
-        ) : (
-          <p className="text-sm text-amber-600">尚未標記部位（可點右上「立即拍照」選部位，或於下方直接指定）</p>
-        )}
-        <BodyZonePicker caseId={id} zones={bodyZones ?? []} currentZoneKey={bodyZone?.zone_key} sex={caseRow.sex} />
       </section>
 
       {/* 資料完整度（僅舊資料回溯建檔顯示） */}
