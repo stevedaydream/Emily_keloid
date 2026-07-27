@@ -277,8 +277,6 @@ export async function updateDemographicsAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
   const sex = (formData.get("sex") as string) || null;
   const ageRaw = formData.get("age_at_enrollment") as string;
-  const keloidHistory = (formData.get("keloid_history") as string) || null;
-  const keloidSize = (formData.get("keloid_size") as string) || null;
   const familyHistory = (formData.get("family_history") as string) || null;
   const jswScore = (formData.get("jsw_score") as string) || null;
   const operator = await operatorOrThrow();
@@ -289,8 +287,6 @@ export async function updateDemographicsAction(formData: FormData) {
     .update({
       sex,
       age_at_enrollment: ageRaw ? Number(ageRaw) : null,
-      keloid_history: keloidHistory,
-      keloid_size: keloidSize,
       family_history: familyHistory,
       jsw_score: jswScore,
     })
@@ -452,5 +448,46 @@ export async function deletePhotoAction(formData: FormData) {
   await supabase.from("photos").delete().eq("id", photoId);
 
   await logAudit({ caseId, operatorName: operator, action: "delete_photo", entity: "photos", entityId: photoId });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+export async function addKeloidLesionAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const bodySite = (formData.get("body_site") as string)?.trim();
+  const lengthRaw = (formData.get("length_cm") as string)?.trim();
+  const widthRaw = (formData.get("width_cm") as string)?.trim();
+  const heightRaw = (formData.get("height_cm") as string)?.trim();
+  const note = (formData.get("note") as string)?.trim() || null;
+  if (!bodySite) return;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  const { data: lesion, error } = await supabase
+    .from("case_keloid_lesions")
+    .insert({
+      case_id: caseId,
+      body_site: bodySite,
+      length_cm: lengthRaw ? Number(lengthRaw) : null,
+      width_cm: widthRaw ? Number(widthRaw) : null,
+      height_cm: heightRaw ? Number(heightRaw) : null,
+      note,
+    })
+    .select("id")
+    .single();
+  if (error || !lesion) throw error ?? new Error("新增病灶測量失敗");
+
+  await logAudit({ caseId, operatorName: operator, action: "add_keloid_lesion", entity: "case_keloid_lesions", entityId: lesion.id, detail: { bodySite } });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+export async function deleteKeloidLesionAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const lesionId = formData.get("lesion_id") as string;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  await supabase.from("case_keloid_lesions").delete().eq("id", lesionId);
+
+  await logAudit({ caseId, operatorName: operator, action: "delete_keloid_lesion", entity: "case_keloid_lesions", entityId: lesionId });
   revalidatePath(`/cases/${caseId}`);
 }

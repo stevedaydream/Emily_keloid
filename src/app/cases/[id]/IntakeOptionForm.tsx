@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { addIntakeOptionRecordAction } from "./actions";
+import SubmitButton from "@/components/ui/SubmitButton";
 
 type Option = { id: string; label: string };
 
@@ -9,21 +10,25 @@ export default function IntakeOptionForm({
   caseId,
   category,
   options,
+  alwaysShowNotes = false,
+  notesPlaceholder = "請輸入「其他」的詳細原因/說明",
 }: {
   caseId: string;
   category: string;
   options: Option[];
+  alwaysShowNotes?: boolean;
+  notesPlaceholder?: string;
 }) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const showDetail = options.some((o) => o.label.startsWith("其他") && checked.has(o.id));
+  const showDetail = alwaysShowNotes || options.some((o) => o.label.startsWith("其他") && checked.has(o.id));
 
   return (
-    <form action={addIntakeOptionRecordAction} className="mb-2 space-y-2 rounded-md border border-slate-100 p-3">
+    <form action={addIntakeOptionRecordAction} className="mb-2 space-y-2 rounded-md border border-brand-100 p-3">
       <input type="hidden" name="case_id" value={caseId} />
       <input type="hidden" name="category" value={category} />
       <div className="flex flex-wrap gap-2">
         {options.map((o) => (
-          <label key={o.id} className="flex items-center gap-1 whitespace-nowrap rounded border border-slate-200 px-2 py-1 text-xs">
+          <label key={o.id} className="flex items-center gap-1 whitespace-nowrap rounded border border-brand-200 px-2 py-1 text-xs">
             <input
               type="checkbox"
               name="option_ids"
@@ -41,18 +46,18 @@ export default function IntakeOptionForm({
             {o.label}
           </label>
         ))}
-        {options.length === 0 && <span className="text-xs text-slate-400">後台尚未設定選項</span>}
+        {options.length === 0 && <span className="text-xs text-ink/40">後台尚未設定選項</span>}
       </div>
       {showDetail && (
         <input
           name="notes"
-          placeholder="請輸入「其他」的詳細原因/說明"
-          className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+          placeholder={notesPlaceholder}
+          className="w-full rounded-md border border-brand-200 px-2 py-1.5 text-xs"
         />
       )}
-      <button type="submit" className="whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50">
+      <SubmitButton variant="outline" size="sm" pendingText="新增中…">
         新增紀錄
-      </button>
+      </SubmitButton>
     </form>
   );
 }

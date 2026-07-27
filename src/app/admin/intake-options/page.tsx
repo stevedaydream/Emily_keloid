@@ -8,6 +8,7 @@ const CATEGORIES = [
   { key: "referral_source", label: "如何得知看診資訊" },
   { key: "diet_education", label: "飲食衛教" },
   { key: "exercise_restriction", label: "運動禁忌衛教" },
+  { key: "family_disease", label: "家族病史（常見疾病）" },
 ] as const;
 
 export default async function IntakeOptionsAdminPage() {
@@ -17,9 +18,9 @@ export default async function IntakeOptionsAdminPage() {
   return (
     <div className="max-w-2xl space-y-8">
       <div>
-        <h1 className="font-heading text-xl font-medium text-brand-900">發生原因 / 得知看診 / 衛教選單</h1>
+        <h1 className="font-heading text-xl font-medium text-brand-900">發生原因 / 得知看診 / 衛教 / 家族病史選單</h1>
         <p className="mt-1 text-sm text-ink/50">
-          個案頁面的「發生原因」「如何得知看診資訊」「飲食衛教」「運動禁忌衛教」都是複選這裡維護的清單，不是單純打勾。
+          個案頁面的「發生原因」「如何得知看診資訊」「飲食衛教」「運動禁忌衛教」「家族病史」都是複選這裡維護的清單，不是單純打勾。
         </p>
       </div>
 
