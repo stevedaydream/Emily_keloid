@@ -3,10 +3,12 @@
 import { useState } from "react";
 import Link from "next/link";
 
+const QUICK_LINKS = [
+  { href: "/cases", label: "個案列表" },
+  { href: "/cases/new", label: "+ 新增個案" },
+];
+
 const NAV_LINKS = [
-  { href: "/", label: "個案列表" },
-  { href: "/dashboard", label: "統計儀表板" },
-  { href: "/cases/new", label: "新增個案" },
   { href: "/admin", label: "後台管理" },
   { href: "/export", label: "資料匯出" },
 ];
@@ -28,7 +30,9 @@ export default function AppHeader({ operator }: { operator: string }) {
               <path d="M2.5 5h15M2.5 10h15M2.5 15h15" strokeLinecap="round" />
             </svg>
           </button>
-          <span className="whitespace-nowrap text-sm font-semibold">蟹足腫研究平台</span>
+          <Link href="/" className="whitespace-nowrap text-sm font-semibold">
+            蟹足腫研究平台
+          </Link>
           <nav className="hidden gap-4 text-sm text-slate-600 md:flex">
             {NAV_LINKS.map((l) => (
               <Link key={l.href} href={l.href} className="whitespace-nowrap hover:text-slate-900">
@@ -37,13 +41,25 @@ export default function AppHeader({ operator }: { operator: string }) {
             ))}
           </nav>
         </div>
-        <div className="hidden items-center gap-3 text-sm text-slate-500 md:flex">
-          <span className="whitespace-nowrap">
+        <div className="hidden items-center gap-2 md:flex">
+          <Link
+            href="/cases"
+            className="whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            個案列表
+          </Link>
+          <Link
+            href="/cases/new"
+            className="whitespace-nowrap rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+          >
+            + 新增個案
+          </Link>
+          <span className="ml-2 whitespace-nowrap text-sm text-slate-500">
             目前操作者：<b className="text-slate-800">{operator}</b>
           </span>
           <Link
             href={`/operator?next=${encodeURIComponent("/")}`}
-            className="whitespace-nowrap text-slate-400 underline hover:text-slate-700"
+            className="whitespace-nowrap text-sm text-slate-400 underline hover:text-slate-700"
           >
             切換
           </Link>
@@ -68,7 +84,25 @@ export default function AppHeader({ operator }: { operator: string }) {
                 </svg>
               </button>
             </div>
-            <nav className="flex flex-col gap-1 text-sm">
+
+            <div className="mb-3 flex flex-col gap-2">
+              {QUICK_LINKS.map((l, i) => (
+                <Link
+                  key={l.href}
+                  href={l.href}
+                  onClick={() => setOpen(false)}
+                  className={
+                    i === 0
+                      ? "whitespace-nowrap rounded-md border border-slate-300 px-3 py-2 text-center text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      : "whitespace-nowrap rounded-md bg-slate-900 px-3 py-2 text-center text-sm font-medium text-white hover:bg-slate-800"
+                  }
+                >
+                  {l.label}
+                </Link>
+              ))}
+            </div>
+
+            <nav className="flex flex-col gap-1 border-t border-slate-200 pt-3 text-sm">
               {NAV_LINKS.map((l) => (
                 <Link
                   key={l.href}

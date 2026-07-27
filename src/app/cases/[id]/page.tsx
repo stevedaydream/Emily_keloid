@@ -15,6 +15,7 @@ import {
 } from "./actions";
 import TreatmentForm from "./TreatmentForm";
 import PipelineProgress from "./PipelineProgress";
+import InfoTooltip from "@/components/InfoTooltip";
 import type { CasePipelineRow } from "@/lib/pipeline";
 import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
 
@@ -109,7 +110,7 @@ export default async function CaseDetailPage({
   return (
     <div className="space-y-8">
       <div>
-        <Link href="/" className="text-sm text-slate-400 hover:underline">
+        <Link href="/cases" className="text-sm text-slate-400 hover:underline">
           ← 回個案列表
         </Link>
         <div className="mt-1 flex items-center gap-3">
@@ -127,8 +128,11 @@ export default async function CaseDetailPage({
       {pipeline && <PipelineProgress row={pipeline as CasePipelineRow} />}
 
       {/* 病人基本資料（舊資料對齊欄位） */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">病人基本資料</h2>
+      <section id="section-demographics" data-nav-section data-nav-label="病人基本資料" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          病人基本資料
+          <InfoTooltip text="記錄性別、年齡、JSW score、家族史、keloid 病史與大小，供研究資料分析使用，可隨時回來更新。" />
+        </h2>
         <form action={updateDemographicsAction} className="grid grid-cols-2 gap-3 text-sm">
           <input type="hidden" name="case_id" value={id} />
           <div>
@@ -193,9 +197,12 @@ export default async function CaseDetailPage({
       </section>
 
       {/* 部位標記 */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
+      <section id="section-bodyzone" data-nav-section data-nav-label="主要蟹足腫部位" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-700">主要蟹足腫部位</h2>
+          <h2 className="text-sm font-semibold text-slate-700">
+            主要蟹足腫部位
+            <InfoTooltip text="點右上「立即拍照」在人形圖點選部位並拍照；系統會依部位自動判斷放射治療的劑量分類。也可在下方下拉選單直接變更部位。" />
+          </h2>
           <Link
             href={`/patient/${id}/photo`}
             className="whitespace-nowrap rounded-md bg-slate-900 px-3 py-1.5 text-xs text-white hover:bg-slate-800"
@@ -213,9 +220,9 @@ export default async function CaseDetailPage({
         ) : (
           <p className="text-sm text-amber-600">尚未標記部位（可點右上「立即拍照」選部位，或於下方直接指定）</p>
         )}
-        <form action={setCaseBodyZoneAction} className="mt-2 flex items-center gap-2">
+        <form action={setCaseBodyZoneAction} className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
           <input type="hidden" name="case_id" value={id} />
-          <select name="zone_id" className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
+          <select name="zone_id" className="w-full min-w-0 rounded-md border border-slate-300 px-2 py-1.5 text-sm sm:w-auto sm:flex-1">
             <option value="">變更主要部位…</option>
             {(bodyZones ?? []).map((z) => (
               <option key={z.id} value={z.id}>
@@ -223,7 +230,7 @@ export default async function CaseDetailPage({
               </option>
             ))}
           </select>
-          <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
+          <button type="submit" className="whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 sm:self-start">
             設定
           </button>
         </form>
@@ -231,8 +238,11 @@ export default async function CaseDetailPage({
 
       {/* 資料完整度（僅舊資料回溯建檔顯示） */}
       {completeness && completeness.length > 0 && (
-        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <h2 className="mb-2 text-sm font-semibold text-amber-800">資料完整度追蹤（回溯建檔）</h2>
+        <section id="section-completeness" data-nav-section data-nav-label="資料完整度追蹤" className="scroll-mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <h2 className="mb-2 text-sm font-semibold text-amber-800">
+            資料完整度追蹤（回溯建檔）
+            <InfoTooltip text="僅舊資料回溯建檔的個案會顯示。標記每個欄位是「已有」「待補」還是「不適用」，方便日後回頭補齊缺漏資料。" />
+          </h2>
           <ul className="space-y-2">
             {completeness.map((c) => (
               <li key={c.id} className="flex items-center justify-between rounded-md bg-white px-3 py-2 text-sm">
@@ -263,8 +273,11 @@ export default async function CaseDetailPage({
       )}
 
       {/* 同意書 */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">知情同意書</h2>
+      <section id="section-consent" data-nav-section data-nav-label="知情同意書" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          知情同意書
+          <InfoTooltip text="紙本簽署流程不變，這裡只記錄簽署日期與確認人，作為系統內的狀態追蹤，不影響實際同意書效力。" />
+        </h2>
         <form action={updateConsentAction} className="flex items-center gap-3">
           <input type="hidden" name="case_id" value={id} />
           <input
@@ -285,41 +298,56 @@ export default async function CaseDetailPage({
       </section>
 
       {/* ICD 診斷 */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">診斷（ICD-9/10）</h2>
+      <section id="section-diagnosis" data-nav-section data-nav-label="診斷（ICD-9/10）" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          診斷（ICD-9/10）
+          <InfoTooltip text="從蟹足腫相關的常用碼清單選擇診斷，可複選（主診斷＋共病），勾選「主診斷」標記主要診斷。" />
+        </h2>
         <ul className="mb-3 flex flex-wrap gap-2">
           {(diagnoses ?? []).map((d) => {
             const icd = Array.isArray(d.icd_codes) ? d.icd_codes[0] : d.icd_codes;
             return (
-              <li key={d.id} className="rounded bg-slate-100 px-2 py-1 text-xs">
+              <li key={d.id} className="min-w-0 max-w-full rounded bg-slate-100 px-2 py-1 text-xs">
                 [{icd?.system}] {icd?.code} {icd?.description_full}
-                {d.is_primary && <span className="ml-1 text-blue-600">（主診斷）</span>}
+                {d.is_primary && <span className="ml-1 whitespace-nowrap text-blue-600">（主診斷）</span>}
               </li>
             );
           })}
           {(!diagnoses || diagnoses.length === 0) && <li className="text-xs text-slate-400">尚未記錄診斷</li>}
         </ul>
-        <form action={addDiagnosisAction} className="flex items-center gap-2">
+        <form action={addDiagnosisAction} className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <input type="hidden" name="case_id" value={id} />
-          <select name="icd_code_id" required className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
+          <select
+            name="icd_code_id"
+            required
+            className="w-full min-w-0 rounded-md border border-slate-300 px-2 py-1.5 text-sm sm:w-auto sm:flex-1"
+          >
             {(icdCodes ?? []).map((i) => (
               <option key={i.id} value={i.id}>
                 [{i.system}] {i.code} {i.description_full}
               </option>
             ))}
           </select>
-          <label className="flex items-center gap-1 text-xs text-slate-500">
-            <input type="checkbox" name="is_primary" /> 主診斷
-          </label>
-          <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
-            新增
-          </button>
+          <div className="flex items-center justify-between gap-2 sm:justify-start">
+            <label className="flex items-center gap-1 whitespace-nowrap text-xs text-slate-500">
+              <input type="checkbox" name="is_primary" /> 主診斷
+            </label>
+            <button
+              type="submit"
+              className="whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              新增
+            </button>
+          </div>
         </form>
       </section>
 
       {/* 醫學術語紀錄 */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">醫學術語紀錄</h2>
+      <section id="section-terms" data-nav-section data-nav-label="醫學術語紀錄" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          醫學術語紀錄
+          <InfoTooltip text="依術前/術中/術後選擇該階段觀察到的常用術語（可複選），用於統一病歷描述用語，方便後續資料分析比對。" />
+        </h2>
         <form action={addTermRecordAction} className="mb-4 space-y-2 rounded-md border border-slate-200 p-3">
           <input type="hidden" name="case_id" value={id} />
           <div className="flex items-center gap-2">
@@ -358,8 +386,11 @@ export default async function CaseDetailPage({
       </section>
 
       {/* 治療紀錄 */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">治療紀錄</h2>
+      <section id="section-treatment" data-nav-section data-nav-label="治療紀錄" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          治療紀錄
+          <InfoTooltip text="選擇治療類型並填寫對應欄位；若有常用套組可直接選擇帶入數值，再視情況微調後儲存。若登打「手術切除」且已標記部位，會自動產生放射治療排程。" />
+        </h2>
         <div className="mb-4">
           <TreatmentForm caseId={id} treatmentTypes={treatmentTypes ?? []} presets={presets ?? []} />
         </div>
@@ -379,8 +410,11 @@ export default async function CaseDetailPage({
       </section>
 
       {/* 放射治療進度（登打「手術切除」且已標記部位後自動產生） */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">放射治療進度</h2>
+      <section id="section-radiotherapy" data-nav-section data-nav-label="放射治療進度" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          放射治療進度
+          <InfoTooltip text="登打「手術切除」治療紀錄且個案已標記部位時自動產生（胸/肩胛區18Gy×3、耳8Gy×1、其他部位15Gy×2）。每次實際執行後在此標記完成並填實際劑量。" />
+        </h2>
         {radiotherapySessions && radiotherapySessions.length > 0 ? (
           <ul className="space-y-2">
             {radiotherapySessions.map((s) => (
@@ -432,8 +466,11 @@ export default async function CaseDetailPage({
       </section>
 
       {/* 生物資料庫 */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">生物資料庫</h2>
+      <section id="section-biobank" data-nav-section data-nav-label="生物資料庫" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          生物資料庫
+          <InfoTooltip text="勾選蠟塊、Keloid/Periskin fibroblast 原代培養、術前與術後第一天血液是否已收取，並記錄日期；可分次事後補填，不用一次填完。" />
+        </h2>
         <form action={updateLegacyBiobankAction} className="mb-3 flex flex-wrap items-end gap-3 rounded-md border border-slate-100 p-3 text-sm">
           <input type="hidden" name="case_id" value={id} />
           <div>
@@ -498,8 +535,11 @@ export default async function CaseDetailPage({
       </section>
 
       {/* 治療後追蹤結果（舊資料對齊欄位） */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">治療後追蹤結果</h2>
+      <section id="section-outcome" data-nav-section data-nav-label="治療後追蹤結果" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          治療後追蹤結果
+          <InfoTooltip text="記錄長期追蹤的復發狀態、復發日期、統計截止日等研究結果欄位，通常在統計截止時回頭填寫。" />
+        </h2>
         <form action={updateOutcomeAction} className="grid grid-cols-2 gap-3 text-sm">
           <input type="hidden" name="case_id" value={id} />
           <div>
@@ -557,8 +597,11 @@ export default async function CaseDetailPage({
       </section>
 
       {/* 追蹤時程 */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">追蹤時程</h2>
+      <section id="section-schedule" data-nav-section data-nav-label="追蹤時程" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          追蹤時程
+          <InfoTooltip text="個案套用時程範本後自動產生的追蹤項目。待處理項目可點連結直接填問卷或拍照，完成後記得標記完成。" />
+        </h2>
         <ul className="space-y-2">
           {(scheduleItems ?? []).map((item) => (
             <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-100 px-3 py-2 text-sm">
@@ -617,9 +660,12 @@ export default async function CaseDetailPage({
       </section>
 
       {/* 問卷回覆 */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
+      <section id="section-responses" data-nav-section data-nav-label="問卷回覆紀錄" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-700">問卷回覆紀錄</h2>
+          <h2 className="text-sm font-semibold text-slate-700">
+            問卷回覆紀錄
+            <InfoTooltip text="顯示此個案已送出的問卷回覆（如 VSS 量表）。點右上「填寫問卷」可隨時新增，不需等到排定的追蹤時間點。" />
+          </h2>
           <Link
             href={`/patient/${id}/questionnaire`}
             className="whitespace-nowrap rounded-md bg-slate-900 px-3 py-1.5 text-xs text-white hover:bg-slate-800"
@@ -642,8 +688,11 @@ export default async function CaseDetailPage({
       </section>
 
       {/* 照片 */}
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700">傷口照片</h2>
+      <section id="section-photos" data-nav-section data-nav-label="傷口照片" className="scroll-mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700">
+          傷口照片
+          <InfoTooltip text="顯示已上傳的傷口照片紀錄。要新增照片請至上方「主要蟹足腫部位」區塊點「立即拍照」。" />
+        </h2>
         <ul className="space-y-1">
           {(photos ?? []).map((p) => (
             <li key={p.id} className="text-sm text-slate-600">

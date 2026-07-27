@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { PIPELINE_STAGES, type CasePipelineRow, progressTone } from "@/lib/pipeline";
 
 // 單一個案的「收案一條龍」進度條 + 階段點。純伺服器端渲染，無互動。
@@ -23,8 +24,8 @@ export default function PipelineProgress({ row }: { row: CasePipelineRow }) {
       <ol className="flex flex-wrap gap-x-2 gap-y-3">
         {PIPELINE_STAGES.map((stage, i) => {
           const done = row[stage.key];
-          return (
-            <li key={stage.key} className="flex items-center gap-2">
+          const dot = (
+            <>
               <span
                 className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${
                   done ? "bg-emerald-500 text-white" : "border border-slate-300 bg-white text-slate-400"
@@ -33,7 +34,20 @@ export default function PipelineProgress({ row }: { row: CasePipelineRow }) {
               >
                 {done ? "✓" : i + 1}
               </span>
-              <span className={`text-xs ${done ? "text-slate-700" : "text-slate-400"}`}>{stage.label}</span>
+              <span className={`whitespace-nowrap text-xs ${done ? "text-slate-700" : "text-slate-400"}`}>
+                {stage.label}
+              </span>
+            </>
+          );
+          return (
+            <li key={stage.key}>
+              {stage.anchor ? (
+                <Link href={`#${stage.anchor}`} className="flex items-center gap-2 hover:opacity-75">
+                  {dot}
+                </Link>
+              ) : (
+                <span className="flex items-center gap-2">{dot}</span>
+              )}
             </li>
           );
         })}
