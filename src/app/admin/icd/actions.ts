@@ -7,9 +7,11 @@ export async function addIcdCodeAction(formData: FormData) {
   const code = (formData.get("code") as string)?.trim();
   const system = formData.get("system") as string;
   const descriptionFull = (formData.get("description_full") as string)?.trim();
+  // 對照鍵：同一組 ICD-9/ICD-10 填相同的值即互為對照（見 20260727160000 migration）
+  const mappingKey = ((formData.get("mapping_key") as string) || "").trim() || null;
   if (!code || !descriptionFull) return;
   const supabase = supabaseServer();
-  await supabase.from("icd_codes").insert({ code, system, description_full: descriptionFull });
+  await supabase.from("icd_codes").insert({ code, system, description_full: descriptionFull, mapping_key: mappingKey });
   revalidatePath("/admin/icd");
 }
 
@@ -26,9 +28,13 @@ export async function updateIcdCodeAction(formData: FormData) {
   const code = (formData.get("code") as string)?.trim();
   const system = formData.get("system") as string;
   const descriptionFull = (formData.get("description_full") as string)?.trim();
+  const mappingKey = ((formData.get("mapping_key") as string) || "").trim() || null;
   if (!id || !code || !descriptionFull) return;
   const supabase = supabaseServer();
-  await supabase.from("icd_codes").update({ code, system, description_full: descriptionFull }).eq("id", id);
+  await supabase
+    .from("icd_codes")
+    .update({ code, system, description_full: descriptionFull, mapping_key: mappingKey })
+    .eq("id", id);
   revalidatePath("/admin/icd");
 }
 

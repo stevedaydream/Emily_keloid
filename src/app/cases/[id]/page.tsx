@@ -1,9 +1,8 @@
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase";
 import {
-  addDiagnosisAction,
-  addTermRecordAction,
   markScheduleItemAction,
+  updateScheduleItemQuestionnaireAction,
   updateCompletenessAction,
   updateConsentAction,
   markRadiotherapySessionAction,
@@ -15,9 +14,10 @@ import {
   addLabResultAction,
 } from "./actions";
 import TreatmentForm from "./TreatmentForm";
+import TermRecordForm from "./TermRecordForm";
+import DiagnosisPicker from "./DiagnosisPicker";
 import PipelineProgress from "./PipelineProgress";
 import IntakeOptionForm from "./IntakeOptionForm";
-import BodyZonePicker from "./BodyZonePicker";
 import DeletePhotoButton from "./DeletePhotoButton";
 import FamilyHistoryPicker from "./FamilyHistoryPicker";
 import PriorTreatmentPicker from "./PriorTreatmentPicker";
@@ -48,11 +48,11 @@ const BIOBANK_ITEMS = [
   { key: "blood_post_op_day1", label: "術後治療第一天", group: "血液" },
 ] as const;
 
+// 飲食衛教／運動禁忌衛教已於 2026-07-27 移除（決策：衛教內容不屬於研究要收的結構化資料，
+// 改由後台「衛教資料庫」health_education_kb 維護，只供 LINE 衛教機器人回答時參考）。
 const INTAKE_CATEGORIES = [
   { key: "onset_cause", label: "發生原因" },
   { key: "referral_source", label: "如何得知看診資訊" },
-  { key: "diet_education", label: "飲食衛教" },
-  { key: "exercise_restriction", label: "運動禁忌衛教" },
 ] as const;
 
 export default async function CaseDetailPage({
@@ -87,10 +87,17 @@ export default async function CaseDetailPage({
     { data: labResults },
     { data: jssClassificationTemplate },
     { data: keloidLesions },
+    { data: questionnaireTemplates },
   ] = await Promise.all([
-    supabase.from("cases").select("*, doctors(code, name), body_part_zones(display_name, dose_category)").eq("id", id).single(),
-    supabase.from("case_diagnoses").select("id, is_primary, icd_codes(code, system, description_full)").eq("case_id", id),
-    supabase.from("icd_codes").select("id, code, system, description_full").eq("active", true).order("code"),
+    supabase.from("cases").select("*, doctors(code, name)").eq("id", id).single(),
+    supabase.from("case_diagnoses").select("id, is_primary, icd_codes(code, system, description_full, mapping_key)").eq("case_id", id),
+    supabase
+      .from("icd_codes")
+      .select("id, code, system, description_full, mapping_key")
+      .eq("active", true)
+      .order("mapping_key")
+      .order("system")
+      .order("code"),
     supabase.from("term_library").select("id, stage, term").eq("active", true).order("sort_order"),
     supabase
       .from("case_term_records")
@@ -114,11 +121,15 @@ export default async function CaseDetailPage({
       )
       .eq("case_id", id)
       .order("submitted_at", { ascending: false }),
-    supabase.from("photos").select("id, taken_at, body_site, file_path, thumbnail_path").eq("case_id", id).order("taken_at", { ascending: false }),
+    supabase.from("photos").select("id, taken_at, body_site, lesion_id, file_path, thumbnail_path").eq("case_id", id).order("taken_at", { ascending: false }),
     supabase.from("case_data_completeness").select("*").eq("case_id", id),
     supabase.from("v_case_pipeline_progress").select("*").eq("case_id", id).single(),
     supabase.from("body_part_zones").select("id, zone_key, view, display_name, dose_category").eq("active", true).order("sort_order"),
-    supabase.from("radiotherapy_sessions").select("*").eq("case_id", id).order("due_date"),
+    supabase
+      .from("radiotherapy_sessions")
+      .select("*, case_keloid_lesions(site_no, body_site)")
+      .eq("case_id", id)
+      .order("due_date"),
     supabase.from("biobank_checklist_items").select("*").eq("case_id", id),
     supabase.from("biobank_samples").select("*").eq("case_id", id).maybeSingle(),
     supabase.from("case_intake_option_lists").select("id, category, label").eq("active", true).order("sort_order"),
@@ -134,7 +145,12 @@ export default async function CaseDetailPage({
       .eq("case_id", id)
       .order("sample_date", { ascending: false }),
     supabase.from("questionnaire_templates").select("id").eq("name", "JSS 疤痕診斷分類表").maybeSingle(),
-    supabase.from("case_keloid_lesions").select("*").eq("case_id", id).order("created_at"),
+    supabase
+      .from("case_keloid_lesions")
+      .select("*, body_part_zones(display_name, dose_category)")
+      .eq("case_id", id)
+      .order("site_no"),
+    supabase.from("questionnaire_templates").select("id, name").eq("active", true).order("created_at"),
   ]);
 
   if (!caseRow) {
@@ -142,17 +158,24 @@ export default async function CaseDetailPage({
   }
 
   const doctor = Array.isArray(caseRow.doctors) ? caseRow.doctors[0] : caseRow.doctors;
-  const bodyZone = Array.isArray(caseRow.body_part_zones) ? caseRow.body_part_zones[0] : caseRow.body_part_zones;
   const biobankByKey = new Map((biobankItems ?? []).map((b) => [b.item_key, b]));
   const termsByStage: Record<string, { id: string; term: string }[]> = { pre: [], intra: [], post: [] };
   (termLibrary ?? []).forEach((t) => termsByStage[t.stage]?.push(t));
 
-  const siteSuggestions = Array.from(
-    new Set([
-      ...(bodyZone ? [bodyZone.display_name] : []),
-      ...(keloidLesions ?? []).map((l) => l.body_site),
-    ])
-  );
+  // 部位＝病灶清單（決策 2026-07-27 多部位整合，不再有個案層級的單一「主要部位」）。
+  // 每個病灶各自的 body_part_zone 決定它自己的放療劑量分類。
+  const lesionList = (keloidLesions ?? []).map((l) => {
+    const zone = Array.isArray(l.body_part_zones) ? l.body_part_zones[0] : l.body_part_zones;
+    return {
+      ...l,
+      doseCategory: (zone?.dose_category as string | undefined) ?? null,
+      doseCategoryLabel: zone?.dose_category ? DOSE_CATEGORY_LABEL[zone.dose_category] : null,
+    };
+  });
+  const lesionLabel = (lesionId: string | null | undefined) => {
+    const l = lesionList.find((x) => x.id === lesionId);
+    return l ? `部位${l.site_no} ${l.body_site}` : null;
+  };
 
   const familyDiseaseOptions = (intakeOptions ?? []).filter((o) => o.category === "family_disease");
   const keloidHistoryTypeOptions = (intakeOptions ?? []).filter((o) => o.category === "keloid_history_type");
@@ -169,19 +192,63 @@ export default async function CaseDetailPage({
     return answers;
   }
 
-  // wound-photos 是私有 bucket，需個別產生短期簽章網址才能顯示圖片（不能用公開網址）。
-  // grid 用縮圖網址（流量小），點開大圖才用原圖網址；舊照片沒有縮圖時 fallback 用原圖。
-  const photosWithUrl = await Promise.all(
-    (photos ?? []).map(async (p) => {
-      const [{ data: fullData }, thumbData] = await Promise.all([
-        supabase.storage.from("wound-photos").createSignedUrl(p.file_path, 3600),
-        p.thumbnail_path
-          ? supabase.storage.from("wound-photos").createSignedUrl(p.thumbnail_path, 3600)
-          : Promise.resolve({ data: null }),
-      ]);
-      return { ...p, signedUrl: fullData?.signedUrl ?? null, thumbSignedUrl: thumbData?.data?.signedUrl ?? null };
-    })
-  );
+  // wound-photos 是私有 bucket，圖片一律透過 /api/photos/<id> 取得（該路由在瀏覽器實際載入圖片的
+  // 當下才即時簽一張短效期網址並轉址），所以這裡的網址永不過期，頁面停留再久都不會壞圖。
+  // grid 用 ?variant=thumb 縮圖（流量小），點開大圖才載原圖；舊照片沒有縮圖時路由端 fallback 用原圖。
+  const photosWithUrl = (photos ?? []).map((p) => ({
+    ...p,
+    imageUrl: `/api/photos/${p.id}`,
+    thumbUrl: `/api/photos/${p.id}?variant=thumb`,
+  }));
+
+  // 放療療程分組：一個部位的一次手術＝一組療程（同一部位再次手術會是另一組），
+  // 以「病灶 + 觸發的手術紀錄」當分組鍵。舊資料沒有 lesion_id 時歸到「未指定部位」那組。
+  type RtSession = {
+    id: string;
+    lesion_id: string | null;
+    triggered_by_treatment_record_id: string | null;
+    dose_category: string;
+    fraction_no: number;
+    total_fractions: number;
+    planned_dose_cgy: number;
+    actual_dose_cgy: number | null;
+    due_date: string;
+    completed_date: string | null;
+    status: string;
+  };
+  const rtSessionsByCourse = new Map<string, RtSession[]>();
+  for (const s of (radiotherapySessions ?? []) as RtSession[]) {
+    const key = `${s.lesion_id ?? "none"}__${s.triggered_by_treatment_record_id ?? "none"}`;
+    rtSessionsByCourse.set(key, [...(rtSessionsByCourse.get(key) ?? []), s]);
+  }
+  const rtCourses = Array.from(rtSessionsByCourse).map(([key, sessions]) => {
+    const sorted = [...sessions].sort((a, b) => a.fraction_no - b.fraction_no);
+    return {
+      key,
+      title: lesionLabel(sorted[0].lesion_id) ?? "未指定部位",
+      doseCategory: sorted[0].dose_category,
+      sessions: sorted,
+      doneCount: sorted.filter((s) => s.status === "done").length,
+      startDate: sorted[0].due_date,
+    };
+  });
+
+  // 照片依病灶部位分組呈現，讓病灶清單可以用錨點直接跳到該部位的照片。
+  const photoGroups = [
+    ...lesionList.map((l) => ({
+      key: l.id,
+      anchor: `photos-lesion-${l.id}`,
+      title: `部位${l.site_no} ${l.body_site}`,
+      photos: photosWithUrl.filter((p) => p.lesion_id === l.id),
+    })),
+    {
+      key: "unassigned",
+      anchor: "photos-unassigned",
+      title: "未對應部位",
+      photos: photosWithUrl.filter((p) => !p.lesion_id || !lesionList.some((l) => l.id === p.lesion_id)),
+    },
+  ].filter((g) => g.photos.length > 0 || g.key !== "unassigned");
+  const photoCountByLesion = new Map(photoGroups.map((g) => [g.key, g.photos.length]));
 
   // JSS 症狀追蹤評估表：以個案最早一筆回覆的總分當基準，計算每筆回覆的 Delta Score（基準分-本次分，正值代表改善）。
   const jssEvalDeltaById = new Map<string, number>();
@@ -301,35 +368,26 @@ export default async function CaseDetailPage({
         </div>
 
         <div className="mt-4 border-t border-brand-50 pt-3">
-          <KeloidLesionSection caseId={id} lesions={keloidLesions ?? []} />
-        </div>
-      </section>
-
-      {/* 部位標記 */}
-      <section id="section-bodyzone" data-nav-section data-nav-label="主要蟹足腫部位" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-ink/80">
-            主要蟹足腫部位
-            <InfoTooltip text="點右上「立即拍照」在人形圖點選部位並拍照；系統會依部位自動判斷放射治療的劑量分類。也可在下方下拉選單直接變更部位。" />
-          </h2>
-          <Link
-            href={`/patient/${id}/photo`}
-            className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
-          >
-            立即拍照
-          </Link>
-        </div>
-        {bodyZone ? (
-          <p className="text-sm text-ink/70">
-            {bodyZone.display_name}
-            <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-700">
-              劑量分類：{DOSE_CATEGORY_LABEL[bodyZone.dose_category]}
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-semibold text-ink/60">
+              蟹足腫部位與大小
+              <InfoTooltip text="在人形圖點選部位即可帶入病灶部位與劑量分類。每個部位各自跑自己的放射治療排程（胸/肩胛區18Gy×3、耳8Gy×1、其他部位15Gy×2）。" />
             </span>
-          </p>
-        ) : (
-          <p className="text-sm text-amber-600">尚未標記部位（可點右上「立即拍照」選部位，或於下方直接指定）</p>
-        )}
-        <BodyZonePicker caseId={id} zones={bodyZones ?? []} currentZoneKey={bodyZone?.zone_key} sex={caseRow.sex} />
+            <Link
+              href={`/patient/${id}/photo`}
+              className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
+            >
+              立即拍照
+            </Link>
+          </div>
+          <KeloidLesionSection
+            caseId={id}
+            lesions={lesionList}
+            zones={bodyZones ?? []}
+            sex={caseRow.sex}
+            photoCounts={Object.fromEntries(photoCountByLesion)}
+          />
+        </div>
       </section>
 
       {/* 病史與過往治療 */}
@@ -372,10 +430,10 @@ export default async function CaseDetailPage({
       </section>
 
       {/* 發生原因 / 得知看診資訊 / 飲食運動衛教（後台可維護選單，決策 2026-07-27） */}
-      <section id="section-intake" data-nav-section data-nav-label="發生原因與衛教紀錄" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
+      <section id="section-intake" data-nav-section data-nav-label="發生原因與看診來源" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
-          發生原因 / 得知看診資訊 / 衛教紀錄
-          <InfoTooltip text="四類選單皆為後台可維護清單（非單純勾選），可複選並保留歷次紀錄；飲食衛教/運動禁忌衛教可隨診次重複記錄。" />
+          發生原因 / 得知看診資訊
+          <InfoTooltip text="兩類選單皆為後台可維護清單（非單純勾選），可複選並保留歷次紀錄。衛教內容不在此記錄，改由後台「衛教資料庫」維護供 LINE 衛教機器人參考。" />
         </h2>
         {INTAKE_CATEGORIES.map((cat) => {
           const options = (intakeOptions ?? []).filter((o) => o.category === cat.key);
@@ -466,42 +524,31 @@ export default async function CaseDetailPage({
       <section id="section-diagnosis" data-nav-section data-nav-label="診斷（ICD-9/10）" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           診斷（ICD-9/10）
-          <InfoTooltip text="從蟹足腫相關的常用碼清單選擇診斷，可複選（主診斷＋共病），勾選「主診斷」標記主要診斷。" />
+          <InfoTooltip text="從蟹足腫相關的常用碼清單選擇診斷，可複選（主診斷＋共病）。選單選任一邊會即時顯示對應的另一個系統的碼（ICD-9 ↔ ICD-10 雙向對照，對照關係於後台 ICD 維護頁設定）。" />
         </h2>
         <ul className="mb-3 flex flex-wrap gap-2">
           {(diagnoses ?? []).map((d) => {
             const icd = Array.isArray(d.icd_codes) ? d.icd_codes[0] : d.icd_codes;
+            // 已記錄的診斷也一併顯示對照碼，方便直接抄另一個系統的碼
+            const mates = icd?.mapping_key
+              ? (icdCodes ?? []).filter((x) => x.mapping_key === icd.mapping_key && x.code !== icd.code)
+              : [];
             return (
               <li key={d.id} className="min-w-0 max-w-full rounded bg-ink/10 px-2 py-1 text-xs">
-                [{icd?.system}] {icd?.code} {icd?.description_full}
+                [{icd?.system === "ICD9" ? "ICD-9" : "ICD-10"}] <b className="font-data">{icd?.code}</b>{" "}
+                {icd?.description_full}
+                {mates.map((m) => (
+                  <span key={m.id} className="ml-1 whitespace-nowrap text-ink/50">
+                    ↔ [{m.system === "ICD9" ? "ICD-9" : "ICD-10"}] <b className="font-data">{m.code}</b>
+                  </span>
+                ))}
                 {d.is_primary && <span className="ml-1 whitespace-nowrap text-blue-600">（主診斷）</span>}
               </li>
             );
           })}
           {(!diagnoses || diagnoses.length === 0) && <li className="text-xs text-ink/40">尚未記錄診斷</li>}
         </ul>
-        <form action={addDiagnosisAction} className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <input type="hidden" name="case_id" value={id} />
-          <select
-            name="icd_code_id"
-            required
-            className="w-full min-w-0 rounded-md border border-brand-200 px-2 py-1.5 text-sm sm:w-auto sm:flex-1"
-          >
-            {(icdCodes ?? []).map((i) => (
-              <option key={i.id} value={i.id}>
-                [{i.system}] {i.code} {i.description_full}
-              </option>
-            ))}
-          </select>
-          <div className="flex items-center justify-between gap-2 sm:justify-start">
-            <label className="flex items-center gap-1 whitespace-nowrap text-xs text-ink/50">
-              <input type="checkbox" name="is_primary" /> 主診斷
-            </label>
-            <SubmitButton variant="outline" pendingText="新增中…">
-              新增
-            </SubmitButton>
-          </div>
-        </form>
+        <DiagnosisPicker caseId={id} codes={icdCodes ?? []} />
       </section>
 
       {/* 醫學術語紀錄 */}
@@ -510,26 +557,7 @@ export default async function CaseDetailPage({
           醫學術語紀錄
           <InfoTooltip text="依術前/術中/術後選擇該階段觀察到的常用術語（可複選），用於統一病歷描述用語，方便後續資料分析比對。" />
         </h2>
-        <form action={addTermRecordAction} className="mb-4 space-y-2 rounded-md border border-brand-100 p-3">
-          <input type="hidden" name="case_id" value={id} />
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-ink/70">階段</label>
-            <select name="stage" className="rounded-md border border-brand-200 px-2 py-1 text-sm">
-              <option value="pre">術前</option>
-              <option value="intra">術中</option>
-              <option value="post">術後</option>
-            </select>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {(termLibrary ?? []).map((t) => (
-              <label key={t.id} className="flex items-center gap-1 rounded border border-brand-100 px-2 py-1 text-xs">
-                <input type="checkbox" name="term_ids" value={t.id} />
-                {STAGE_LABEL[t.stage]}：{t.term}
-              </label>
-            ))}
-          </div>
-          <SubmitButton pendingText="新增中…">新增紀錄</SubmitButton>
-        </form>
+        <TermRecordForm caseId={id} terms={termLibrary ?? []} />
         <ul className="space-y-1">
           {(termRecords ?? []).map((r) => (
             <li key={r.id} className="text-sm text-ink/70">
@@ -552,7 +580,17 @@ export default async function CaseDetailPage({
           <InfoTooltip text="選擇治療類型並填寫對應欄位；若有常用套組可直接選擇帶入數值，再視情況微調後儲存。若登打「手術切除」且已標記部位，會自動產生放射治療排程。" />
         </h2>
         <div className="mb-4">
-          <TreatmentForm caseId={id} treatmentTypes={treatmentTypes ?? []} presets={presets ?? []} siteSuggestions={siteSuggestions} />
+          <TreatmentForm
+            caseId={id}
+            treatmentTypes={treatmentTypes ?? []}
+            presets={presets ?? []}
+            lesions={lesionList.map((l) => ({
+              id: l.id,
+              site_no: l.site_no,
+              body_site: l.body_site,
+              doseCategoryLabel: l.doseCategoryLabel,
+            }))}
+          />
         </div>
         <ul className="space-y-1">
           {(treatmentRecords ?? []).map((r) => {
@@ -587,54 +625,70 @@ export default async function CaseDetailPage({
       <section id="section-radiotherapy" data-nav-section data-nav-label="放射治療進度" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           放射治療進度
-          <InfoTooltip text="登打「手術切除」治療紀錄且個案已標記部位時自動產生（胸/肩胛區18Gy×3、耳8Gy×1、其他部位15Gy×2）。每次實際執行後在此標記完成並填實際劑量。" />
+          <InfoTooltip text="登打「手術切除」治療紀錄時，該筆對應部位若已指定部位分類就自動產生一組療程（胸/肩胛區18Gy×3、耳8Gy×1、其他部位15Gy×2）。多個部位各自跑各自的療程。每次實際執行後在此標記完成並填實際劑量。" />
         </h2>
-        {radiotherapySessions && radiotherapySessions.length > 0 ? (
-          <ul className="space-y-2">
-            {radiotherapySessions.map((s) => (
-              <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-brand-50 px-3 py-2 text-sm">
-                <span className="whitespace-nowrap">
-                  第 {s.fraction_no}/{s.total_fractions} 次 ・ 預定 {s.planned_dose_cgy / 100}Gy ・ 到期 {s.due_date}
-                  {s.status === "done" && s.actual_dose_cgy != null && (
-                    <span className="ml-2 whitespace-nowrap text-xs text-emerald-600">實際 {s.actual_dose_cgy / 100}Gy（{s.completed_date}）</span>
-                  )}
-                </span>
-                <span className="flex flex-wrap items-center gap-2">
-                  <span
-                    className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
-                      s.status === "done"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : s.status === "skipped"
-                        ? "bg-ink/10 text-ink/50"
-                        : "bg-amber-100 text-amber-700"
-                    }`}
-                  >
-                    {s.status === "done" ? "已完成" : s.status === "skipped" ? "已跳過" : "待處理"}
+        {rtCourses.length > 0 ? (
+          <div className="space-y-4">
+            {rtCourses.map((course) => (
+              <div key={course.key}>
+                <div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-semibold text-ink/70">{course.title}</span>
+                  <span className="rounded bg-sky-100 px-1.5 py-0.5 text-sky-700">
+                    {DOSE_CATEGORY_LABEL[course.doseCategory] ?? course.doseCategory}
                   </span>
-                  {s.status === "pending" && (
-                    <form action={markRadiotherapySessionAction} className="flex items-center gap-1">
-                      <input type="hidden" name="case_id" value={id} />
-                      <input type="hidden" name="session_id" value={s.id} />
-                      <input type="hidden" name="status" value="done" />
-                      <input
-                        type="number"
-                        name="actual_dose_cgy"
-                        placeholder={`${s.planned_dose_cgy}`}
-                        defaultValue={s.planned_dose_cgy}
-                        className="w-20 rounded border border-brand-200 px-1 py-0.5 text-xs"
-                      />
-                      <SubmitButton variant="ghost" size="sm" className="!px-1.5 !py-0.5 text-ink/40 underline" pendingText="處理中…">
-                        標記完成
-                      </SubmitButton>
-                    </form>
-                  )}
-                </span>
-              </li>
+                  <span className="text-ink/40">
+                    完成 {course.doneCount}/{course.sessions.length} 次
+                    {course.startDate && ` ・ 起始 ${course.startDate}`}
+                  </span>
+                </div>
+                <ul className="space-y-2">
+                  {course.sessions.map((s) => (
+                    <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-brand-50 px-3 py-2 text-sm">
+                      <span className="whitespace-nowrap">
+                        第 {s.fraction_no}/{s.total_fractions} 次 ・ 預定 {s.planned_dose_cgy / 100}Gy ・ 到期 {s.due_date}
+                        {s.status === "done" && s.actual_dose_cgy != null && (
+                          <span className="ml-2 whitespace-nowrap text-xs text-emerald-600">實際 {s.actual_dose_cgy / 100}Gy（{s.completed_date}）</span>
+                        )}
+                      </span>
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
+                            s.status === "done"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : s.status === "skipped"
+                              ? "bg-ink/10 text-ink/50"
+                              : "bg-amber-100 text-amber-700"
+                          }`}
+                        >
+                          {s.status === "done" ? "已完成" : s.status === "skipped" ? "已跳過" : "待處理"}
+                        </span>
+                        {s.status === "pending" && (
+                          <form action={markRadiotherapySessionAction} className="flex items-center gap-1">
+                            <input type="hidden" name="case_id" value={id} />
+                            <input type="hidden" name="session_id" value={s.id} />
+                            <input type="hidden" name="status" value="done" />
+                            <input
+                              type="number"
+                              name="actual_dose_cgy"
+                              placeholder={`${s.planned_dose_cgy}`}
+                              defaultValue={s.planned_dose_cgy}
+                              className="w-20 rounded border border-brand-200 px-1 py-0.5 text-xs"
+                            />
+                            <SubmitButton variant="ghost" size="sm" className="!px-1.5 !py-0.5 text-ink/40 underline" pendingText="處理中…">
+                              標記完成
+                            </SubmitButton>
+                          </form>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
+          </div>
         ) : (
           <p className="text-sm text-ink/40">
-            尚無放療排程。登打「手術切除」治療紀錄時，若個案已標記部位，系統會依部位對應的劑量分類自動產生排程。
+            尚無放療排程。登打「手術切除」治療紀錄時，勾選的部位若已在病灶清單指定部位分類，系統會為每個部位各產生一組排程。
           </p>
         )}
       </section>
@@ -858,6 +912,12 @@ export default async function CaseDetailPage({
                   <span className="font-medium text-ink">{item.label}</span>
                   <span className="text-ink/40">到期 {item.due_date}</span>
                   <span className="text-xs text-ink/40">{(item.actions ?? []).join("、")}</span>
+                  {item.questionnaire_id && (
+                    <span className="text-xs text-ink/40">
+                      問卷：
+                      {(questionnaireTemplates ?? []).find((t) => t.id === item.questionnaire_id)?.name ?? "（已刪除）"}
+                    </span>
+                  )}
                   <span
                     className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
                       item.status === "done"
@@ -901,6 +961,36 @@ export default async function CaseDetailPage({
                       </form>
                     </span>
                   </div>
+                )}
+                {/* 個案層級改換問卷：只影響這一筆時程項目，不動後台範本、也不影響其他個案 */}
+                {item.status === "pending" && (
+                  <details className="text-xs">
+                    <summary className="cursor-pointer text-ink/40 hover:text-ink/60">
+                      {item.questionnaire_id ? "更換此時間點的問卷" : "指定此時間點的問卷"}
+                    </summary>
+                    <form
+                      action={updateScheduleItemQuestionnaireAction}
+                      className="mt-1.5 flex flex-wrap items-center gap-2"
+                    >
+                      <input type="hidden" name="case_id" value={id} />
+                      <input type="hidden" name="item_id" value={item.id} />
+                      <select
+                        name="questionnaire_id"
+                        defaultValue={item.questionnaire_id ?? ""}
+                        className="rounded border border-brand-200 px-2 py-1 text-xs"
+                      >
+                        <option value="">（不指定問卷）</option>
+                        {(questionnaireTemplates ?? []).map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                      <SubmitButton variant="outline" size="sm" className="!px-2 !py-0.5 !text-xs" pendingText="儲存中…">
+                        儲存
+                      </SubmitButton>
+                    </form>
+                  </details>
                 )}
               </div>
             </li>
@@ -1019,38 +1109,59 @@ export default async function CaseDetailPage({
         </ul>
       </section>
 
-      {/* 照片 */}
+      {/* 照片（依病灶部位分組，病灶清單可用錨點直接跳到對應群組） */}
       <section id="section-photos" data-nav-section data-nav-label="傷口照片" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-ink/80">
-          傷口照片
-          <InfoTooltip text="顯示已上傳的傷口照片紀錄。要新增照片請至上方「主要蟹足腫部位」區塊點「立即拍照」。" />
-        </h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-          {photosWithUrl.map((p) =>
-            p.signedUrl ? (
-              <div key={p.id} className="group relative overflow-hidden rounded-lg border border-brand-100 bg-ink/5">
-                <a href={p.signedUrl} target="_blank" rel="noreferrer">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={p.thumbSignedUrl ?? p.signedUrl}
-                    alt={p.body_site ?? "傷口照片"}
-                    loading="lazy"
-                    className="aspect-square w-full object-cover transition-opacity group-hover:opacity-90"
-                  />
-                  <div className="p-2 text-xs text-ink/60">
-                    <div className="truncate">{p.body_site ?? "—"}</div>
-                    <div className="text-ink/40">{new Date(p.taken_at).toLocaleDateString("zh-TW")}</div>
-                  </div>
-                </a>
-                <DeletePhotoButton caseId={id} photoId={p.id} />
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-ink/80">
+            傷口照片
+            <InfoTooltip text="依病灶部位分組顯示已上傳的照片。要新增照片可點右上「拍照」，或在上方病灶清單點該部位的「拍這個部位」。" />
+          </h2>
+          <Link
+            href={`/patient/${id}/photo`}
+            className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
+          >
+            拍照
+          </Link>
+        </div>
+        <div className="space-y-4">
+          {photoGroups.map((g) => (
+            <div key={g.key} id={g.anchor} className="scroll-mt-4">
+              <div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-semibold text-ink/70">{g.title}</span>
+                <span className="text-ink/40">{g.photos.length} 張</span>
+                {g.key !== "unassigned" && (
+                  <Link href={`/patient/${id}/photo?lesion_id=${g.key}`} className="text-brand-700 underline">
+                    拍這個部位
+                  </Link>
+                )}
               </div>
-            ) : (
-              <div key={p.id} className="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-600">
-                圖片載入失敗（{p.body_site ?? "—"} ・ {new Date(p.taken_at).toLocaleDateString("zh-TW")}）
-              </div>
-            )
-          )}
-          {photosWithUrl.length === 0 && <p className="col-span-full text-sm text-ink/40">尚無照片</p>}
+              {g.photos.length === 0 ? (
+                <p className="text-xs text-ink/30">尚無照片</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                  {g.photos.map((p) => (
+                    <div key={p.id} className="group relative overflow-hidden rounded-lg border border-brand-100 bg-ink/5">
+                      <a href={p.imageUrl} target="_blank" rel="noreferrer">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={p.thumbUrl}
+                          alt={p.body_site ?? "傷口照片"}
+                          loading="lazy"
+                          className="aspect-square w-full object-cover transition-opacity group-hover:opacity-90"
+                        />
+                        <div className="p-2 text-xs text-ink/60">
+                          <div className="truncate">{p.body_site ?? "—"}</div>
+                          <div className="text-ink/40">{new Date(p.taken_at).toLocaleDateString("zh-TW")}</div>
+                        </div>
+                      </a>
+                      <DeletePhotoButton caseId={id} photoId={p.id} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {photoGroups.length === 0 && <p className="text-sm text-ink/40">尚無照片</p>}
         </div>
       </section>
     </div>

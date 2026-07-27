@@ -108,7 +108,7 @@
 - 常用治療方式清單與各自要記錄的欄位（用於治療套組模組）
 - ICD-9/10 常用碼清單的實際內容（哪些碼要收錄）
 - **JSS 診斷分類表的分類切點**：2026-07-27 已改為規格文件的正式 JSW Scar Scale 2015（12 項、總分 0-25），但文件只給各項分數、未給「幾分算蟹足腫」的切點，因此系統目前**只顯示總分不做自動分類**。若部長提供切點，可再加回分類判定
-- **「主要部位」是否要支援多選**：目前有兩層概念——`cases.body_part_zone_id`（單一「主要部位」，用途是判斷放療劑量分類：胸/肩胛、耳朵、其他）與 `case_keloid_lesions`（可多筆的部位清單，含編號 1,2…、各自描述與尺寸，也是拍照點選來源）。若之後要讓**多個部位各自跑放療排程/劑量分類**，需把 `body_part_zone_id` 改為多對多並調整排程邏輯（2026-07-27 記錄，暫不處理）
+- ~~「主要部位」是否要支援多選~~ → 2026-07-27 已整合，見下方「多部位整合」段落（取消主要部位概念，改為每個病灶各自帶部位分類、各自跑放療療程）
 
 ## 2026-07-26 架構調整（跟部長溝通後）
 
@@ -234,7 +234,8 @@
 - **蟹足腫初次發生時間改用日期選擇器**：從純文字（可填「2019年初」）改成 `<input type="date">`，點擊會跳原生日曆選取；取捨是不能再填模糊時間，只能選精確日期。
 - `updateDemographicsAction` 已移除 `keloid_history`／`keloid_size` 的寫入（改由上述新機制各自處理），避免舊表單欄位消失後把這兩欄位覆蓋成 null。
 - Migration：`20260727070000_family_disease_options_seed.sql`（含放寬 `case_intake_option_lists` 的 category CHECK constraint）、`20260727080000_keloid_history_type_and_lesions.sql`。
-- 已用瀏覽器實測：家族史/疾病史彈窗、keloid history 勾選新增紀錄、病灶測量新增（左耳垂 2.5cm 測試資料）皆正確寫入並顯示。
+- 已用瀏覽器實測：家族史/疾病史彈窗、病灶測量新增（左耳垂 2.5cm 測試資料）皆正確寫入並顯示。
+- **更正（2026-07-27 稍晚發現）**：上面原本記載「keloid history 勾選新增紀錄」也實測通過，但實際上不可能成功——`20260727070000`／`080000` 只放寬了 `case_intake_option_lists` 的 category CHECK，漏掉 `case_intake_option_records`，送出時會噴 `violates check constraint "case_intake_option_records_category_check"`。已用 `20260727150000_intake_records_category_check_fix.sql` 修正（兩張表的 category CHECK 必須同步維護，之後新增 category 時兩邊都要改）。`family_disease` 因為走 `cases.family_history` 文字欄位、不寫 records 表，所以先前沒踩到。
 
 **2026-07-27 追加：個案頁面區塊順序調整**：「主要蟹足腫部位」（`section-bodyzone`）從原本排在「病史與過往治療」之後，移到「病人基本資料」區塊內的「現存病灶大小測量」下方（同樣在「病史與過往治療」之前），流程上大小測量與部位標記相鄰更直覺。純調整 `src/app/cases/[id]/page.tsx` 內 JSX 區塊順序，無資料庫/元件變動。
 
@@ -248,7 +249,47 @@
 - `v_dashboard_stats` 依賴 `v_case_pipeline_progress`，Postgres 的 `CREATE OR REPLACE VIEW` 不能在既有欄位中間插入新欄位，所以這次改用 `DROP VIEW ... CASCADE` 後把兩個 view 一起重建（含 grant）。
 - 已用瀏覽器實測：CHN-2026-001（時程還有 2 項 pending）從舊版「7/8・88%・追蹤進行✓」變成新版「6/8・75%・治療後追蹤 `…`（琥珀色）」；dashboard 總覽表格全部案例「治療後追蹤」欄目前皆顯示琥珀色 `◐`（因為目前沒有案例把所有時程項目都跑完）。
 
+**2026-07-27 追加：清掉上一輪的三項待辦（Lab 匯出／個案層級改問卷／照片網址過期）**：
+
+1. **Lab 生物標記數據併入結構化資料匯出**（`/api/export/structured-data`）。原本卡住的問題是「同一個案有多標記×多次採檢，wide table 攤不平」，決策採兩層並行：
+   - 主表（`raw data` 工作表）在「2026平台新增欄位」群組末端，**每個標記固定 3 欄**：`Lab-<標記>(<單位>)最新值`／`Lab-<標記>最新採檢日`／`Lab-<標記>採檢次數`。欄位集合來自 `lab_marker_definitions` 全部標記（**含已停用的**，因為舊資料可能引用停用標記，欄位仍要出現），依 `sort_order` 排序，所以後台新增標記時匯出欄位會自動跟著長。
+   - 另開**第二張工作表 `lab 生物標記逐筆`**（long format），一列＝一個案的一個標記的一次採檢：編號／標記／單位／採檢日期／數值／原始字串／備註／記錄者，供需要時間序列分析時使用。
+   - 值的呈現：主表最新值取 `value ?? value_text`（優先數字，無法轉數字的原始字串如 `<0.35` 才退回文字）；逐筆表則 `value`／`value_text` 各佔一欄不混在一起。
+2. **個案層級可單獨更換某個時間點的問卷**。`case_schedule_items` 是套用範本時複製自 `schedule_template_items` 的快照，原本事後只能沿用範本指定的問卷。新增 `updateScheduleItemQuestionnaireAction`（`src/app/cases/[id]/actions.ts`），個案頁「追蹤時程」每個待處理項目下方新增一個折疊區（`<details>`）可下拉選任一啟用中的問卷並儲存，**只改這一筆時程項目，不動後台範本、也不影響同範本的其他個案**。附帶處理：若該項目原本沒有 `questionnaire` 動作卻指定了問卷，會自動把 `questionnaire` 補進 `actions` 陣列（否則畫面上不會出現「填寫問卷」連結）；選「（不指定問卷）」則清為 null。時程項目標題列也會顯示目前指定的問卷名稱。
+3. **傷口照片網址不再過期**。原本是在個案頁面伺服器渲染當下產生 1 小時效期的簽章網址直接塞進 `<img src>`，頁面停留超過 1 小時就壞圖。改為新增 `src/app/api/photos/[id]/route.ts`：`<img src>` 指向 `/api/photos/<id>`（縮圖加 `?variant=thumb`），瀏覽器**實際載入圖片的當下**才即時簽一張 5 分鐘效期網址並 307 轉址過去，所以頁面上的網址本身永不過期。轉址回應帶 `Cache-Control: no-store`（否則瀏覽器快取住轉址、簽章過期後會重用舊網址而壞圖）。存取控制沿用 `src/proxy.ts` 的共用帳號 session cookie（同源 `<img>` 請求會自動帶 cookie），圖片位元組仍直接由 Supabase 出（只轉址不代理，不佔 Vercel 流量）。舊照片沒有縮圖時由路由端 fallback 用原圖，前端不需再處理。
+
+**2026-07-27 追加：多部位整合（取消「主要部位」，每個病灶各自跑放療）** — migration `20260727140000_multi_site_zones_and_radiotherapy.sql`：
+
+原本個案只有單一「主要部位」`cases.body_part_zone_id` 決定放療劑量分類，但一個病人常同時有多處蟹足腫、各處分類不同（耳 8Gy×1／胸肩胛 18Gy×3／其他 15Gy×2），需要各自跑療程。**做法不是把 `body_part_zone_id` 改成多對多**，而是讓既有的多筆病灶清單 `case_keloid_lesions`（已有部位編號 1,2… 與拍照連結）各自帶一個 `body_part_zone_id`，病灶清單因此成為部位的唯一真實來源，主要部位概念取消（使用者決策）。
+
+- **資料模型**：`case_keloid_lesions.body_part_zone_id`（各病灶自己的精細部位→劑量分類）、`radiotherapy_sessions.lesion_id`（療程掛在哪個部位）、`treatment_records.lesion_id`（這筆治療對應哪個部位）。`cases.body_part_zone_id` 標記為 DEPRECATED、程式不再寫入（欄位保留供舊資料匯入對齊）；`cases.body_site` 改為病灶部位的去正規化摘要，由 `syncCaseBodySite()` 在病灶新增/刪除時同步（個案列表、搜尋、dashboard 統計都讀這欄）。舊資料回填：病灶 `body_site` 文字對得上 zone 名稱的自動掛上；有主要部位但沒有病灶列的個案自動轉出一筆「部位1」；舊放療列與舊治療紀錄也各自回填 `lesion_id`。
+- **人形圖用途改變**：個案頁「主要蟹足腫部位」區塊（`BodyZonePicker.tsx`）整個移除，人形圖改放進「現存病灶大小測量」區塊——**點人形圖直接帶入病灶部位名稱與部位分類**，再填長寬高送出即新增一筆病灶（部位名稱可改成更精確的描述如「耳」→「左耳垂」，分類仍沿用點選的區塊）。既有病灶每筆下方有部位分類下拉可補指定/更換。`/cases/new` 建檔時點的部位改為建立該個案的「部位1」而非寫 `cases.body_part_zone_id`。
+- **放療排程改為每部位一組**：`generateRadiotherapySessions` 改吃 `lesionId`，劑量分類取自該病灶自己的 zone。治療表單「部位」從自由文字改為**勾選病灶清單（可複選）＋一個自由輸入欄**，每個部位 × 每種治療方式各建一筆紀錄（勾 2 部位 × 2 種方式 = 4 筆），所以同一天多部位手術會各自產生自己的放療療程。自由輸入的部位沒有分類，不會自動排程。個案頁「放射治療進度」改為依「病灶＋觸發手術紀錄」分組，每組顯示部位/分類/完成次數。放療唯一鍵從 `(case_id, fraction_no, triggered_by_treatment_record_id)` 改為納入 `lesion_id`（用 unique index + coalesce 實作，不用需 PG15 的 `unique nulls not distinct`）。
+- **拍照流程保留並強化**：人形圖拍照流程不變，但每個病灶自己的 zone 現在會決定對齊蒙板樣式（先前個案部位清單一律用通用蒙板）。個案頁病灶清單每筆新增「🖼 照片 N 張」錨點連結（跳到下方照片區塊該部位的群組）與「拍這個部位」按鈕（`/patient/[caseId]/photo?lesion_id=…` 直接進該部位的相機）。傷口照片區塊改為**依病灶部位分組**呈現，各組有自己的錨點 id。拍照上傳不再回寫 `cases.body_part_zone_id`。
+- **順手修掉兩個已失效的完整度檢查**（`v_case_pipeline_progress`）：`cases.keloid_size` 與 `cases.keloid_history` 自 `20260727080000` 起 UI 已改寫入 `case_keloid_lesions` 與 `case_intake_option_records`，這兩欄不再有新值，導致正常收案個案的「資料完整」燈號**永遠無法達成**。現改為：部位→至少一個病灶已指定分類；大小→病灶有填任一維度或舊 `keloid_size` 有值；keloid history→舊文字欄或新的勾選紀錄擇一。
+- **匯出同步**：「部位」欄改為所有病灶部位串接（沒有病灶列的舊資料才退回 `cases.body_site`）、舊表「部位1~4」對應病灶前四筆、「keloid 大小」改為各病灶尺寸串接；新增「各部位與劑量分類」「部位數」「各部位放療療程」（逐組列出部位/分類/完成次數/總Gy）欄位。
+
+**Migration 套用狀況**：本專案的 migration 是手動貼 Supabase SQL Editor 執行的（遠端沒有 `supabase_migrations` 版本記錄表，所以不能直接用 `supabase db push`，那會以為所有 migration 都沒跑過而重跑一遍）。`20260727140000_multi_site_zones_and_radiotherapy.sql` 已於 2026-07-27 套用並驗證（三個新欄位、兩個 view 皆正常；4 筆舊「主要部位」自動轉為部位1、3 筆舊放療列掛回部位）。
+
+**2026-07-27 追加：醫學術語清單依階段過濾**：個案頁「醫學術語紀錄」的勾選清單原本不分階段全部列出、只在每則前面加「術前：」「術中：」標籤，清單一長就很難找。抽出 `TermRecordForm.tsx`（client component），改為只顯示選取階段的術語，切換階段時 checkbox 重新掛載、已勾的自動清空（避免送出跟階段不符的術語）。後台 `/admin/terms` 本來就已依階段分三組，不需改動。
+
+**2026-07-27 追加：移除個案頁的衛教勾選（飲食／運動禁忌）**（使用者決策：衛教內容跟研究要收的結構化資料無關）：
+- 個案頁「發生原因 / 得知看診資訊 / 衛教紀錄」區塊移除 `diet_education`／`exercise_restriction` 兩類，區塊更名為「發生原因 / 得知看診資訊」
+- 後台 `/admin/intake-options` 同步移除這兩類；順便把先前漏掉的 `keloid_history_type` 加進可維護清單（個案頁早就在用這個 category，但後台沒開放維護）
+- 結構化匯出移除「飲食衛教紀錄」「運動禁忌衛教紀錄」兩欄
+- **資料庫沒有動**：`case_intake_option_lists` 的選項列、`case_intake_option_records` 已記錄的資料、category CHECK 都原封不動保留，只是不再從 UI 出現（要復原只需把 category 加回兩個清單）
+- 衛教內容改由後台「衛教資料庫」（`health_education_kb`，`/admin/health-kb`）維護，只供 LINE 衛教機器人回答時參考——這部分本來就已建好，不需新增功能
+
+**2026-07-27 追加：ICD-9 ↔ ICD-10 雙向對照** — migration `20260727160000_icd_cgh_bidirectional_mapping.sql`（依使用者提供的長庚院內對照表）：
+- 資料模型：`icd_codes.mapping_key`（共用同一個 key 的 ICD-9 與 ICD-10 列即互為對照）。不用自我外鍵是因為共用 key 天然支援雙向查詢，也容得下未來 1 對多的對應；沒有跨系統對照的碼（共病參考用的 I10、E11.9）留 null。
+- 建立的三組對照：`7061 / L730` Acne keloid、`7014 / L910` Hypertrophic scar、`7092 / L905` Scar conditions and fibrosis of skin（代碼採院內寫法、不含小數點）。既有的 `701.4`／`L91.0`／`L90.5` 三筆是**用 update 就地改成院內寫法**而非刪除重建，以保留 `case_diagnoses` 既有的 8 筆引用；連帶把原本標示為「Keloid scar 蟹足腫」的 `701.4`／`L91.0` 依對照表改為 Hypertrophic scar。
+- 個案頁：診斷選單抽成 `DiagnosisPicker.tsx`（client component），**選單選任一邊即時顯示對應的另一邊**；已記錄的診斷標籤也附帶顯示對照碼（`↔ [ICD-9] 7014`）。
+- 後台 `/admin/icd`：改為「雙向對照組」（同 key 的碼一組顯示，只有單邊時標示「無法雙向對照」）＋「未對照」兩區，新增/編輯表單都可填「對照鍵」（附 datalist 帶出既有 key）。
+
 **仍未處理 / 待確認**：
-- Lab 數據尚未併入結構化資料匯出
-- 追蹤時程範本的問卷指定：目前是後台 `/admin/schedules` 設定時程範本時，每個時間點各自指定固定的 `questionnaire_id`（可維護、非寫死在程式碼），但套用範本產生個案實際時程後，該筆的問卷是複製自範本、事後不能在個案頁面單獨換成別份問卷——如果需要「同一個時間點事後可以改填別份問卷」，需要額外加編輯功能
-- 傷口照片檢視目前用短效期簽章網址（1小時），如果之後要在個案頁面停留很久或分享連結給別人看，需考慮改用重新整理時即時產生，或是提供「重新產生連結」的按鈕
+- **ICD 對照 migration 尚未套用**：`20260727160000_icd_cgh_bidirectional_mapping.sql` 需在 Supabase SQL Editor 執行
+- **JSS 量表目前有兩份，使用者要求只留一份**（「JSS 疤痕診斷分類表」12題/0-25分＝正式 JSW Scar Scale 2015；「JSS 症狀與治療追蹤評估表」6題/0-18分），待確認留哪一份後再處理（兩份目前都是 0 筆回覆，刪除不會影響既有資料；若留分類表，Delta Score 邏輯需改掛到分類表的歷次總分上）
+- 有 4 筆先前手動新增的病灶沒有部位分類可回填（CHN-2026-001 左耳垂、CHN-2026-003 右耳垂、YAN-2026-005 左胸與右上背），需在個案頁病灶清單用下拉選單補指定，否則該部位不會自動排放療；連帶有 4 筆舊放療列（CHN-2026-001 一次、YAN-2026-005 三次）掛不到部位，會歸在放療區塊的「未指定部位」組
+- 舊治療紀錄 14 筆只有 1 筆掛到 `lesion_id`：多數舊紀錄 `body_site` 是空的（建立時還沒這個欄位），YAN-2026-005 那幾筆寫「右肩胛」但該個案病灶叫「左胸」「右上背」，文字對不上
+- 上述 lab 匯出／改問卷／照片網址三項改動已通過 `tsc --noEmit` 與 `next build`，但**尚未實際跑過瀏覽器實測**（本機缺 `.env.local`，無法連 Supabase 起 dev server）；部署後建議實測三件事：匯出檔第二張工作表有資料、個案頁換問卷後連結指向新問卷、照片頁停留超過 1 小時仍看得到圖
+- 匯出的 lab 主表目前只給「最新一次」，若之後部長要「術前/術後配對比較」這類固定時間點欄位，需要再定義時間點對應規則（例如以手術日為基準前後幾天內視為術前/術後）

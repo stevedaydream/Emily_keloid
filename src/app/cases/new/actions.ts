@@ -47,7 +47,6 @@ export async function createCaseAction(formData: FormData): Promise<{ caseId: st
       enrollment_year: year,
       sequence_no: sequenceNo,
       body_site: bodySite,
-      body_part_zone_id: bodyPartZoneId,
       sex,
       age_at_enrollment: ageAtEnrollment,
       phone_number: phoneNumber || null,
@@ -60,6 +59,18 @@ export async function createCaseAction(formData: FormData): Promise<{ caseId: st
     .single();
 
   if (error || !newCase) throw error ?? new Error("建立個案失敗");
+
+  // 建檔時在人形圖點選的部位＝這個個案的「部位1」（決策 2026-07-27 多部位整合：
+  // 部位一律記在 case_keloid_lesions，個案不再有單一「主要部位」欄位）。
+  // 尺寸留空，之後在個案頁面補填，也可再新增部位2、3…
+  if (bodyPartZoneId && bodySite) {
+    await supabase.from("case_keloid_lesions").insert({
+      case_id: newCase.id,
+      site_no: 1,
+      body_site: bodySite,
+      body_part_zone_id: bodyPartZoneId,
+    });
+  }
 
   // 套用時程範本，產生個案實際時程（可之後個別微調）
   if (scheduleTemplateId) {

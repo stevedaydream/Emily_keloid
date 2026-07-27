@@ -8,6 +8,37 @@ import { computeSF36, computePSQI, SF36_SCALES, computeJSSClassification, comput
 
 const first = <T>(v: T | T[] | null | undefined): T | undefined => (Array.isArray(v) ? v[0] : v ?? undefined);
 
+type LesionRow = {
+  case_id: string;
+  site_no: number | null;
+  body_site: string;
+  length_cm: number | null;
+  width_cm: number | null;
+  height_cm: number | null;
+  body_part_zones: { display_name?: string; dose_category?: string } | { display_name?: string; dose_category?: string }[] | null;
+};
+
+type RtSessionRow = {
+  lesion_id: string | null;
+  triggered_by_treatment_record_id: string | null;
+  dose_category: string;
+  fraction_no: number;
+  status: string;
+  planned_dose_cgy: number | null;
+  actual_dose_cgy: number | null;
+  case_keloid_lesions: { site_no?: number; body_site?: string } | { site_no?: number; body_site?: string }[] | null;
+};
+
+type LabResultRow = {
+  case_id: string;
+  marker_id: string;
+  sample_date: string | null;
+  value: number | null;
+  value_text: string | null;
+  note: string | null;
+  recorded_by: string | null;
+};
+
 function daysBetween(a?: string | null, b?: string | null): number | null {
   if (!a || !b) return null;
   const d = (new Date(b).getTime() - new Date(a).getTime()) / 86400000;
@@ -30,6 +61,9 @@ export async function GET() {
     { data: responses },
     { data: answers },
     { data: intakeRecords },
+    { data: keloidLesions },
+    { data: labMarkers },
+    { data: labResults },
   ] = await Promise.all([
     supabase.from("cases").select("*, doctors(name), body_part_zones(display_name, dose_category)"),
     supabase.from("case_diagnoses").select("case_id, is_primary, icd_codes(code, description_full)"),
@@ -37,7 +71,7 @@ export async function GET() {
       .from("case_term_records")
       .select("case_id, stage, case_term_record_items(term_library(term))"),
     supabase.from("treatment_records").select("*, treatment_types(name)"),
-    supabase.from("radiotherapy_sessions").select("*"),
+    supabase.from("radiotherapy_sessions").select("*, case_keloid_lesions(site_no, body_site)"),
     supabase.from("case_schedule_items").select("*").order("due_date"),
     supabase.from("biobank_checklist_items").select("*"),
     supabase.from("biobank_samples").select("*"),
@@ -47,6 +81,13 @@ export async function GET() {
     supabase
       .from("case_intake_option_records")
       .select("case_id, category, case_intake_option_record_items(case_intake_option_lists(label))"),
+    supabase
+      .from("case_keloid_lesions")
+      .select("case_id, site_no, body_site, length_cm, width_cm, height_cm, body_part_zones(display_name, dose_category)")
+      .order("site_no"),
+    // 含已停用的標記：舊資料可能引用停用標記，欄位仍要匯出
+    supabase.from("lab_marker_definitions").select("id, display_name, unit, sort_order").order("sort_order"),
+    supabase.from("lab_results").select("case_id, marker_id, sample_date, value, value_text, note, recorded_by"),
   ]);
 
   const byCase = (rows: unknown[] | null): Map<string, any[]> => {
@@ -68,6 +109,17 @@ export async function GET() {
   const legacyBiobankByCase = byCase(biobankSamplesLegacy as any);
   const photoCountByCase = new Map<string, number>();
   for (const p of photos ?? []) photoCountByCase.set(p.case_id, (photoCountByCase.get(p.case_id) ?? 0) + 1);
+
+  // 病灶清單＝部位的唯一真實來源（2026-07-27 多部位整合），一個個案可有多個部位、各自有劑量分類
+  const lesionsByCase = byCase(keloidLesions as unknown[]);
+  const lesionZone = (l: LesionRow) => first(l.body_part_zones) as { display_name?: string; dose_category?: string } | undefined;
+  const lesionSiteText = (l: LesionRow) => `部位${l.site_no ?? ""} ${l.body_site}`.trim();
+  const lesionSizeText = (l: LesionRow) => {
+    const dims = [l.length_cm, l.width_cm, l.height_cm];
+    return dims.some((d) => d !== null && d !== undefined)
+      ? `${l.length_cm ?? "—"}x${l.width_cm ?? "—"}x${l.height_cm ?? "—"}cm`
+      : "";
+  };
 
   const intakeByCase = byCase(intakeRecords as any);
   const intakeLabelsFor = (caseId: string, category: string) =>
@@ -126,6 +178,34 @@ export async function GET() {
 
   const maxFollowUps = Math.min(30, Math.max(5, ...[...scheduleByCase.values()].map((v) => v.length), 0));
 
+  // Lab 生物標記：同一個案可能有「多標記 × 多次採檢」，wide table 攤平不了完整時間序列，
+  // 因此採兩層做法（決策 2026-07-27）：
+  //   ① 主表每個標記固定 3 欄（最新值／最新採檢日／採檢次數），供一人一列的統計使用
+  //   ② 另開一張 long-format 工作表逐筆列出所有採檢，供需要時間序列分析時使用
+  const labMarkerList = (labMarkers ?? []) as { id: string; display_name: string; unit: string | null }[];
+  const labMarkerById = new Map(labMarkerList.map((m) => [m.id, m]));
+  const labRows = (labResults ?? []) as LabResultRow[];
+  const labValueText = (r: LabResultRow) => {
+    const v = r.value ?? r.value_text;
+    return v === null || v === undefined || v === "" ? "" : String(v);
+  };
+  // caseId -> markerId -> 依採檢日期由舊到新排序的紀錄
+  const labByCaseMarker = new Map<string, Map<string, LabResultRow[]>>();
+  for (const r of labRows) {
+    const byMarker = labByCaseMarker.get(r.case_id) ?? new Map<string, LabResultRow[]>();
+    byMarker.set(r.marker_id, [...(byMarker.get(r.marker_id) ?? []), r]);
+    labByCaseMarker.set(r.case_id, byMarker);
+  }
+  for (const byMarker of labByCaseMarker.values()) {
+    for (const arr of byMarker.values()) {
+      arr.sort((a, b) => String(a.sample_date).localeCompare(String(b.sample_date)));
+    }
+  }
+  const LAB_HEADERS = labMarkerList.flatMap((m) => {
+    const name = m.unit ? `${m.display_name}(${m.unit})` : m.display_name;
+    return [`Lab-${name}最新值`, `Lab-${m.display_name}最新採檢日`, `Lab-${m.display_name}採檢次數`];
+  });
+
   const BIOBANK_LABELS: Record<string, string> = {
     tissue_paraffin_block: "生資-蠟塊",
     tissue_keloid_fibroblast_culture: "生資-Keloid培養",
@@ -148,18 +228,19 @@ export async function GET() {
   const OUTCOME_HEADERS = ["RT VS", "是否復發", "復發日期", "治療後復發天數", "統計截止日", "距離治療後超過1年"];
   const FOLLOWUP_HEADERS = ["追蹤時間", "頻率(days)", "紀錄"];
   const NEW_HEADERS = [
-    "部位分類", "ICD診斷", "術前術語", "術中術語", "術後術語",
+    "各部位與劑量分類", "部位數", "ICD診斷", "術前術語", "術中術語", "術後術語",
     "VSS總分", "VSS-血管分布", "VSS-色素沉澱", "VSS-柔軟度", "VSS-高度",
     ...BIOBANK_KEYS.map((k) => BIOBANK_LABELS[k] + "(狀態)"),
     ...BIOBANK_KEYS.map((k) => BIOBANK_LABELS[k] + "(日期)"),
     "生資-細胞量", "生資-儲存盤數",
-    "放療進度", "LINE綁定", "資料來源",
+    "放療進度", "各部位放療療程", "LINE綁定", "資料來源",
     "蟹足腫初次發生時間", "疾病史", "之前治療醫師", "之前類固醇注射史", "之前中醫治療史", "之前小川令貼布史", "之前放射線治療史",
-    "發生原因", "得知看診資訊", "飲食衛教紀錄", "運動禁忌衛教紀錄",
+    "發生原因", "得知看診資訊",
     "全部治療方式彙總", "復發觀察次數", "復發情形彙總", "抽血次數（含非常規）", "非常規抽血備註彙總",
     ...SF36_SCALES.map((s) => `SF36-${s.label}`),
     "PSQI-主觀睡眠品質", "PSQI-睡眠潛伏期", "PSQI-睡眠時數", "PSQI-睡眠效率", "PSQI-睡眠困擾", "PSQI-安眠藥物使用", "PSQI-日間功能障礙", "PSQI總分", "PSQI睡眠品質判定",
     "JSS分類總分", "JSS評估-初次總分", "JSS評估-最近總分", "JSS評估-Delta Score",
+    ...LAB_HEADERS,
   ];
 
   const wb = new ExcelJS.Workbook();
@@ -209,6 +290,22 @@ export async function GET() {
     const doctor = first(c.doctors) as { name?: string } | undefined;
     const zone = first(c.body_part_zones) as { display_name?: string; dose_category?: string } | undefined;
 
+    // 部位：以病灶清單為準；沒有病灶列的（多為舊資料匯入）才退回 cases 的單一部位欄位
+    const lesionRows = (lesionsByCase.get(c.id) ?? []) as LesionRow[];
+    const siteNames = lesionRows.map((l) => l.body_site);
+    const sitesText = siteNames.join("、") || zone?.display_name || c.body_site || "";
+    const siteCategoriesText =
+      lesionRows
+        .map((l) => {
+          const cat = lesionZone(l)?.dose_category;
+          return `${lesionSiteText(l)}：${cat ? DOSE_CATEGORY_LABEL[cat] : "未指定"}`;
+        })
+        .join("; ") || (zone?.dose_category ? DOSE_CATEGORY_LABEL[zone.dose_category] : "");
+    const lesionSizesText = lesionRows
+      .map((l) => `${lesionSiteText(l)} ${lesionSizeText(l)}`.trim())
+      .filter((s) => s)
+      .join("; ");
+
     const surgeries = (treatmentsByCase.get(c.id) ?? []).filter(
       (t: any) => first(t.treatment_types)?.name === "手術切除"
     );
@@ -220,13 +317,31 @@ export async function GET() {
     );
     const rtRecord = rtRecords[0];
 
-    const sessions = (rtByCase.get(c.id) ?? []).sort((a: any, b: any) => a.fraction_no - b.fraction_no);
-    const rtDate = sessions[0]?.due_date ?? rtRecord?.treatment_date ?? null;
+    const sessions = ((rtByCase.get(c.id) ?? []) as RtSessionRow[]).sort((a, b) => a.fraction_no - b.fraction_no);
+    const rtDate = sessions.map((s) => (s as unknown as { due_date: string }).due_date).sort()[0] ?? rtRecord?.treatment_date ?? null;
+    // 總劑量＝該個案所有部位所有次數加總（多部位時是跨療程總和）
     const totalDoseCgy = sessions.length
-      ? sessions.reduce((s: number, x: any) => s + (x.actual_dose_cgy ?? x.planned_dose_cgy ?? 0), 0)
+      ? sessions.reduce((sum, x) => sum + (x.actual_dose_cgy ?? x.planned_dose_cgy ?? 0), 0)
       : rtRecord?.field_values?.total_dose_cgy ?? null;
-    const fractions = sessions.length ? sessions[0].total_fractions : rtRecord?.field_values?.fractions ?? null;
-    const doneSessions = sessions.filter((s: any) => s.status === "done").length;
+    const fractions = sessions.length ? sessions.length : rtRecord?.field_values?.fractions ?? null;
+    const doneSessions = sessions.filter((s) => s.status === "done").length;
+
+    // 各部位各一組療程（2026-07-27 多部位整合）：以「病灶+觸發手術紀錄」分組後逐組摘要
+    const rtCourseMap = new Map<string, RtSessionRow[]>();
+    for (const s of sessions) {
+      const key = `${s.lesion_id ?? "none"}__${s.triggered_by_treatment_record_id ?? "none"}`;
+      rtCourseMap.set(key, [...(rtCourseMap.get(key) ?? []), s]);
+    }
+    const rtCourseSummary = Array.from(rtCourseMap.values())
+      .map((rows) => {
+        const lesion = first(rows[0].case_keloid_lesions);
+        const site = lesion ? `部位${lesion.site_no ?? ""} ${lesion.body_site ?? ""}`.trim() : "未指定部位";
+        const cat = DOSE_CATEGORY_LABEL[rows[0].dose_category] ?? rows[0].dose_category;
+        const done = rows.filter((r) => r.status === "done").length;
+        const gy = rows.reduce((sum, r) => sum + (r.actual_dose_cgy ?? r.planned_dose_cgy ?? 0), 0) / 100;
+        return `${site}（${cat}）${done}/${rows.length}次 ${gy}Gy`;
+      })
+      .join("; ");
 
     const diagList = (diagnosesByCase.get(c.id) ?? [])
       .map((d: any) => {
@@ -285,7 +400,7 @@ export async function GET() {
       c.age_at_enrollment ?? "",
       c.phone_number ?? "",
       doctor?.name ?? "",
-      c.body_site ?? "",
+      sitesText,
       c.consent_signed_at ?? "",
       legacyBio?.tissue_bank_status ?? (biobankMap.get("tissue_paraffin_block") ? "Y" : ""),
       legacyBio?.primary_culture ?? "",
@@ -294,13 +409,16 @@ export async function GET() {
       c.jsw_score ?? "",
       c.family_history ?? "",
       c.keloid_history ?? "",
-      c.keloid_size ?? "",
+      lesionSizesText || c.keloid_size || "",
       // OP
       surgeryDate ?? "",
       surgery?.field_values?.method ?? "",
       surgery?.field_values?.adjuvant ?? "",
-      zone?.display_name ?? c.body_site ?? "",
-      "", "", "",
+      // 舊表的 部位1~部位4：直接對應病灶清單前四個部位
+      siteNames[0] ?? zone?.display_name ?? c.body_site ?? "",
+      siteNames[1] ?? "",
+      siteNames[2] ?? "",
+      siteNames[3] ?? "",
       // RT
       rtDate ?? "",
       diagList.split("; ")[0] ?? "",
@@ -308,7 +426,7 @@ export async function GET() {
       fractions ?? "",
       rtRecord?.field_values?.bolus ?? "",
       rtRecord?.field_values?.electron_beam ?? "",
-      "",
+      siteNames[1] ?? "", // 執行部位2：第二個部位（多部位時各自有自己的療程，明細見「各部位放療療程」欄）
       rtRecord?.field_values?.treatment_response ?? "",
       rtRecord?.field_values?.acute_reactions ?? "",
       // 治療後追蹤
@@ -323,7 +441,8 @@ export async function GET() {
       // 備註
       c.notes ?? "",
       // 2026 新增欄位
-      zone?.dose_category ? DOSE_CATEGORY_LABEL[zone.dose_category] : "",
+      siteCategoriesText,
+      lesionRows.length,
       diagList,
       termsByStage.pre.join("、"),
       termsByStage.intra.join("、"),
@@ -338,6 +457,7 @@ export async function GET() {
       legacyBio?.cell_quantity ?? "",
       legacyBio?.storage_plate_count ?? "",
       sessions.length ? `${doneSessions}/${sessions.length}` : "",
+      rtCourseSummary,
       c.line_bound ? "Y" : "N",
       c.data_source === "legacy_import" ? "舊資料回溯建檔" : "正常收案",
       c.keloid_onset_date ?? "",
@@ -349,8 +469,6 @@ export async function GET() {
       c.prior_radiation_treatment ?? "",
       intakeLabelsFor(c.id, "onset_cause"),
       intakeLabelsFor(c.id, "referral_source"),
-      intakeLabelsFor(c.id, "diet_education"),
-      intakeLabelsFor(c.id, "exercise_restriction"),
       treatmentMethodsSummary,
       recurrenceRecords.length,
       recurrenceRecords.map((t: any) => t.recurrence_description).filter(Boolean).join("; "),
@@ -364,6 +482,11 @@ export async function GET() {
       jssEval?.baseline ?? "",
       jssEval?.latest ?? "",
       jssEval?.delta ?? "",
+      ...labMarkerList.flatMap((m) => {
+        const rows = labByCaseMarker.get(c.id)?.get(m.id) ?? [];
+        const latest = rows[rows.length - 1];
+        return [latest ? labValueText(latest) : "", latest?.sample_date ?? "", rows.length || ""];
+      }),
     ];
 
     ws.addRow(row);
@@ -371,6 +494,34 @@ export async function GET() {
 
   ws.columns.forEach((column) => {
     column.width = 14;
+  });
+
+  // 第二張工作表：Lab 生物標記逐筆（long format），一列＝一個案的一個標記的一次採檢
+  const labWs = wb.addWorksheet("lab 生物標記逐筆");
+  labWs.addRow(["編號", "標記", "單位", "採檢日期", "數值", "原始字串", "備註", "記錄者"]);
+  labWs.getRow(1).font = { bold: true };
+  labWs.views = [{ state: "frozen", ySplit: 1 }];
+  const caseResearchId = new Map<string, string>((cases ?? []).map((c) => [c.id, c.research_id]));
+  const labRowsSorted = [...labRows].sort(
+    (a, b) =>
+      String(caseResearchId.get(a.case_id) ?? "").localeCompare(String(caseResearchId.get(b.case_id) ?? "")) ||
+      String(a.sample_date).localeCompare(String(b.sample_date))
+  );
+  for (const r of labRowsSorted) {
+    const marker = labMarkerById.get(r.marker_id);
+    labWs.addRow([
+      caseResearchId.get(r.case_id) ?? "",
+      marker?.display_name ?? "",
+      marker?.unit ?? "",
+      r.sample_date ?? "",
+      r.value ?? "",
+      r.value_text ?? "",
+      r.note ?? "",
+      r.recorded_by ?? "",
+    ]);
+  }
+  labWs.columns.forEach((column) => {
+    column.width = 16;
   });
 
   const buffer = await wb.xlsx.writeBuffer();

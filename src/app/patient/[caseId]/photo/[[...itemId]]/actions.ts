@@ -61,12 +61,8 @@ export async function uploadPhotoAction(formData: FormData) {
     uploaded_via: "staff",
   });
 
-  // 個案尚未設定主要部位時，第一次拍照選的部位順便設為主要部位（供放療劑量分類判斷）
-  const { data: caseRow } = await supabase.from("cases").select("body_part_zone_id").eq("id", caseId).single();
-  if (caseRow && !caseRow.body_part_zone_id && zone) {
-    await supabase.from("cases").update({ body_part_zone_id: zone.id, body_site: zone.display_name }).eq("id", caseId);
-  }
-
+  // 2026-07-27 多部位整合後不再有個案層級的「主要部位」：部位分類一律來自 case_keloid_lesions，
+  // 拍照只記錄這張照片拍的是哪個部位，不再回寫 cases.body_part_zone_id。
   await logAudit({ caseId, operatorName: operator, action: "upload_photo", entity: "photos", detail: { zoneKey } });
 
   return { ok: true, message: "照片已上傳" };
