@@ -14,7 +14,7 @@ export async function submitQuestionnaireAction(formData: FormData) {
   const supabase = supabaseServer();
   const { data: response, error } = await supabase
     .from("questionnaire_responses")
-    .insert({ case_id: caseId, questionnaire_id: questionnaireId, schedule_item_id: itemId, submitted_via: "staff" })
+    .insert({ case_id: caseId, questionnaire_id: questionnaireId, schedule_item_id: itemId || null, submitted_via: "staff" })
     .select("id")
     .single();
   if (error || !response) throw error ?? new Error("送出問卷失敗");
@@ -43,5 +43,5 @@ export async function submitQuestionnaireAction(formData: FormData) {
 
   await logAudit({ caseId, operatorName: operator, action: "submit_questionnaire", entity: "questionnaire_responses", entityId: response.id });
 
-  redirect(`/patient/${caseId}/questionnaire/${itemId}/done`);
+  redirect(`/cases/${caseId}?submitted=questionnaire`);
 }

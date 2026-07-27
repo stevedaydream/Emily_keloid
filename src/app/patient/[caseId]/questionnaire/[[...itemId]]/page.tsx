@@ -1,28 +1,75 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase";
 import { submitQuestionnaireAction } from "./actions";
 
 export default async function ClinicQuestionnairePage({
   params,
+  searchParams,
 }: {
-  params: Promise<{ caseId: string; itemId: string }>;
+  params: Promise<{ caseId: string; itemId?: string[] }>;
+  searchParams: Promise<{ questionnaire_id?: string }>;
 }) {
-  const { caseId, itemId } = await params;
+  const { caseId, itemId: itemIdParam } = await params;
+  const { questionnaire_id: questionnaireIdParam } = await searchParams;
+  const itemId = itemIdParam?.[0] ?? "";
   const supabase = supabaseServer();
 
-  const { data: item } = await supabase
-    .from("case_schedule_items")
-    .select("id, label, questionnaire_id, cases(research_id)")
-    .eq("id", itemId)
-    .single();
+  let questionnaireId: string | null = null;
+  let label = "";
 
-  if (!item || !item.questionnaire_id) return notFound();
+  if (itemId) {
+    const { data: item } = await supabase
+      .from("case_schedule_items")
+      .select("id, label, questionnaire_id")
+      .eq("id", itemId)
+      .single();
+    if (!item || !item.questionnaire_id) return notFound();
+    questionnaireId = item.questionnaire_id;
+    label = item.label;
+  } else if (questionnaireIdParam) {
+    questionnaireId = questionnaireIdParam;
+    label = "臨時填寫（非追蹤時程項目）";
+  }
 
-  const caseInfo = Array.isArray(item.cases) ? item.cases[0] : item.cases;
+  const { data: caseRow } = await supabase.from("cases").select("research_id").eq("id", caseId).single();
+  if (!caseRow) return notFound();
+
+  // 尚未選定問卷：顯示選單
+  if (!questionnaireId) {
+    const { data: templates } = await supabase
+      .from("questionnaire_templates")
+      .select("id, name, description")
+      .eq("active", true)
+      .order("created_at");
+
+    return (
+      <div className="mx-auto max-w-xl space-y-4">
+        <div>
+          <h1 className="text-lg font-semibold text-slate-800">選擇要填寫的問卷</h1>
+          <p className="mt-1 text-sm text-slate-500">{caseRow.research_id}</p>
+        </div>
+        <ul className="space-y-2">
+          {(templates ?? []).map((t) => (
+            <li key={t.id}>
+              <Link
+                href={`/patient/${caseId}/questionnaire?questionnaire_id=${t.id}`}
+                className="block rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-400"
+              >
+                <p className="text-sm font-medium text-slate-800">{t.name}</p>
+                {t.description && <p className="mt-1 text-xs text-slate-500">{t.description}</p>}
+              </Link>
+            </li>
+          ))}
+          {(!templates || templates.length === 0) && <li className="text-sm text-slate-400">尚無可用問卷，請至後台建立</li>}
+        </ul>
+      </div>
+    );
+  }
 
   const [{ data: template }, { data: questions }] = await Promise.all([
-    supabase.from("questionnaire_templates").select("name, description").eq("id", item.questionnaire_id).single(),
-    supabase.from("questionnaire_questions").select("*").eq("questionnaire_id", item.questionnaire_id).order("order_no"),
+    supabase.from("questionnaire_templates").select("name, description").eq("id", questionnaireId).single(),
+    supabase.from("questionnaire_questions").select("*").eq("questionnaire_id", questionnaireId).order("order_no"),
   ]);
 
   return (
@@ -30,7 +77,7 @@ export default async function ClinicQuestionnairePage({
       <div>
         <h1 className="text-lg font-semibold text-slate-800">{template?.name}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          {caseInfo?.research_id} ・ {item.label}
+          {caseRow.research_id} ・ {label}
         </p>
         {template?.description && <p className="mt-1 text-xs text-slate-400">{template.description}</p>}
       </div>
@@ -38,7 +85,7 @@ export default async function ClinicQuestionnairePage({
       <form action={submitQuestionnaireAction} className="space-y-5 rounded-lg border border-slate-200 bg-white p-5">
         <input type="hidden" name="case_id" value={caseId} />
         <input type="hidden" name="item_id" value={itemId} />
-        <input type="hidden" name="questionnaire_id" value={item.questionnaire_id} />
+        <input type="hidden" name="questionnaire_id" value={questionnaireId} />
 
         {(questions ?? []).map((q) => (
           <div key={q.id}>
@@ -87,7 +134,7 @@ export default async function ClinicQuestionnairePage({
 
         <button
           type="submit"
-          className="w-full rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
+          className="w-full whitespace-nowrap rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
         >
           送出
         </button>
