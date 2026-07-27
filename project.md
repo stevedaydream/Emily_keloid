@@ -205,7 +205,9 @@
 **2026-07-27 追加：個案頁面互動與資料呈現修正**（使用者實測回饋）：
 - **主要蟹足腫部位改為直接人形圖點選**：新增 `src/app/cases/[id]/BodyZonePicker.tsx`（client component），取代原本「變更主要部位」下拉選單，直接嵌入 `BodyDiagram` 讓使用者點圖選部位、選好後按鈕才會啟用送出，不用先點連結跳去拍照頁才能改部位
 - **傷口照片改為顯示縮圖**：`wound-photos` bucket 是私有（非公開），原本個案頁面只印出 `file_path` 文字、看不到照片本身；現在改為個案頁面渲染時對每張照片呼叫 `supabase.storage.from("wound-photos").createSignedUrl()` 產生 1 小時效期的簽章網址，用縮圖 grid 呈現，點擊可開大圖（新分頁）
-- **收案一條龍「資料完整度」燈號修正**（`v_case_pipeline_progress` view，`supabase/migrations/20260727060000_pipeline_basic_info_completeness.sql`）：原本 `step_complete` 只檢查 `case_data_completeness` 表，但那張表只有舊資料回溯建檔的個案才會有列，正常收案的個案永遠沒有 pending 列、導致這個燈號恆亮，形同虛設。修正為：舊資料回溯建檔維持原邏輯；正常收案改為直接檢查性別/年齡/主要部位是否都已填寫
+- **收案一條龍「資料完整度」燈號修正**（`v_case_pipeline_progress` view）：原本 `step_complete` 只檢查 `case_data_completeness` 表，但那張表只有舊資料回溯建檔的個案才會有列，正常收案的個案永遠沒有 pending 列、導致這個燈號恆亮，形同虛設。分兩步修正：
+  - `20260727060000_pipeline_basic_info_completeness.sql`：正常收案先改為檢查性別/年齡/主要部位三欄
+  - `20260727061000_pipeline_completeness_full_demographics.sql`：使用者實測發現 JSW score／家族史／keloid history／keloid 大小四欄空著時燈號仍然亮著——因為第一版只檢查三欄，範圍不夠。改為要求「病人基本資料」區塊全部 7 個欄位（性別/年齡/主要部位/JSW score/家族史/keloid history/keloid 大小）都有值才算完成
 - **追蹤時程卡片對齊既有卡片風格**：`section-schedule` 的每一項從「一行 flex-wrap（標籤/狀態/連結全部擠在一起，手機上會亂換行）」改成跟 `/cases` 頁「快速前往待處理項目」一樣的堆疊卡片版型（上方資訊自由換行、下方動作列水平捲動不換行）
 - `BodyDiagram.tsx` 順便修掉一個既有的 React 警告（`key` 透過 `{...commonProps}` 展開傳遞，改成直接寫在 JSX 上）
 
