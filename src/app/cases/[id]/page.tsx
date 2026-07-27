@@ -19,6 +19,9 @@ import PipelineProgress from "./PipelineProgress";
 import IntakeOptionForm from "./IntakeOptionForm";
 import BodyZonePicker from "./BodyZonePicker";
 import DeletePhotoButton from "./DeletePhotoButton";
+import FamilyHistoryPicker from "./FamilyHistoryPicker";
+import PriorTreatmentPicker from "./PriorTreatmentPicker";
+import KeloidLesionSection from "./KeloidLesionSection";
 import InfoTooltip from "@/components/InfoTooltip";
 import SubmitButton from "@/components/ui/SubmitButton";
 import type { CasePipelineRow } from "@/lib/pipeline";
@@ -83,6 +86,7 @@ export default async function CaseDetailPage({
     { data: labMarkers },
     { data: labResults },
     { data: jssClassificationTemplate },
+    { data: keloidLesions },
   ] = await Promise.all([
     supabase.from("cases").select("*, doctors(code, name), body_part_zones(display_name, dose_category)").eq("id", id).single(),
     supabase.from("case_diagnoses").select("id, is_primary, icd_codes(code, system, description_full)").eq("case_id", id),
@@ -130,6 +134,7 @@ export default async function CaseDetailPage({
       .eq("case_id", id)
       .order("sample_date", { ascending: false }),
     supabase.from("questionnaire_templates").select("id").eq("name", "JSS 疤痕診斷分類表").maybeSingle(),
+    supabase.from("case_keloid_lesions").select("*").eq("case_id", id).order("created_at"),
   ]);
 
   if (!caseRow) {
@@ -141,6 +146,10 @@ export default async function CaseDetailPage({
   const biobankByKey = new Map((biobankItems ?? []).map((b) => [b.item_key, b]));
   const termsByStage: Record<string, { id: string; term: string }[]> = { pre: [], intra: [], post: [] };
   (termLibrary ?? []).forEach((t) => termsByStage[t.stage]?.push(t));
+
+  const familyDiseaseOptions = (intakeOptions ?? []).filter((o) => o.category === "family_disease");
+  const keloidHistoryTypeOptions = (intakeOptions ?? []).filter((o) => o.category === "keloid_history_type");
+  const keloidHistoryRecords = (intakeRecords ?? []).filter((r) => r.category === "keloid_history_type");
 
   function extractAnswers(r: {
     questionnaire_answers?: { answer_value: unknown; questionnaire_questions: { order_no?: number } | { order_no?: number }[] | null }[];
@@ -246,36 +255,47 @@ export default async function CaseDetailPage({
               </Link>
             )}
           </div>
-          <div>
+          <div className="col-span-2">
             <label className="block text-xs font-medium text-ink/70">Family（家族史）</label>
-            <input
-              name="family_history"
-              defaultValue={caseRow.family_history ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
-          </div>
-          <div className="col-span-2">
-            <label className="block text-xs font-medium text-ink/70">keloid history</label>
-            <textarea
-              name="keloid_history"
-              rows={2}
-              defaultValue={caseRow.keloid_history ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
-          </div>
-          <div className="col-span-2">
-            <label className="block text-xs font-medium text-ink/70">keloid 大小</label>
-            <textarea
-              name="keloid_size"
-              rows={2}
-              defaultValue={caseRow.keloid_size ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
+            <FamilyHistoryPicker name="family_history" title="選擇家族病史" options={familyDiseaseOptions} defaultValue={caseRow.family_history ?? ""} />
           </div>
           <SubmitButton className="col-span-2" pendingText="更新中…">
             更新基本資料
           </SubmitButton>
         </form>
+
+        <div className="mt-4 border-t border-brand-50 pt-3">
+          <label className="block text-xs font-medium text-ink/70">
+            Keloid history（勾選病史類型，並填寫部位/時間/治療等詳細內容）
+          </label>
+          <div className="mt-1">
+            <IntakeOptionForm
+              caseId={id}
+              category="keloid_history_type"
+              options={keloidHistoryTypeOptions}
+              alwaysShowNotes
+              notesPlaceholder="請描述部位、時間、治療方式等詳細內容"
+            />
+          </div>
+          <ul className="space-y-1">
+            {keloidHistoryRecords.map((r) => (
+              <li key={r.id} className="break-words text-xs text-ink/50">
+                {new Date(r.recorded_at).toLocaleDateString("zh-TW")} ・ {r.recorded_by} ・{" "}
+                {(r.case_intake_option_record_items ?? [])
+                  .map((it: { case_intake_option_lists: { label: string } | { label: string }[] }) =>
+                    Array.isArray(it.case_intake_option_lists) ? it.case_intake_option_lists[0]?.label : it.case_intake_option_lists?.label
+                  )
+                  .join("、") || "（無勾選項目）"}
+                {r.notes && <span className="text-ink/40">（{r.notes}）</span>}
+              </li>
+            ))}
+            {keloidHistoryRecords.length === 0 && <li className="text-xs text-ink/30">尚無紀錄</li>}
+          </ul>
+        </div>
+
+        <div className="mt-4 border-t border-brand-50 pt-3">
+          <KeloidLesionSection caseId={id} lesions={keloidLesions ?? []} />
+        </div>
       </section>
 
       {/* 病史與過往治療 */}
@@ -289,8 +309,8 @@ export default async function CaseDetailPage({
           <div>
             <label className="block text-xs font-medium text-ink/70">蟹足腫初次發生時間</label>
             <input
+              type="date"
               name="keloid_onset_date"
-              placeholder="例：2019年初"
               defaultValue={caseRow.keloid_onset_date ?? ""}
               className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
             />
@@ -305,45 +325,12 @@ export default async function CaseDetailPage({
           </div>
           <div className="col-span-2">
             <label className="block text-xs font-medium text-ink/70">疾病史（一般病史）</label>
-            <textarea
-              name="disease_history"
-              rows={2}
-              defaultValue={caseRow.disease_history ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
+            <FamilyHistoryPicker name="disease_history" title="選擇疾病史" options={familyDiseaseOptions} defaultValue={caseRow.disease_history ?? ""} />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-ink/70">之前類固醇注射治療（多久/療程）</label>
-            <input
-              name="prior_steroid_treatment"
-              defaultValue={caseRow.prior_steroid_treatment ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-ink/70">之前中醫治療</label>
-            <input
-              name="prior_tcm_treatment"
-              defaultValue={caseRow.prior_tcm_treatment ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-ink/70">之前小川令貼布使用史</label>
-            <input
-              name="prior_ogawa_patch"
-              defaultValue={caseRow.prior_ogawa_patch ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-ink/70">之前放射線治療史</label>
-            <input
-              name="prior_radiation_treatment"
-              defaultValue={caseRow.prior_radiation_treatment ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
-          </div>
+          <PriorTreatmentPicker name="prior_steroid_treatment" label="之前類固醇注射治療" defaultValue={caseRow.prior_steroid_treatment ?? ""} />
+          <PriorTreatmentPicker name="prior_tcm_treatment" label="之前中醫治療" defaultValue={caseRow.prior_tcm_treatment ?? ""} />
+          <PriorTreatmentPicker name="prior_ogawa_patch" label="之前小川令貼布使用史" defaultValue={caseRow.prior_ogawa_patch ?? ""} />
+          <PriorTreatmentPicker name="prior_radiation_treatment" label="之前放射線治療史" defaultValue={caseRow.prior_radiation_treatment ?? ""} />
           <SubmitButton className="col-span-2" pendingText="更新中…">
             更新病史與過往治療
           </SubmitButton>

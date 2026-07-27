@@ -224,6 +224,16 @@
 
 **2026-07-27 追加：JSS 分類問卷送出後自動回填 JSW score**：`submitQuestionnaireAction`（`src/app/patient/[caseId]/questionnaire/[[...itemId]]/actions.ts`）偵測到送出的是「JSS 疤痕診斷分類表」時，直接算出總分與判定並寫回 `cases.jsw_score`（格式如「15分（肥厚性疤痕）」），不用再手動謄一次。已實測：填完 7 題送出後，個案頁「病人基本資料」的 JSW score 欄位正確帶入分數。（先前使用者回報「性別選了存不進去」，實測 DB／伺服器渲染／瀏覽器 DOM 三方比對皆正確，判斷是瀏覽器快取或畫面渲染的偶發問題，非程式錯誤。）
 
+**2026-07-27 追加：病人基本資料／病史欄位大改版（多項使用者實測回饋）**：
+- **家族史／疾病史**：新增 `src/app/cases/[id]/FamilyHistoryPicker.tsx`（彈出視窗勾選常見疾病，後台可維護 `case_intake_option_lists` 新category `family_disease`：高血壓/糖尿病/心臟病/腦中風/癌症/氣喘過敏/蟹足腫或肥厚性疤痕/其他），勾選「其他」可自填，按「帶入」組成文字寫回原本的 `family_history`／`disease_history` 文字欄位（沿用 `updateDemographicsAction`／`updatePriorHistoryAction`，兩個欄位共用同一份選項清單、同一個元件，只是 `name` 不同）。開啟時會嘗試從既有文字反推已勾選項目。
+- **Keloid history 改為勾選＋一律顯示詳細內容**：`IntakeOptionForm.tsx` 新增 `alwaysShowNotes` prop（原本只有勾到「其他」開頭選項才顯示備註欄，這裡改成一律顯示，因為部位/時間/治療是必要細節而非「其他請說明」）。新增 category `keloid_history_type`（初次發生/手術後復發/藥物治療後復發/多處復發/自然穩定無變化/其他），沿用既有 `case_intake_option_records` 機制記錄歷次紀錄。
+- **Keloid 大小改為可複數的病灶測量**：原本 `cases.keloid_size` 單一自由文字欄位改為新表 `case_keloid_lesions`（部位＋長寬高cm＋備註，可複數筆，配「＋新增病灶」按鈕與各筆刪除鈕），因為現存病灶可能不只一處。舊 `keloid_size` 欄位保留但不再由 UI 寫入（供舊資料對齊/匯出參考）。新增 `src/app/cases/[id]/KeloidLesionSection.tsx` 與對應 `addKeloidLesionAction`／`deleteKeloidLesionAction`。
+- **之前類固醇/中醫/小川令貼布/放射治療史改為三態＋詳細欄位**：新增 `PriorTreatmentPicker.tsx`，先選「有／無／不知道」，選「有」才展開日期/次數/劑量/備註，組成文字寫回原本四個文字欄位（沿用 `updatePriorHistoryAction`，未改動 action 本身）。
+- **蟹足腫初次發生時間改用日期選擇器**：從純文字（可填「2019年初」）改成 `<input type="date">`，點擊會跳原生日曆選取；取捨是不能再填模糊時間，只能選精確日期。
+- `updateDemographicsAction` 已移除 `keloid_history`／`keloid_size` 的寫入（改由上述新機制各自處理），避免舊表單欄位消失後把這兩欄位覆蓋成 null。
+- Migration：`20260727070000_family_disease_options_seed.sql`（含放寬 `case_intake_option_lists` 的 category CHECK constraint）、`20260727080000_keloid_history_type_and_lesions.sql`。
+- 已用瀏覽器實測：家族史/疾病史彈窗、keloid history 勾選新增紀錄、病灶測量新增（左耳垂 2.5cm 測試資料）皆正確寫入並顯示。
+
 **仍未處理 / 待確認**：
 - 治療紀錄目前仍依賴個案層級的主要部位，沒有「每筆治療紀錄各自的部位」欄位（如同一個案在不同部位分開治療會無法區分）
 - Lab 數據尚未併入結構化資料匯出
