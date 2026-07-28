@@ -4,6 +4,14 @@ import type { NextRequest } from "next/server";
 const PUBLIC_PATHS = ["/login", "/favicon.ico"];
 const NO_OPERATOR_REQUIRED = ["/login", "/operator", "/favicon.ico"];
 
+// RSC 拿不到目前路徑，但 root layout 需要它來決定要不要渲染 header
+// （病人自填頁是全螢幕、無導覽的介面）。把路徑放進 request header 往下傳。
+function passThrough(request: NextRequest, pathname: string) {
+  const headers = new Headers(request.headers);
+  headers.set("x-pathname", pathname);
+  return NextResponse.next({ request: { headers } });
+}
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -12,7 +20,7 @@ export function proxy(request: NextRequest) {
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api/public")
   ) {
-    return NextResponse.next();
+    return passThrough(request, pathname);
   }
 
   const session = request.cookies.get("keloid_session")?.value;
@@ -31,7 +39,7 @@ export function proxy(request: NextRequest) {
     }
   }
 
-  return NextResponse.next();
+  return passThrough(request, pathname);
 }
 
 export const config = {

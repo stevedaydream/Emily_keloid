@@ -6,17 +6,36 @@ import BrandMark from "@/components/ui/BrandMark";
 import { buttonClasses } from "@/components/ui/buttonStyles";
 import { useLocalNames } from "@/components/LocalNameProvider";
 
-const QUICK_LINKS = [
-  { href: "/cases", label: "個案列表" },
-  { href: "/cases/new", label: "+ 新增個案" },
-];
+type LandingMode = "intake" | "full";
 
-const NAV_LINKS = [
-  { href: "/clinic-today", label: "今日門診" },
-  { href: "/batch-edit", label: "批次編輯" },
-  { href: "/admin", label: "後台管理" },
-  { href: "/export", label: "資料匯出" },
-];
+// 導覽依身分的預設落點分兩組（決策 2026-07-29）。
+// intake＝連續收案的醫師：只留他用得到的，不再讓他自己在四個後台入口裡找路。
+// 這是動線不是權限——「完整功能」那個連結仍然通到 dashboard，任何頁面都進得去。
+const QUICK_LINKS: Record<LandingMode, { href: string; label: string }[]> = {
+  full: [
+    { href: "/cases", label: "個案列表" },
+    { href: "/cases/new", label: "+ 新增個案" },
+  ],
+  intake: [
+    { href: "/cases", label: "個案列表" },
+    { href: "/intake", label: "+ 收案" },
+  ],
+};
+
+const NAV_LINKS: Record<LandingMode, { href: string; label: string }[]> = {
+  full: [
+    { href: "/clinic-today", label: "今日門診" },
+    { href: "/batch-edit", label: "批次編輯" },
+    { href: "/admin", label: "後台管理" },
+    { href: "/export", label: "資料匯出" },
+  ],
+  intake: [
+    { href: "/intake", label: "收案" },
+    { href: "/cases", label: "個案列表" },
+    { href: "/export", label: "資料匯出" },
+    { href: "/", label: "完整功能" },
+  ],
+};
 
 // 姓名顯示開關：只有掛了本機對照表（linked）才有意義，沒掛的時候整顆隱藏。
 function ShowNamesToggle({ className = "" }: { className?: string }) {
@@ -38,8 +57,18 @@ function ShowNamesToggle({ className = "" }: { className?: string }) {
   );
 }
 
-export default function AppHeader({ operator }: { operator: string }) {
+export default function AppHeader({
+  operator,
+  landingMode = "full",
+}: {
+  operator: string;
+  landingMode?: LandingMode;
+}) {
   const [open, setOpen] = useState(false);
+  const quickLinks = QUICK_LINKS[landingMode];
+  const navLinks = NAV_LINKS[landingMode];
+  const primary = quickLinks[quickLinks.length - 1];
+  const secondary = quickLinks[0];
 
   return (
     <header className="relative bg-paper-raised">
@@ -61,7 +90,7 @@ export default function AppHeader({ operator }: { operator: string }) {
             <span className="font-heading text-sm font-medium text-brand-900">蟹足腫研究平台</span>
           </Link>
           <nav className="hidden gap-4 text-sm text-ink/60 md:flex">
-            {NAV_LINKS.map((l) => (
+            {navLinks.map((l) => (
               <Link key={l.href} href={l.href} className="whitespace-nowrap hover:text-brand-700">
                 {l.label}
               </Link>
@@ -70,11 +99,11 @@ export default function AppHeader({ operator }: { operator: string }) {
         </div>
         <div className="hidden items-center gap-2 md:flex">
           <ShowNamesToggle />
-          <Link href="/cases" className={buttonClasses("outline", "sm")}>
-            個案列表
+          <Link href={secondary.href} className={buttonClasses("outline", "sm")}>
+            {secondary.label}
           </Link>
-          <Link href="/cases/new" className={buttonClasses("primary", "sm")}>
-            + 新增個案
+          <Link href={primary.href} className={buttonClasses("primary", "sm")}>
+            {primary.label}
           </Link>
           <span className="ml-2 whitespace-nowrap text-sm text-ink/50">
             目前操作者：<b className="text-ink/80">{operator}</b>
@@ -111,7 +140,7 @@ export default function AppHeader({ operator }: { operator: string }) {
             </div>
 
             <div className="mb-3 flex flex-col gap-2">
-              {QUICK_LINKS.map((l, i) => (
+              {quickLinks.map((l, i) => (
                 <Link
                   key={l.href}
                   href={l.href}
@@ -124,7 +153,7 @@ export default function AppHeader({ operator }: { operator: string }) {
             </div>
 
             <nav className="flex flex-col gap-1 border-t border-brand-100 pt-3 text-sm">
-              {NAV_LINKS.map((l) => (
+              {navLinks.map((l) => (
                 <Link
                   key={l.href}
                   href={l.href}

@@ -12,7 +12,7 @@ export default async function OperatorPage({
   const supabase = supabaseServer();
   const { data: operators } = await supabase
     .from("operators")
-    .select("id, name, role")
+    .select("id, name, role, landing_mode")
     .eq("active", true)
     .order("name");
 
@@ -32,6 +32,12 @@ export default async function OperatorPage({
               <SubmitButton variant="outline" justify="start" pendingText="切換中…" className="w-full text-left">
                 {op.name}
                 {op.role ? <span className="ml-2 text-xs text-ink/40">{op.role}</span> : null}
+                {/* 選了會落在哪一頁，先講清楚，免得部長以為功能不見了 */}
+                {op.landing_mode === "intake" && (
+                  <span className="ml-auto whitespace-nowrap rounded bg-accent-100 px-1.5 py-0.5 text-xs text-accent-800">
+                    → 收案頁
+                  </span>
+                )}
               </SubmitButton>
             </form>
           ))}

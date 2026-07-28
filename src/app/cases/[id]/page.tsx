@@ -29,6 +29,8 @@ import PatientName from "@/components/LocalNameProvider";
 import SubmitButton from "@/components/ui/SubmitButton";
 import type { CasePipelineRow } from "@/lib/pipeline";
 import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
+import { PATIENT_INTAKE_SEGMENTS } from "@/lib/patientIntake";
+import { resolveFollowupAction } from "@/app/patient/[caseId]/intake/actions";
 import { computeSF36, computePSQI, computeJSSClassification } from "@/lib/scoring";
 
 const STAGE_LABEL: Record<string, string> = { pre: "術前", intra: "術中", post: "術後" };
@@ -68,6 +70,22 @@ const BIOBANK_ITEMS = [
   { key: "blood_pre_op", label: "術前", group: "血液" },
   { key: "blood_post_op_day1", label: "術後治療第一天", group: "血液" },
 ] as const;
+
+// 區塊標題旁的來源標記：這一段是病人自己填的，人員看得出來（也隨時可以覆蓋修改）。
+function PatientFilledBadge({ entry }: { entry?: { completed_at: string; filled_via: string } }) {
+  if (!entry || entry.filled_via !== "patient") return null;
+  return (
+    <span className="ml-2 whitespace-nowrap rounded bg-sky-100 px-1.5 py-0.5 text-xs font-normal text-sky-800">
+      此段由病人自填 · {new Date(entry.completed_at).toLocaleDateString("zh-TW")}
+    </span>
+  );
+}
+
+const FOLLOWUP_REASON_LABEL: Record<string, string> = {
+  unknown: "病人不知道",
+  no_detail: "缺細節",
+  skipped: "跳過未答",
+};
 
 // 飲食衛教／運動禁忌衛教已於 2026-07-27 移除（決策：衛教內容不屬於研究要收的結構化資料，
 // 改由後台「衛教資料庫」health_education_kb 維護，只供 LINE 衛教機器人回答時參考）。
@@ -109,6 +127,8 @@ export default async function CaseDetailPage({
     { data: jssClassificationTemplate },
     { data: keloidLesions },
     { data: questionnaireTemplates },
+    { data: patientIntakeProgress },
+    { data: intakeFollowups },
   ] = await Promise.all([
     supabase.from("cases").select("*, doctors(code, name)").eq("id", id).single(),
     supabase.from("case_diagnoses").select("id, is_primary, icd_codes(id, code, system, description_full, mapping_key)").eq("case_id", id),
@@ -176,6 +196,12 @@ export default async function CaseDetailPage({
       .select("id, name, category, required_for_intake")
       .eq("active", true)
       .order("created_at"),
+    supabase.from("case_patient_intake_progress").select("segment_key, completed_at, filled_via").eq("case_id", id),
+    supabase
+      .from("case_intake_followups")
+      .select("id, field_key, field_label, reason, patient_answer, status, staff_note, resolved_by, resolved_at")
+      .eq("case_id", id)
+      .order("created_at"),
   ]);
 
   if (!caseRow) {
@@ -201,6 +227,13 @@ export default async function CaseDetailPage({
     const l = lesionList.find((x) => x.id === lesionId);
     return l ? `部位${l.site_no} ${l.body_site}` : null;
   };
+
+  // 病人自填的分段進度與待補缺口（決策 2026-07-29）
+  const patientIntakeBySegment = new Map(
+    (patientIntakeProgress ?? []).map((p) => [p.segment_key as string, p])
+  );
+  const patientIntakeDone = PATIENT_INTAKE_SEGMENTS.filter((s) => patientIntakeBySegment.has(s.key)).length;
+  const pendingFollowups = (intakeFollowups ?? []).filter((f) => f.status === "pending");
 
   const familyDiseaseOptions = (intakeOptions ?? []).filter((o) => o.category === "family_disease");
   const keloidHistoryTypeOptions = (intakeOptions ?? []).filter((o) => o.category === "keloid_history_type");
@@ -382,6 +415,98 @@ export default async function CaseDetailPage({
         </details>
       )}
 
+      {/* 病人自填（決策 2026-07-29）：進度、待人員補完的缺口，以及交出平板的入口。
+          放在診斷前面，是因為門診當下第一件事就是決定「這位要不要交平板給他填」。 */}
+      <section id="section-patient-intake" data-nav-section data-nav-label="病人自填" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-ink/80">
+            病人自填
+            <InfoTooltip text="把平板交給病人，依序填寫只有他自己知道答案的部分（基本資料、病史、發生原因、SF-36、PSQI）。臨床評分（VSS/JSS）、病灶尺寸、拍照仍由診間人員操作。病人答「不知道」或答「有」但問不到細節的項目，會列在下方待補清單。" />
+          </h2>
+          <Link
+            href={`/patient/${id}/intake`}
+            className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
+          >
+            {patientIntakeDone === 0 ? "交給病人填" : patientIntakeDone < PATIENT_INTAKE_SEGMENTS.length ? "繼續填" : "重新填寫"}
+          </Link>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          {PATIENT_INTAKE_SEGMENTS.map((s) => {
+            const done = patientIntakeBySegment.get(s.key);
+            return (
+              <span
+                key={s.key}
+                title={done ? `${new Date(done.completed_at).toLocaleString("zh-TW")} 由${done.filled_via === "patient" ? "病人自填" : "人員代填"}` : s.hint}
+                className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
+                  done ? "bg-emerald-100 text-emerald-700" : "bg-ink/5 text-ink/40"
+                }`}
+              >
+                {done ? "✓ " : ""}
+                {s.label}
+              </span>
+            );
+          })}
+          <span className="font-data text-xs text-ink/40">
+            {patientIntakeDone}/{PATIENT_INTAKE_SEGMENTS.length} 段
+          </span>
+        </div>
+
+        {(intakeFollowups ?? []).length > 0 && (
+          <div className="mt-3 border-t border-brand-50 pt-3">
+            <h3 className="mb-1.5 text-xs font-semibold text-ink/60">
+              待人員補完
+              <span className="ml-2 font-data font-normal text-ink/40">
+                未處理 {pendingFollowups.length} / 共 {(intakeFollowups ?? []).length}
+              </span>
+              <InfoTooltip text="病人版沒有自由文字輸入（長輩在平板上打中文幾乎不可能），所以答「不知道」、答「有」但沒問到細節、或跳過的項目集中列在這裡，由護理師/助理問診時追問後補完。答「無」是有效答案，不會列進來。" />
+            </h3>
+            <ul className="space-y-1.5">
+              {(intakeFollowups ?? []).map((f) => (
+                <li
+                  key={f.id}
+                  className={`rounded-md border px-3 py-2 text-sm ${
+                    f.status === "resolved" ? "border-brand-50 bg-ink/[0.02]" : "border-amber-200 bg-amber-50"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className={f.status === "resolved" ? "text-ink/40 line-through" : "font-medium text-ink"}>
+                      {f.field_label}
+                    </span>
+                    <span className="whitespace-nowrap rounded bg-white px-1.5 py-0.5 text-xs text-ink/50">
+                      {FOLLOWUP_REASON_LABEL[f.reason] ?? f.reason}
+                    </span>
+                    {f.patient_answer && (
+                      <span className="whitespace-nowrap text-xs text-ink/40">病人答：{f.patient_answer}</span>
+                    )}
+                    {f.status === "resolved" && (
+                      <span className="whitespace-nowrap text-xs text-emerald-700">
+                        ✓ {f.resolved_by}
+                        {f.staff_note ? ` ・${f.staff_note}` : ""}
+                      </span>
+                    )}
+                  </div>
+                  {f.status === "pending" && (
+                    <form action={resolveFollowupAction} className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <input type="hidden" name="case_id" value={id} />
+                      <input type="hidden" name="followup_id" value={f.id} />
+                      <input
+                        name="staff_note"
+                        placeholder="補問到的內容（選填，詳細資料請填到對應欄位）"
+                        className="min-w-0 flex-1 rounded border border-brand-200 px-2 py-1 text-xs"
+                      />
+                      <SubmitButton variant="outline" size="sm" className="!px-2 !py-0.5 !text-xs" pendingText="處理中…">
+                        標記已補
+                      </SubmitButton>
+                    </form>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </section>
+
       {/* ICD 診斷（決策 2026-07-28：診斷是看診當下最先要確認的事，移到所有區塊最前面） */}
       <section id="section-diagnosis" data-nav-section data-nav-label="診斷（ICD-9/10）" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
@@ -404,6 +529,7 @@ export default async function CaseDetailPage({
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           病人基本資料
           <InfoTooltip text="記錄性別、年齡、手機、JSW score、家族史、keloid 病史與大小，供研究資料分析使用，可隨時回來更新。手機僅供 LINE 綁定通知，不存姓名/病歷號。" />
+          <PatientFilledBadge entry={patientIntakeBySegment.get("basic")} />
         </h2>
         <form action={updateDemographicsAction} className="grid grid-cols-2 gap-3 text-sm">
           <input type="hidden" name="case_id" value={id} />
@@ -519,6 +645,7 @@ export default async function CaseDetailPage({
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           病史與過往治療
           <InfoTooltip text="記錄蟹足腫初次發生時間、一般疾病史，以及收案「前」曾在其他院所/自行嘗試過的治療（跟下方治療紀錄追蹤的是收案後的治療不同）。" />
+          <PatientFilledBadge entry={patientIntakeBySegment.get("history")} />
         </h2>
         <form action={updatePriorHistoryAction} className="grid grid-cols-2 gap-3 text-sm">
           <input type="hidden" name="case_id" value={id} />
