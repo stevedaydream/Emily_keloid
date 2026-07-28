@@ -19,12 +19,20 @@ export async function getCurrentOperator(): Promise<string | null> {
  * 這樣後台改了落點就立刻生效，不必等 12 小時的 cookie 過期。
  * 查不到對應的操作者（例如後台把人停用/改名）一律當 full，不要把人鎖在收案頁。
  */
-export async function getCurrentOperatorContext(): Promise<{ name: string; landingMode: LandingMode } | null> {
+export async function getCurrentOperatorContext(): Promise<{
+  name: string;
+  landingMode: LandingMode;
+  devMobileMapping: boolean;
+} | null> {
   const name = await getCurrentOperator();
   if (!name) return null;
 
   const supabase = supabaseServer();
-  const { data } = await supabase.from("operators").select("landing_mode").eq("name", name).maybeSingle();
+  const { data } = await supabase
+    .from("operators")
+    .select("landing_mode, dev_mobile_mapping")
+    .eq("name", name)
+    .maybeSingle();
   const landingMode: LandingMode = data?.landing_mode === "intake" ? "intake" : "full";
-  return { name, landingMode };
+  return { name, landingMode, devMobileMapping: data?.dev_mobile_mapping === true };
 }

@@ -38,6 +38,17 @@ export async function updateOperatorAction(formData: FormData) {
   revalidatePath("/admin/operators");
 }
 
+// 開發用旗標：允許在手機/平板上以唯讀方式掛載病歷號對照表（見 20260729030000 migration）。
+// 正式收案前應全部關掉。
+export async function toggleDevMobileMappingAction(formData: FormData) {
+  const id = formData.get("id") as string;
+  const enabled = formData.get("dev_mobile_mapping") === "true";
+  const supabase = supabaseServer();
+  await supabase.from("operators").update({ dev_mobile_mapping: !enabled }).eq("id", id);
+  revalidatePath("/admin/operators");
+  revalidatePath("/", "layout");
+}
+
 export async function deleteOperatorAction(formData: FormData) {
   const id = formData.get("id") as string;
   const supabase = supabaseServer();

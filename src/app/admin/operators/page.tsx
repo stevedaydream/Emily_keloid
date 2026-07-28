@@ -1,5 +1,11 @@
 import { supabaseServer } from "@/lib/supabase";
-import { addOperatorAction, toggleOperatorActiveAction, updateOperatorAction, deleteOperatorAction } from "./actions";
+import {
+  addOperatorAction,
+  toggleOperatorActiveAction,
+  updateOperatorAction,
+  deleteOperatorAction,
+  toggleDevMobileMappingAction,
+} from "./actions";
 import SubmitButton from "@/components/ui/SubmitButton";
 import EditableListItem from "@/components/admin/EditableListItem";
 
@@ -63,13 +69,27 @@ export default async function OperatorsAdminPage() {
               updateAction={updateOperatorAction}
               deleteAction={deleteOperatorAction}
               trailing={
-                <form action={toggleOperatorActiveAction}>
-                  <input type="hidden" name="id" value={o.id} />
-                  <input type="hidden" name="active" value={String(o.active)} />
-                  <SubmitButton variant="ghost" size="sm" className="!px-0 !py-0 text-xs text-ink/40 underline hover:!bg-transparent" pendingText="處理中…">
-                    {o.active ? "停用" : "啟用"}
-                  </SubmitButton>
-                </form>
+                <span className="flex items-center gap-3">
+                  <form action={toggleDevMobileMappingAction}>
+                    <input type="hidden" name="id" value={o.id} />
+                    <input type="hidden" name="dev_mobile_mapping" value={String(o.dev_mobile_mapping)} />
+                    <SubmitButton
+                      variant="ghost"
+                      size="sm"
+                      className="!px-0 !py-0 whitespace-nowrap text-xs text-ink/40 underline hover:!bg-transparent"
+                      pendingText="處理中…"
+                    >
+                      {o.dev_mobile_mapping ? "關閉工程模式" : "開啟工程模式"}
+                    </SubmitButton>
+                  </form>
+                  <form action={toggleOperatorActiveAction}>
+                    <input type="hidden" name="id" value={o.id} />
+                    <input type="hidden" name="active" value={String(o.active)} />
+                    <SubmitButton variant="ghost" size="sm" className="!px-0 !py-0 text-xs text-ink/40 underline hover:!bg-transparent" pendingText="處理中…">
+                      {o.active ? "停用" : "啟用"}
+                    </SubmitButton>
+                  </form>
+                </span>
               }
             >
               <span className={o.active ? "" : "text-ink/30 line-through"}>
@@ -81,6 +101,14 @@ export default async function OperatorsAdminPage() {
                 >
                   {LANDING_LABEL[o.landing_mode ?? "full"]}
                 </span>
+                {o.dev_mobile_mapping && (
+                  <span
+                    className="ml-2 whitespace-nowrap rounded bg-sky-100 px-1.5 py-0.5 text-xs text-sky-800"
+                    title="可在手機/平板上以唯讀方式掛載病歷號對照表（僅此工作階段、不落地）。正式收案前請關閉。"
+                  >
+                    工程模式
+                  </span>
+                )}
               </span>
             </EditableListItem>
           </li>
