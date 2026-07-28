@@ -21,6 +21,26 @@ export async function createQuestionnaireAction(formData: FormData) {
   if (data) redirect(`/admin/questionnaires/${data.id}`);
 }
 
+// 「正式上線需填寫」：勾了的問卷會出現在每個個案頁面的「應填問卷清單」並追蹤完成與否。
+// 跟 active 是兩件事：active 決定這份問卷還能不能被使用，這裡決定它是不是每案必填。
+export async function toggleQuestionnaireRequiredAction(formData: FormData) {
+  const id = formData.get("id") as string;
+  const required = formData.get("required_for_intake") === "true";
+  const supabase = supabaseServer();
+  await supabase.from("questionnaire_templates").update({ required_for_intake: !required }).eq("id", id);
+  revalidatePath("/admin/questionnaires");
+  revalidatePath("/cases", "layout");
+}
+
+export async function toggleQuestionnaireActiveAction(formData: FormData) {
+  const id = formData.get("id") as string;
+  const active = formData.get("active") === "true";
+  const supabase = supabaseServer();
+  await supabase.from("questionnaire_templates").update({ active: !active }).eq("id", id);
+  revalidatePath("/admin/questionnaires");
+  revalidatePath("/cases", "layout");
+}
+
 export async function addQuestionAction(formData: FormData) {
   const questionnaireId = formData.get("questionnaire_id") as string;
   const questionText = (formData.get("question_text") as string)?.trim();

@@ -7,10 +7,10 @@ export default async function CasePhotoCapturePage({
   searchParams,
 }: {
   params: Promise<{ caseId: string; itemId?: string[] }>;
-  searchParams: Promise<{ lesion_id?: string }>;
+  searchParams: Promise<{ lesion_id?: string; zone_key?: string }>;
 }) {
   const { caseId, itemId: itemIdParam } = await params;
-  const { lesion_id: lesionIdParam } = await searchParams;
+  const { lesion_id: lesionIdParam, zone_key: zoneKeyParam } = await searchParams;
   const itemId = itemIdParam?.[0] ?? "";
   const supabase = supabaseServer();
 
@@ -58,6 +58,7 @@ export default async function CasePhotoCapturePage({
       sex={caseRow.sex ?? null}
       sites={sites}
       initialLesionId={lesionIdParam ?? null}
+      initialZoneKey={zoneKeyParam ?? null}
     />
   );
 }

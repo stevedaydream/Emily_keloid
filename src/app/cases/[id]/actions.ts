@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase";
 import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
+import { withTermGroup } from "@/lib/terms";
 
 async function operatorOrThrow() {
   const op = await getCurrentOperator();
@@ -48,8 +49,52 @@ export async function addTermRecordAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
   const stage = formData.get("stage") as string;
   const termIds = formData.getAll("term_ids") as string[];
+  // 「其他」自填術語（決策 2026-07-28）：清單沒有的用語當場輸入，並直接進 term_library，
+  // 之後同階段的其他個案就能直接勾選，後台「醫學術語庫」也能編輯/停用它。
+  // 送出時若正篩在某個子分類上，就補上【子分類】前綴，讓它跟同組的用語排在一起（2026-07-29）。
+  const otherTermGroup = ((formData.get("other_term_group") as string) || "").trim() || null;
+  const otherTerms = (formData.getAll("other_terms") as string[])
+    .flatMap((raw) => (raw ?? "").split(/[、,，\n]/))
+    .map((t) => withTermGroup(t, otherTermGroup))
+    .filter(Boolean);
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
+
+  const allTermIds = [...termIds];
+  for (const term of otherTerms) {
+    // 同階段同名的術語只留一則（可能已停用，這時一併重新啟用）
+    const { data: existing } = await supabase
+      .from("term_library")
+      .select("id")
+      .eq("stage", stage)
+      .eq("term", term)
+      .maybeSingle();
+    if (existing) {
+      await supabase.from("term_library").update({ active: true }).eq("id", existing.id);
+      if (!allTermIds.includes(existing.id)) allTermIds.push(existing.id);
+      continue;
+    }
+    // 排序：有指定子分類就接在該組最後一則後面（清單與後台才會跟同組的排在一起），
+    // 沒指定就丟到該階段最後。
+    let sortOrder = 999;
+    if (otherTermGroup) {
+      const { data: groupLast } = await supabase
+        .from("term_library")
+        .select("sort_order")
+        .eq("stage", stage)
+        .like("term", `【${otherTermGroup}】%`)
+        .order("sort_order", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (groupLast) sortOrder = (groupLast.sort_order ?? 0) + 1;
+    }
+    const { data: created } = await supabase
+      .from("term_library")
+      .insert({ stage, term, sort_order: sortOrder })
+      .select("id")
+      .single();
+    if (created) allTermIds.push(created.id);
+  }
 
   const { data: record, error } = await supabase
     .from("case_term_records")
@@ -58,17 +103,25 @@ export async function addTermRecordAction(formData: FormData) {
     .single();
   if (error || !record) throw error ?? new Error("建立術語紀錄失敗");
 
-  if (termIds.length > 0) {
+  if (allTermIds.length > 0) {
     await supabase
       .from("case_term_record_items")
-      .insert(termIds.map((termId) => ({ record_id: record.id, term_id: termId })));
+      .insert(allTermIds.map((termId) => ({ record_id: record.id, term_id: termId })));
   }
 
-  await logAudit({ caseId, operatorName: operator, action: "add_term_record", entity: "case_term_records", entityId: record.id, detail: { stage, termIds } });
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "add_term_record",
+    entity: "case_term_records",
+    entityId: record.id,
+    detail: { stage, termIds: allTermIds, otherTerms },
+  });
   revalidatePath(`/cases/${caseId}`);
+  revalidatePath("/admin/terms");
 }
 
-export async function addTreatmentRecordAction(formData: FormData) {
+export async function addTreatmentRecordAction(formData: FormData): Promise<number> {
   const caseId = formData.get("case_id") as string;
   const treatmentTypeIds = formData.getAll("type_ids") as string[];
   const treatmentDate = formData.get("treatment_date") as string;
@@ -163,6 +216,86 @@ export async function addTreatmentRecordAction(formData: FormData) {
     await generateRadiotherapySessions(supabase, caseId, treatmentDate, surgeryRecord.id, surgeryRecord.lesionId);
   }
 
+  revalidatePath(`/cases/${caseId}`);
+  return createdRecordIds.length;
+}
+
+// useActionState 用的包裝：把成功/失敗結果回傳給 TreatmentForm，
+// 讓表單能顯示「已儲存 N 筆」並在成功後清空勾選（先前送出後畫面毫無變化，會誤以為沒存到）。
+export type TreatmentFormState = { ok: boolean; message: string; at: number } | null;
+
+export async function submitTreatmentRecordAction(
+  _prev: TreatmentFormState,
+  formData: FormData
+): Promise<TreatmentFormState> {
+  try {
+    const count = await addTreatmentRecordAction(formData);
+    return { ok: true, message: `已新增 ${count} 筆治療/追蹤紀錄`, at: Date.now() };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "儲存失敗", at: Date.now() };
+  }
+}
+
+// 已儲存的治療紀錄可回頭修改（日期打錯、欄位值要補、復發/抽血當下沒勾到等）。
+// 不動 treatment_type_id 與 lesion_id：改治療類型或部位等於換一筆紀錄，請刪除後重建，
+// 否則已依「手術切除＋部位分類」產生的放療排程會跟紀錄對不起來。
+export async function updateTreatmentRecordAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const recordId = formData.get("record_id") as string;
+  const treatmentDate = formData.get("treatment_date") as string;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  const fieldValues: Record<string, string> = {};
+  const prefix = "field__";
+  for (const [key, value] of formData.entries()) {
+    if (key.startsWith(prefix) && typeof value === "string" && value !== "") {
+      fieldValues[key.replace(prefix, "")] = value;
+    }
+  }
+
+  await supabase
+    .from("treatment_records")
+    .update({
+      treatment_date: treatmentDate,
+      body_site: ((formData.get("body_site") as string) || "").trim() || null,
+      field_values: fieldValues,
+      free_text: (formData.get("free_text") as string) || null,
+      recurrence_observed: formData.get("recurrence_observed") === "on",
+      recurrence_description: (formData.get("recurrence_description") as string) || null,
+      blood_drawn: formData.get("blood_drawn") === "on",
+      blood_drawn_note: (formData.get("blood_drawn_note") as string) || null,
+    })
+    .eq("id", recordId);
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "update_treatment_record",
+    entity: "treatment_records",
+    entityId: recordId,
+    detail: { treatmentDate },
+  });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+export async function deleteTreatmentRecordAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const recordId = formData.get("record_id") as string;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  // 這筆紀錄自動產生的放療排程一併刪除（外鍵是 no action，不先刪會擋住）。
+  await supabase.from("radiotherapy_sessions").delete().eq("triggered_by_treatment_record_id", recordId);
+  await supabase.from("treatment_records").delete().eq("id", recordId);
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "delete_treatment_record",
+    entity: "treatment_records",
+    entityId: recordId,
+  });
   revalidatePath(`/cases/${caseId}`);
 }
 
@@ -471,35 +604,66 @@ export async function addIntakeOptionRecordAction(formData: FormData) {
   revalidatePath(`/cases/${caseId}`);
 }
 
-export async function addLabResultAction(formData: FormData) {
+// 一次橫向填寫所有標記（決策 2026-07-28）：同一次採檢的所有標記共用一個採檢日期，
+// 一次送出、只寫有填值的標記（留空＝這次沒驗這項，不建立空白列）。
+export async function addLabResultsBatchAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
-  const markerId = formData.get("marker_id") as string;
   const sampleDate = (formData.get("sample_date") as string) || new Date().toISOString().slice(0, 10);
-  const rawValue = (formData.get("value") as string)?.trim();
-  const note = (formData.get("note") as string) || null;
-  if (!markerId) return;
+  const note = ((formData.get("note") as string) || "").trim() || null;
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
 
-  const numericValue = rawValue && !Number.isNaN(Number(rawValue)) ? Number(rawValue) : null;
-  const valueText = rawValue && numericValue === null ? rawValue : null;
+  const prefix = "value__";
+  const rows: {
+    case_id: string;
+    marker_id: string;
+    sample_date: string;
+    value: number | null;
+    value_text: string | null;
+    note: string | null;
+    recorded_by: string;
+  }[] = [];
 
-  const { data: result, error } = await supabase
-    .from("lab_results")
-    .insert({
+  for (const [key, raw] of formData.entries()) {
+    if (!key.startsWith(prefix) || typeof raw !== "string") continue;
+    const value = raw.trim();
+    if (!value) continue; // 可 null：沒填的項目直接略過
+    const numeric = Number.isNaN(Number(value)) ? null : Number(value);
+    rows.push({
       case_id: caseId,
-      marker_id: markerId,
+      marker_id: key.slice(prefix.length),
       sample_date: sampleDate,
-      value: numericValue,
-      value_text: valueText,
+      value: numeric,
+      value_text: numeric === null ? value : null, // 例如 "<0.35" 這類非數值結果
       note,
       recorded_by: operator,
-    })
-    .select("id")
-    .single();
-  if (error || !result) throw error ?? new Error("建立 Lab 數據失敗");
+    });
+  }
 
-  await logAudit({ caseId, operatorName: operator, action: "add_lab_result", entity: "lab_results", entityId: result.id, detail: { markerId, sampleDate } });
+  if (rows.length === 0) return;
+
+  const { error } = await supabase.from("lab_results").insert(rows);
+  if (error) throw error;
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "add_lab_results_batch",
+    entity: "lab_results",
+    detail: { sampleDate, count: rows.length },
+  });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+export async function deleteLabResultAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const resultId = formData.get("result_id") as string;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  await supabase.from("lab_results").delete().eq("id", resultId);
+
+  await logAudit({ caseId, operatorName: operator, action: "delete_lab_result", entity: "lab_results", entityId: resultId });
   revalidatePath(`/cases/${caseId}`);
 }
 

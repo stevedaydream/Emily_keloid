@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { addTreatmentRecordAction } from "./actions";
+import { useActionState, useState } from "react";
+import SubmitButton from "@/components/ui/SubmitButton";
+import { submitTreatmentRecordAction, type TreatmentFormState } from "./actions";
 
 type FieldSchema = { key: string; label: string; type: string };
 type TreatmentType = { id: string; name: string; field_schema: FieldSchema[] };
@@ -76,6 +77,36 @@ export default function TreatmentForm({
   presets: Preset[];
   lesions: LesionOption[];
 }) {
+  const [state, formAction] = useActionState(submitTreatmentRecordAction, null);
+
+  // 送出成功後要清空勾選：治療方式與部位是受控 state，不清的話畫面會停在剛送出的那份內容，
+  // 看起來像沒存進去，再按一次還會建出重複紀錄。用「換 key 重新掛載」重置，
+  // 不在 effect 裡 setState（那會多一次串聯 render）。
+  return (
+    <form action={formAction} className="space-y-3 rounded-md border border-slate-200 p-4">
+      <input type="hidden" name="case_id" value={caseId} />
+      <TreatmentFields
+        key={state?.ok ? state.at : 0}
+        treatmentTypes={treatmentTypes}
+        presets={presets}
+        lesions={lesions}
+        state={state}
+      />
+    </form>
+  );
+}
+
+function TreatmentFields({
+  treatmentTypes,
+  presets,
+  lesions,
+  state,
+}: {
+  treatmentTypes: TreatmentType[];
+  presets: Preset[];
+  lesions: LesionOption[];
+  state: TreatmentFormState;
+}) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedLesionIds, setSelectedLesionIds] = useState<string[]>([]);
 
@@ -90,9 +121,7 @@ export default function TreatmentForm({
   const surgerySelected = selectedIds.some((id) => treatmentTypes.find((t) => t.id === id)?.name === "手術切除");
 
   return (
-    <form action={addTreatmentRecordAction} className="space-y-3 rounded-md border border-slate-200 p-4">
-      <input type="hidden" name="case_id" value={caseId} />
-
+    <>
       <div>
         <label className="mb-1 block text-xs font-medium text-slate-600">治療/追蹤方式（可複選）</label>
         <div className="flex flex-wrap gap-2">
@@ -204,13 +233,17 @@ export default function TreatmentForm({
         />
       </div>
 
-      <button
-        type="submit"
-        disabled={selectedIds.length === 0}
-        className="whitespace-nowrap rounded-md bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
-      >
-        新增治療/追蹤紀錄
-      </button>
-    </form>
+      <div className="flex flex-wrap items-center gap-3">
+        <SubmitButton disabled={selectedIds.length === 0} pendingText="儲存中…">
+          新增治療/追蹤紀錄
+        </SubmitButton>
+        {state && (
+          <span className={`text-xs ${state.ok ? "text-emerald-700" : "text-red-600"}`}>
+            {state.ok ? "✓ " : "✕ "}
+            {state.message}
+          </span>
+        )}
+      </div>
+    </>
   );
 }
