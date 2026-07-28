@@ -12,8 +12,9 @@ import {
   requestHandlePermission,
   appendMappingRow,
 } from "@/lib/localMrnStore";
+import type { BodyView } from "@/lib/bodyZones";
 
-type Zone = { id: string; zone_key: string; view: "front" | "back"; display_name: string; dose_category: string };
+type Zone = { id: string; zone_key: string; view: BodyView; display_name: string; dose_category: string };
 type Doctor = { id: string; code: string; name: string };
 type Template = { id: string; name: string };
 

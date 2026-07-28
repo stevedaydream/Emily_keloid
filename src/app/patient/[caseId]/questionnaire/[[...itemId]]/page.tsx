@@ -113,6 +113,35 @@ export default async function ClinicQuestionnairePage({
                 ))}
               </div>
             )}
+            {/* 量表評分：選項的 value 即分數，橫排成一列刻度（分數在上、說明在下）。
+                後台沒設定選項時退回數字輸入，避免題目變成不能作答的空白。 */}
+            {q.question_type === "scale" &&
+              ((q.options ?? []).length > 0 ? (
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {(q.options ?? []).map((o: { value: string; label: string }) => (
+                    <label
+                      key={o.value}
+                      className="flex min-w-16 flex-1 cursor-pointer flex-col items-center gap-1 rounded-md border border-slate-200 px-2 py-2 text-center hover:border-brand-400 has-checked:border-brand-500 has-checked:bg-brand-50"
+                    >
+                      <input type="radio" name={`q_${q.id}`} value={o.value} required={q.required} />
+                      <span className="font-data text-sm font-medium text-slate-700">{o.value}</span>
+                      {o.label !== o.value && <span className="text-xs leading-tight text-slate-500">{o.label}</span>}
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-1">
+                  <input
+                    type="number"
+                    name={`q_${q.id}`}
+                    required={q.required}
+                    className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                  />
+                  <p className="mt-1 text-xs text-amber-600">
+                    此量表題尚未於後台設定分數選項，暫以數字輸入代替。
+                  </p>
+                </div>
+              ))}
             {q.question_type === "number" && (
               <input
                 type="number"

@@ -34,7 +34,9 @@ export async function submitQuestionnaireAction(formData: FormData) {
     } else {
       const raw = formData.get(`q_${q.id}`);
       if (raw !== null && raw !== "") {
-        const value = q.question_type === "number" ? Number(raw) : raw;
+        // 量表評分題的選項 value 就是分數，跟 number 一樣存成數字（計分/匯出都當數值用）。
+        const isNumeric = q.question_type === "number" || (q.question_type === "scale" && !Number.isNaN(Number(raw)));
+        const value = isNumeric ? Number(raw) : raw;
         answerRows.push({ response_id: response.id, question_id: q.id, answer_value: value });
         answersByOrder[q.order_no] = value;
       }

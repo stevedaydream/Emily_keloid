@@ -351,6 +351,8 @@ export async function updateDemographicsAction(formData: FormData) {
   const ageRaw = formData.get("age_at_enrollment") as string;
   const familyHistory = (formData.get("family_history") as string) || null;
   const jswScore = (formData.get("jsw_score") as string) || null;
+  // 手機號碼原本只有建檔頁能填，個案頁沒有欄位可補（完整度清單卻會列「手機」待補），2026-07-28 補上。
+  const phoneNumber = ((formData.get("phone_number") as string) ?? "").trim() || null;
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
 
@@ -361,6 +363,7 @@ export async function updateDemographicsAction(formData: FormData) {
       age_at_enrollment: ageRaw ? Number(ageRaw) : null,
       family_history: familyHistory,
       jsw_score: jswScore,
+      phone_number: phoneNumber,
     })
     .eq("id", caseId);
 

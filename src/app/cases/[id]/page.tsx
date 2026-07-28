@@ -21,6 +21,7 @@ import IntakeOptionForm from "./IntakeOptionForm";
 import DeletePhotoButton from "./DeletePhotoButton";
 import FamilyHistoryPicker from "./FamilyHistoryPicker";
 import PriorTreatmentPicker from "./PriorTreatmentPicker";
+import MultiEntryInput from "./MultiEntryInput";
 import KeloidLesionSection from "./KeloidLesionSection";
 import InfoTooltip from "@/components/InfoTooltip";
 import SubmitButton from "@/components/ui/SubmitButton";
@@ -38,6 +39,24 @@ const COMPLETENESS_COLOR: Record<string, string> = {
   has_value: "bg-emerald-100 text-emerald-700",
   pending: "bg-amber-100 text-amber-700",
   not_applicable: "bg-ink/10 text-ink/50",
+};
+
+// 完整度清單的每個欄位要去哪裡補：對應本頁的區塊 id，點欄位名稱直接捲過去。
+const COMPLETENESS_ANCHOR: Record<string, string | undefined> = {
+  sex: "section-demographics",
+  age: "section-demographics",
+  jsw_score: "section-demographics",
+  family_history: "section-demographics",
+  keloid_history: "section-demographics",
+  keloid_size: "section-demographics",
+  body_zone_classification: "section-demographics",
+  consent_signed_date: "section-consent",
+  icd_diagnosis: "section-diagnosis",
+  term_records: "section-terms",
+  questionnaires: "section-responses",
+  lab_markers: "section-lab",
+  biobank_checklist: "section-biobank",
+  phone: "section-demographics",
 };
 
 const BIOBANK_ITEMS = [
@@ -289,11 +308,68 @@ export default async function CaseDetailPage({
       {/* 收案一條龍進度 */}
       {pipeline && <PipelineProgress row={pipeline as CasePipelineRow} />}
 
+      {/* 資料完整度（僅舊資料回溯建檔的個案會有列）。
+          跟一條龍是不同層次的東西：一條龍看的是「收案流程走到哪一步」，這裡看的是「逐個欄位有沒有值」，
+          所以緊接在一條龍下方、預設收合，需要補資料時才展開（2026-07-28 使用者建議）。 */}
+      {completeness && completeness.length > 0 && (
+        <details
+          id="section-completeness"
+          data-nav-section
+          data-nav-label="資料完整度追蹤"
+          className="scroll-mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4"
+        >
+          <summary className="cursor-pointer text-sm font-semibold text-amber-800">
+            資料完整度追蹤（回溯建檔）
+            <span className="ml-2 font-data text-xs font-normal text-amber-700">
+              待補 {completeness.filter((c) => c.status === "pending").length}
+              {" ・ "}已有 {completeness.filter((c) => c.status === "has_value").length}
+              {" ・ "}不適用 {completeness.filter((c) => c.status === "not_applicable").length}
+            </span>
+            <InfoTooltip text="僅舊資料回溯建檔的個案會顯示。一條龍看的是收案流程走到第幾步，這裡看的是逐個欄位有沒有值：標記「已有」「待補」或「不適用」，方便日後回頭補齊缺漏資料。" />
+          </summary>
+          <ul className="mt-2 space-y-2">
+            {completeness.map((c) => {
+              const anchor = COMPLETENESS_ANCHOR[c.field_key];
+              return (
+              <li key={c.id} className="flex items-center justify-between rounded-md bg-white px-3 py-2 text-sm">
+                <div>
+                  {anchor ? (
+                    <Link href={`#${anchor}`} className="font-medium text-brand-800 underline decoration-brand-300 underline-offset-2">
+                      {c.field_label} ↓
+                    </Link>
+                  ) : (
+                    <span className="font-medium">{c.field_label}</span>
+                  )}
+                  {c.note && <span className="ml-2 text-xs text-ink/40">{c.note}</span>}
+                </div>
+                <form action={updateCompletenessAction} className="flex items-center gap-2">
+                  <input type="hidden" name="case_id" value={id} />
+                  <input type="hidden" name="field_key" value={c.field_key} />
+                  <select
+                    name="status"
+                    defaultValue={c.status}
+                    className={`rounded px-2 py-1 text-xs ${COMPLETENESS_COLOR[c.status]}`}
+                  >
+                    <option value="has_value">已有</option>
+                    <option value="pending">待補</option>
+                    <option value="not_applicable">不適用</option>
+                  </select>
+                  <SubmitButton variant="ghost" size="sm" className="!px-1.5 !py-0.5 text-ink/40 underline" pendingText="更新中…">
+                    更新
+                  </SubmitButton>
+                </form>
+              </li>
+              );
+            })}
+          </ul>
+        </details>
+      )}
+
       {/* 病人基本資料（舊資料對齊欄位） */}
       <section id="section-demographics" data-nav-section data-nav-label="病人基本資料" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           病人基本資料
-          <InfoTooltip text="記錄性別、年齡、JSW score、家族史、keloid 病史與大小，供研究資料分析使用，可隨時回來更新。" />
+          <InfoTooltip text="記錄性別、年齡、手機、JSW score、家族史、keloid 病史與大小，供研究資料分析使用，可隨時回來更新。手機僅供 LINE 綁定通知，不存姓名/病歷號。" />
         </h2>
         <form action={updateDemographicsAction} className="grid grid-cols-2 gap-3 text-sm">
           <input type="hidden" name="case_id" value={id} />
@@ -312,6 +388,17 @@ export default async function CaseDetailPage({
               type="number"
               name="age_at_enrollment"
               defaultValue={caseRow.age_at_enrollment ?? ""}
+              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink/70">手機號碼</label>
+            <input
+              name="phone_number"
+              type="tel"
+              inputMode="tel"
+              defaultValue={caseRow.phone_number ?? ""}
+              placeholder="供 LINE 綁定通知使用（不存姓名/病歷號）"
               className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
             />
           </div>
@@ -410,11 +497,12 @@ export default async function CaseDetailPage({
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-ink/70">之前治療的醫師</label>
-            <input
+            <label className="block text-xs font-medium text-ink/70">之前治療的醫師（可多位）</label>
+            <MultiEntryInput
               name="prior_treatment_physician"
-              defaultValue={caseRow.prior_treatment_physician ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+              defaultValue={caseRow.prior_treatment_physician}
+              placeholder="醫師姓名／院所"
+              addLabel="＋ 新增一位醫師"
             />
           </div>
           <div className="col-span-2">
@@ -462,42 +550,6 @@ export default async function CaseDetailPage({
           );
         })}
       </section>
-
-      {/* 資料完整度（僅舊資料回溯建檔顯示） */}
-      {completeness && completeness.length > 0 && (
-        <section id="section-completeness" data-nav-section data-nav-label="資料完整度追蹤" className="scroll-mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <h2 className="mb-2 text-sm font-semibold text-amber-800">
-            資料完整度追蹤（回溯建檔）
-            <InfoTooltip text="僅舊資料回溯建檔的個案會顯示。標記每個欄位是「已有」「待補」還是「不適用」，方便日後回頭補齊缺漏資料。" />
-          </h2>
-          <ul className="space-y-2">
-            {completeness.map((c) => (
-              <li key={c.id} className="flex items-center justify-between rounded-md bg-white px-3 py-2 text-sm">
-                <div>
-                  <span className="font-medium">{c.field_label}</span>
-                  {c.note && <span className="ml-2 text-xs text-ink/40">{c.note}</span>}
-                </div>
-                <form action={updateCompletenessAction} className="flex items-center gap-2">
-                  <input type="hidden" name="case_id" value={id} />
-                  <input type="hidden" name="field_key" value={c.field_key} />
-                  <select
-                    name="status"
-                    defaultValue={c.status}
-                    className={`rounded px-2 py-1 text-xs ${COMPLETENESS_COLOR[c.status]}`}
-                  >
-                    <option value="has_value">已有</option>
-                    <option value="pending">待補</option>
-                    <option value="not_applicable">不適用</option>
-                  </select>
-                  <SubmitButton variant="ghost" size="sm" className="!px-1.5 !py-0.5 text-ink/40 underline" pendingText="更新中…">
-                    更新
-                  </SubmitButton>
-                </form>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
 
       {/* 同意書 */}
       <section id="section-consent" data-nav-section data-nav-label="知情同意書" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
