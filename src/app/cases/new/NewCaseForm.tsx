@@ -9,6 +9,7 @@ import {
   isFileSystemAccessSupported,
   getConfiguredHandle,
   pickMappingFile,
+  openExistingMappingFile,
   requestHandlePermission,
   appendMappingRow,
 } from "@/lib/localMrnStore";
@@ -32,19 +33,38 @@ export default function NewCaseForm({
   const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
   const [sex, setSex] = useState("");
   const [mrn, setMrn] = useState("");
+  // 姓名跟病歷號一樣只寫進本機對照表，送出前會從 FormData 移除，絕不進伺服器。
+  const [patientName, setPatientName] = useState("");
   const [supported, setSupported] = useState(true);
   const [fileHandle, setFileHandle] = useState<FileSystemFileHandle | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 個案已成功建立但本機對照表寫入失敗時，保留這筆資訊讓使用者可以重試或手動記錄。
-  const [pendingMapping, setPendingMapping] = useState<{ caseId: string; researchId: string; mrn: string } | null>(null);
+  const [pendingMapping, setPendingMapping] = useState<{
+    caseId: string;
+    researchId: string;
+    mrn: string;
+    name: string;
+  } | null>(null);
 
   useEffect(() => {
     setSupported(isFileSystemAccessSupported());
     getConfiguredHandle().then(setFileHandle);
   }, []);
 
+  // 已經有一份對照表就直接選它（開檔對話框，不會跳「要取代嗎」）；沒有的話才用存檔對話框建立新的。
   async function handleChooseFile() {
+    try {
+      const handle = await openExistingMappingFile();
+      setFileHandle(handle);
+      setError(null);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return; // 使用者取消
+      setError(err instanceof Error ? err.message : "開啟本機對照表失敗");
+    }
+  }
+
+  async function handleCreateFile() {
     try {
       const handle = await pickMappingFile();
       setFileHandle(handle);
@@ -64,6 +84,7 @@ export default function NewCaseForm({
         research_id: pendingMapping.researchId,
         case_id: pendingMapping.caseId,
         created_at: new Date().toISOString(),
+        name: pendingMapping.name,
       });
       const { caseId } = pendingMapping;
       setPendingMapping(null);
@@ -81,11 +102,12 @@ export default function NewCaseForm({
 
     try {
       const trimmedMrn = mrn.trim();
+      const trimmedName = patientName.trim();
       let handle = fileHandle;
 
-      // 有填病歷號才需要本機檔案：先在這次點擊的使用者操作內取得檔案與寫入權限，
-      // 避免病歷號真的送出前，本機儲存這一步就先失敗。
-      if (trimmedMrn) {
+      // 有填病歷號或姓名才需要本機檔案：先在這次點擊的使用者操作內取得檔案與寫入權限，
+      // 避免這些資料真的送出前，本機儲存這一步就先失敗。
+      if (trimmedMrn || trimmedName) {
         if (!supported) {
           throw new Error("此瀏覽器不支援本機檔案存取（需使用 Chrome 或 Edge），請改用不需病歷號對照的方式建立個案，或更換瀏覽器");
         }
@@ -99,20 +121,22 @@ export default function NewCaseForm({
 
       const formData = new FormData(formRef.current);
       formData.delete("mrn"); // 病歷號絕不送到伺服器
+      formData.delete("patient_name"); // 姓名同理
 
       const { caseId, researchId } = await createCaseAction(formData);
 
-      if (trimmedMrn && handle) {
+      if ((trimmedMrn || trimmedName) && handle) {
         try {
           await appendMappingRow(handle, {
             mrn: trimmedMrn,
             research_id: researchId,
             case_id: caseId,
             created_at: new Date().toISOString(),
+            name: trimmedName,
           });
         } catch (err) {
           // 個案已經建立成功，只是本機寫入失敗——保留下來讓使用者重試，不要憑空遺失這筆對應。
-          setPendingMapping({ caseId, researchId, mrn: trimmedMrn });
+          setPendingMapping({ caseId, researchId, mrn: trimmedMrn, name: trimmedName });
           setError(
             `個案已建立成功（研究編號：${researchId}），但病歷號對照表寫入失敗：${
               err instanceof Error ? err.message : "未知錯誤"
@@ -146,14 +170,23 @@ export default function NewCaseForm({
       </div>
 
       <div className="rounded-md border border-accent-200 bg-accent-50 p-3">
-        <label className="block text-sm font-medium text-ink/80">病歷號（僅存本機，不上雲端）</label>
-        <input
-          name="mrn"
-          value={mrn}
-          onChange={(e) => setMrn(e.target.value)}
-          placeholder="留空則不建立病歷號對照"
-          className="mt-1 w-full rounded-md border border-accent-300 px-3 py-2 text-sm outline-none focus:border-accent-500"
-        />
+        <label className="block text-sm font-medium text-ink/80">病歷號與姓名（僅存本機，不上雲端）</label>
+        <div className="mt-1 grid gap-2 sm:grid-cols-2">
+          <input
+            name="mrn"
+            value={mrn}
+            onChange={(e) => setMrn(e.target.value)}
+            placeholder="病歷號（留空則不建立對照）"
+            className="w-full rounded-md border border-accent-300 px-3 py-2 text-sm outline-none focus:border-accent-500"
+          />
+          <input
+            name="patient_name"
+            value={patientName}
+            onChange={(e) => setPatientName(e.target.value)}
+            placeholder="姓名（僅寫入本機對照表）"
+            className="w-full rounded-md border border-accent-300 px-3 py-2 text-sm outline-none focus:border-accent-500"
+          />
+        </div>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-ink/50">
           <span>
             {!supported
@@ -163,9 +196,14 @@ export default function NewCaseForm({
               : "尚未設定本機對照表檔案（送出時會請你選擇）"}
           </span>
           {supported && (
-            <button type="button" onClick={handleChooseFile} className="whitespace-nowrap text-xs text-accent-700 underline">
-              {fileHandle ? "更換對照表位置" : "選擇對照表位置"}
-            </button>
+            <span className="flex gap-3">
+              <button type="button" onClick={handleChooseFile} className="whitespace-nowrap text-xs text-accent-700 underline">
+                {fileHandle ? "改選其他對照表" : "選擇既有對照表"}
+              </button>
+              <button type="button" onClick={handleCreateFile} className="whitespace-nowrap text-xs text-ink/40 underline">
+                建立新的
+              </button>
+            </span>
           )}
         </div>
       </div>

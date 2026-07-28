@@ -18,7 +18,14 @@ declare global {
     types?: { description?: string; accept: Record<string, string[]> }[];
   }
 
+  interface OpenFilePickerOptions {
+    multiple?: boolean;
+    excludeAcceptAllOption?: boolean;
+    types?: { description?: string; accept: Record<string, string[]> }[];
+  }
+
   interface Window {
     showSaveFilePicker(options?: SaveFilePickerOptions): Promise<FileSystemFileHandle>;
+    showOpenFilePicker(options?: OpenFilePickerOptions): Promise<FileSystemFileHandle[]>;
   }
 }

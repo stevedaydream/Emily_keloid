@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase";
 import CaseSearchBox from "@/components/CaseSearchBox";
+import PatientName from "@/components/LocalNameProvider";
 import { buttonClasses } from "@/components/ui/buttonStyles";
 
 const RECURRENCE_LABEL: Record<string, string> = {
@@ -102,6 +103,7 @@ export default async function HomePage({
           <thead className="border-b border-brand-100 bg-brand-50/60 text-left text-ink/50">
             <tr>
               <th className="whitespace-nowrap px-4 py-2 font-medium">研究編號</th>
+              <th className="whitespace-nowrap px-4 py-2 font-medium">姓名</th>
               <th className="whitespace-nowrap px-4 py-2 font-medium">醫師</th>
               <th className="whitespace-nowrap px-4 py-2 font-medium">部位</th>
               <th className="whitespace-nowrap px-4 py-2 font-medium">同意書</th>
@@ -118,6 +120,10 @@ export default async function HomePage({
                     <Link href={`/cases/${c.id}`} className="font-medium text-brand-800 underline">
                       {c.research_id}
                     </Link>
+                  </td>
+                  {/* 姓名由瀏覽器端從本機對照表注入，伺服器渲染的內容不含姓名 */}
+                  <td className="whitespace-nowrap px-4 py-2 text-ink/80">
+                    <PatientName researchId={c.research_id} />
                   </td>
                   <td className="whitespace-nowrap px-4 py-2 text-ink/70">
                     {doctor?.code} {doctor?.name}
@@ -143,7 +149,7 @@ export default async function HomePage({
             })}
             {(!cases || cases.length === 0) && (
               <tr>
-                <td colSpan={6} className="whitespace-nowrap px-4 py-6 text-center text-ink/40">
+                <td colSpan={7} className="whitespace-nowrap px-4 py-6 text-center text-ink/40">
                   沒有符合篩選條件的個案
                 </td>
               </tr>

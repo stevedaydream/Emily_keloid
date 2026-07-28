@@ -24,6 +24,7 @@ import PriorTreatmentPicker from "./PriorTreatmentPicker";
 import MultiEntryInput from "./MultiEntryInput";
 import KeloidLesionSection from "./KeloidLesionSection";
 import InfoTooltip from "@/components/InfoTooltip";
+import PatientName from "@/components/LocalNameProvider";
 import SubmitButton from "@/components/ui/SubmitButton";
 import type { CasePipelineRow } from "@/lib/pipeline";
 import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
@@ -296,6 +297,8 @@ export default async function CaseDetailPage({
         </Link>
         <div className="mt-1 flex items-center gap-3">
           <h1 className="text-xl font-semibold">{caseRow.research_id}</h1>
+          {/* 姓名由瀏覽器端從本機對照表注入 */}
+          <PatientName researchId={caseRow.research_id} className="text-lg text-ink/70" />
           {caseRow.data_source === "legacy_import" && (
             <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700">舊資料回溯建檔</span>
           )}

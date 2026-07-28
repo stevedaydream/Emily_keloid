@@ -10,7 +10,7 @@ import Button from "@/components/ui/Button";
 export default function CaseSearchBox({
   defaultValue = "",
   redirectTo = "/cases",
-  placeholder = "搜尋研究編號 / 醫師 / 部位 / 病歷號",
+  placeholder = "搜尋研究編號 / 醫師 / 部位 / 病歷號 / 姓名",
 }: {
   defaultValue?: string;
   redirectTo?: string;
@@ -33,7 +33,12 @@ export default function CaseSearchBox({
       const handle = await getConfiguredHandle();
       if (handle) {
         const rows = await readAllRows(handle);
-        const hit = rows.find((r) => r.mrn.trim().toLowerCase() === q.toLowerCase());
+        const lower = q.toLowerCase();
+        // 病歷號要完全相符（避免誤配），姓名允許部分相符（打姓氏也找得到）；
+        // 兩者都只在瀏覽器本機比對，送到伺服器的永遠是研究編號。
+        const hit =
+          rows.find((r) => r.mrn.trim().toLowerCase() === lower) ??
+          rows.find((r) => r.name?.trim() && r.name.trim().toLowerCase().includes(lower));
         if (hit) effective = hit.research_id;
       }
       router.push(`${redirectTo}?q=${encodeURIComponent(effective)}`);

@@ -6,6 +6,7 @@ import {
   isFileSystemAccessSupported,
   getConfiguredHandle,
   pickMappingFile,
+  openExistingMappingFile,
   requestHandlePermission,
   readAllRows,
   appendMappingRow,
@@ -23,6 +24,7 @@ export default function MrnMappingPage() {
 
   const [newMrn, setNewMrn] = useState("");
   const [newResearchId, setNewResearchId] = useState("");
+  const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
@@ -48,7 +50,20 @@ export default function MrnMappingPage() {
     }
   }
 
-  async function handleChooseFile() {
+  // 已經有一份對照表 → 直接用開檔對話框選它（不會跳「要取代嗎」）
+  async function handleOpenExisting() {
+    try {
+      const h = await openExistingMappingFile();
+      setHandle(h);
+      await reload(h);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return; // 使用者取消
+      setError(err instanceof Error ? err.message : "開啟本機對照表失敗");
+    }
+  }
+
+  // 還沒有對照表 → 用存檔對話框建立一份新的
+  async function handleCreateNew() {
     try {
       const h = await pickMappingFile();
       setHandle(h);
@@ -75,9 +90,11 @@ export default function MrnMappingPage() {
         research_id: researchId,
         case_id: caseId ?? "",
         created_at: new Date().toISOString(),
+        name: newName.trim(),
       });
       setNewMrn("");
       setNewResearchId("");
+      setNewName("");
       await reload(handle);
       if (!caseId) setError(`已新增對照，但找不到研究編號「${researchId}」對應的個案（可能是拼字問題或個案尚未建立）`);
     } catch (err) {
@@ -88,11 +105,14 @@ export default function MrnMappingPage() {
   }
 
   const filtered = q.trim()
-    ? rows.filter(
-        (r) =>
-          r.mrn.toLowerCase().includes(q.trim().toLowerCase()) ||
-          r.research_id.toLowerCase().includes(q.trim().toLowerCase())
-      )
+    ? rows.filter((r) => {
+        const needle = q.trim().toLowerCase();
+        return (
+          r.mrn.toLowerCase().includes(needle) ||
+          r.research_id.toLowerCase().includes(needle) ||
+          (r.name ?? "").toLowerCase().includes(needle)
+        );
+      })
     : rows;
 
   if (!supported) {
@@ -109,6 +129,11 @@ export default function MrnMappingPage() {
         <h1 className="text-xl font-semibold">病歷號對照維護</h1>
         <p className="mt-1 text-sm text-slate-500">
           病歷號只存在你選定的本機檔案裡，這一頁的所有讀寫都在瀏覽器本機完成，不會送到平台伺服器。新增個案時如果有填病歷號，也會自動寫入同一份檔案。
+          <br />
+          <span className="text-slate-400">
+            為什麼要先選檔案：瀏覽器基於安全考量，不允許網頁自己去讀電腦裡的檔案，一定要由你在檔案對話框中指定哪一份可以存取。
+            指定過之後這台電腦的這個瀏覽器會記住，之後只需確認權限、不必重選。
+          </span>
         </p>
       </div>
 
@@ -127,10 +152,17 @@ export default function MrnMappingPage() {
           )}
           <button
             type="button"
-            onClick={handleChooseFile}
+            onClick={handleOpenExisting}
+            className="whitespace-nowrap rounded-md border border-brand-600 bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
+          >
+            {handle ? "改選其他對照表檔案" : "選擇既有對照表檔案"}
+          </button>
+          <button
+            type="button"
+            onClick={handleCreateNew}
             className="whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50"
           >
-            {handle ? "更換對照表位置" : "選擇對照表位置"}
+            建立新的對照表
           </button>
         </div>
       </div>
@@ -157,6 +189,14 @@ export default function MrnMappingPage() {
                 className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
               />
             </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600">姓名（選填）</label>
+              <input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              />
+            </div>
             <button
               type="submit"
               disabled={adding}
@@ -170,7 +210,7 @@ export default function MrnMappingPage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="搜尋病歷號或研究編號"
+            placeholder="搜尋病歷號 / 姓名 / 研究編號"
             className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm sm:w-80"
           />
 
@@ -179,6 +219,7 @@ export default function MrnMappingPage() {
               <thead className="border-b border-slate-200 bg-slate-50 text-left text-slate-500">
                 <tr>
                   <th className="whitespace-nowrap px-4 py-2 font-medium">病歷號</th>
+                  <th className="whitespace-nowrap px-4 py-2 font-medium">姓名</th>
                   <th className="whitespace-nowrap px-4 py-2 font-medium">研究編號</th>
                   <th className="whitespace-nowrap px-4 py-2 font-medium">建立時間</th>
                   <th className="whitespace-nowrap px-4 py-2 font-medium">個案</th>
@@ -188,6 +229,7 @@ export default function MrnMappingPage() {
                 {filtered.map((r, i) => (
                   <tr key={`${r.mrn}-${i}`} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
                     <td className="whitespace-nowrap px-4 py-2 font-medium text-slate-900">{r.mrn}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-slate-700">{r.name || "—"}</td>
                     <td className="whitespace-nowrap px-4 py-2 text-slate-600">{r.research_id}</td>
                     <td className="whitespace-nowrap px-4 py-2 text-slate-400">
                       {r.created_at ? new Date(r.created_at).toLocaleString("zh-TW") : "—"}
@@ -205,7 +247,7 @@ export default function MrnMappingPage() {
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="whitespace-nowrap px-4 py-6 text-center text-slate-400">
+                    <td colSpan={5} className="whitespace-nowrap px-4 py-6 text-center text-slate-400">
                       {rows.length === 0 ? "對照表尚無資料" : "沒有符合搜尋的資料"}
                     </td>
                   </tr>

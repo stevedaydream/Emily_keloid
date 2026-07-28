@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import BrandMark from "@/components/ui/BrandMark";
 import { buttonClasses } from "@/components/ui/buttonStyles";
+import { useLocalNames } from "@/components/LocalNameProvider";
 
 const QUICK_LINKS = [
   { href: "/cases", label: "個案列表" },
@@ -11,9 +12,31 @@ const QUICK_LINKS = [
 ];
 
 const NAV_LINKS = [
+  { href: "/clinic-today", label: "今日門診" },
+  { href: "/batch-edit", label: "批次編輯" },
   { href: "/admin", label: "後台管理" },
   { href: "/export", label: "資料匯出" },
 ];
+
+// 姓名顯示開關：只有掛了本機對照表（linked）才有意義，沒掛的時候整顆隱藏。
+function ShowNamesToggle({ className = "" }: { className?: string }) {
+  const { linked, showNames, toggleShowNames } = useLocalNames();
+  if (!linked) return null;
+  return (
+    <button
+      type="button"
+      onClick={toggleShowNames}
+      title={showNames ? "目前顯示病人姓名（點擊隱藏）" : "目前隱藏病人姓名（點擊顯示）"}
+      className={`whitespace-nowrap rounded-md border px-2 py-1 text-xs ${
+        showNames
+          ? "border-brand-300 bg-brand-50 text-brand-800"
+          : "border-brand-200 bg-white text-ink/40"
+      } ${className}`}
+    >
+      {showNames ? "姓名：顯示中" : "姓名：已隱藏"}
+    </button>
+  );
+}
 
 export default function AppHeader({ operator }: { operator: string }) {
   const [open, setOpen] = useState(false);
@@ -46,6 +69,7 @@ export default function AppHeader({ operator }: { operator: string }) {
           </nav>
         </div>
         <div className="hidden items-center gap-2 md:flex">
+          <ShowNamesToggle />
           <Link href="/cases" className={buttonClasses("outline", "sm")}>
             個案列表
           </Link>
@@ -111,6 +135,9 @@ export default function AppHeader({ operator }: { operator: string }) {
                 </Link>
               ))}
             </nav>
+            <div className="mt-3 border-t border-brand-100 pt-3">
+              <ShowNamesToggle className="w-full" />
+            </div>
             <div className="mt-auto border-t border-brand-100 pt-3 text-xs text-ink/50">
               <p className="whitespace-nowrap">
                 目前操作者：<b className="text-ink/80">{operator}</b>
