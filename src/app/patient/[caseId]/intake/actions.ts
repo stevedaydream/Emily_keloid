@@ -96,8 +96,10 @@ export async function savePatientHistoryAction(
     keloidHistoryOptionIds: string[];
     onsetYear: string | null;
     priors: Record<string, Prior>;
+    /** 這一段在本次填寫中先前建立的紀錄；病人按「上一步」回頭改後重存時用來取代，避免長出第二筆 */
+    replaceRecordId?: string | null;
   }
-) {
+): Promise<{ recordId: string | null }> {
   const supabase = supabaseServer();
   const operator = await operatorName();
 
@@ -108,7 +110,13 @@ export async function savePatientHistoryAction(
   for (const [key, value] of Object.entries(payload.priors)) update[key] = PRIOR_TEXT[value];
   await supabase.from("cases").update(update).eq("id", caseId);
 
-  // keloid 病史類型走 case_intake_option_records（逐筆累加，不會蓋掉人員填的）
+  // keloid 病史類型走 case_intake_option_records（逐筆累加，不會蓋掉人員填的）。
+  // 本次填寫如果已經建過一筆（病人按「上一步」回頭改），先刪掉那一筆再重建，
+  // 否則同一次收案會留下兩筆互相矛盾的紀錄。items 有 on delete cascade。
+  if (payload.replaceRecordId) {
+    await supabase.from("case_intake_option_records").delete().eq("id", payload.replaceRecordId);
+  }
+  let recordId: string | null = null;
   if (payload.keloidHistoryOptionIds.length > 0) {
     const { data: record } = await supabase
       .from("case_intake_option_records")
@@ -116,6 +124,7 @@ export async function savePatientHistoryAction(
       .select("id")
       .single();
     if (record) {
+      recordId = record.id;
       await supabase
         .from("case_intake_option_record_items")
         .insert(payload.keloidHistoryOptionIds.map((optionId) => ({ record_id: record.id, option_id: optionId })));
@@ -159,25 +168,41 @@ export async function savePatientHistoryAction(
   await markSegmentDone(caseId, "history");
   await logAudit({ caseId, operatorName: operator, action: "patient_self_entry", entity: "cases", detail: { segment: "history" } });
   revalidatePath(`/cases/${caseId}`);
+  return { recordId };
 }
 
 export async function savePatientIntakeOptionsAction(
   caseId: string,
-  payload: { onsetCauseIds: string[]; referralIds: string[] }
-) {
+  payload: {
+    onsetCauseIds: string[];
+    referralIds: string[];
+    /** 同 savePatientHistoryAction：回頭改後重存時取代本次先前建立的紀錄 */
+    replaceRecordIds?: (string | null)[];
+  }
+): Promise<{ recordIds: (string | null)[] }> {
   const supabase = supabaseServer();
   const operator = await operatorName();
 
+  const toReplace = (payload.replaceRecordIds ?? []).filter((v): v is string => Boolean(v));
+  if (toReplace.length > 0) {
+    await supabase.from("case_intake_option_records").delete().in("id", toReplace);
+  }
+
+  const recordIds: (string | null)[] = [];
   for (const [category, optionIds] of [
     ["onset_cause", payload.onsetCauseIds],
     ["referral_source", payload.referralIds],
   ] as const) {
-    if (optionIds.length === 0) continue;
+    if (optionIds.length === 0) {
+      recordIds.push(null);
+      continue;
+    }
     const { data: record } = await supabase
       .from("case_intake_option_records")
       .insert({ case_id: caseId, category, recorded_by: `${operator}（病人自填）`, notes: null })
       .select("id")
       .single();
+    recordIds.push(record?.id ?? null);
     if (record) {
       await supabase
         .from("case_intake_option_record_items")
@@ -194,15 +219,27 @@ export async function savePatientIntakeOptionsAction(
     detail: { segment: "intake_options" },
   });
   revalidatePath(`/cases/${caseId}`);
+  return { recordIds };
 }
 
 export async function savePatientQuestionnaireAction(
   caseId: string,
   segment: PatientIntakeSegmentKey,
-  payload: { questionnaireId: string; answers: Record<string, string | string[]> }
-) {
+  payload: {
+    questionnaireId: string;
+    answers: Record<string, string | string[]>;
+    /** 本次填寫先前送出的那一筆回覆；病人回頭改答案後重存時取代它，不要留下兩份同一份問卷的回覆。
+     *  只刪本次自己建立的那一筆，歷史回覆（例如上次回診填的）不受影響。 */
+    replaceResponseId?: string | null;
+  }
+): Promise<{ responseId: string }> {
   const supabase = supabaseServer();
   const operator = await operatorName();
+
+  if (payload.replaceResponseId) {
+    // questionnaire_answers.response_id 是 on delete cascade，答案會跟著刪掉
+    await supabase.from("questionnaire_responses").delete().eq("id", payload.replaceResponseId);
+  }
 
   const { data: response, error } = await supabase
     .from("questionnaire_responses")
@@ -241,6 +278,7 @@ export async function savePatientQuestionnaireAction(
     detail: { segment, answered: rows.length },
   });
   revalidatePath(`/cases/${caseId}`);
+  return { responseId: response.id };
 }
 
 /** 人員在個案頁把待補項目處理掉。 */
