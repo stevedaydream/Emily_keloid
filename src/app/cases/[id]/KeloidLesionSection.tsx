@@ -4,10 +4,12 @@ import { useState } from "react";
 import Link from "next/link";
 import BodyDiagram from "@/components/BodyDiagram";
 import SubmitButton from "@/components/ui/SubmitButton";
-import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
+import { DOSE_CATEGORY_LABEL, BODY_VIEW_LABEL, type BodyView } from "@/lib/bodyZones";
 import { addKeloidLesionAction, deleteKeloidLesionAction, updateKeloidLesionZoneAction } from "./actions";
 
-type Zone = { id: string; zone_key: string; view: "front" | "back"; display_name: string; dose_category: string };
+type Zone = { id: string; zone_key: string; view: BodyView; display_name: string; dose_category: string };
+
+const VIEW_ORDER: BodyView[] = ["front", "back", "head"];
 
 type Lesion = {
   id: string;
@@ -107,11 +109,20 @@ export default function KeloidLesionSection({
                   className="rounded border border-brand-200 px-1.5 py-0.5 text-xs"
                 >
                   <option value="">（未指定，不會自動排放療）</option>
-                  {zones.map((z) => (
-                    <option key={z.id} value={z.id}>
-                      {z.display_name}（{DOSE_CATEGORY_LABEL[z.dose_category]}）
-                    </option>
-                  ))}
+                  {/* 部位擴充到 60 幾個之後平鋪很難找，依人形圖的三個檢視分組 */}
+                  {VIEW_ORDER.map((v) => {
+                    const list = zones.filter((z) => z.view === v);
+                    if (list.length === 0) return null;
+                    return (
+                      <optgroup key={v} label={BODY_VIEW_LABEL[v]}>
+                        {list.map((z) => (
+                          <option key={z.id} value={z.id}>
+                            {z.display_name}（{DOSE_CATEGORY_LABEL[z.dose_category]}）
+                          </option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
                 </select>
                 {zone ? (
                   <span className="rounded bg-sky-100 px-1.5 py-0.5 text-sky-700">

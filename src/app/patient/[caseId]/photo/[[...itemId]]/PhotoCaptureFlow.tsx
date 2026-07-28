@@ -4,8 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import BodyDiagram from "@/components/BodyDiagram";
 import CameraCapture from "./CameraCapture";
+import type { BodyView } from "@/lib/bodyZones";
 
-type Zone = { id: string; zone_key: string; view: "front" | "back"; display_name: string; dose_category: string };
+type Zone = { id: string; zone_key: string; view: BodyView; display_name: string; dose_category: string };
 type Site = {
   id: string;
   site_no: number | null;
