@@ -7,7 +7,9 @@
 const DB_NAME = "keloid-local-tools";
 const STORE_NAME = "handles";
 const HANDLE_KEY = "mrn-mapping-file";
-const CSV_HEADER = "mrn,research_id,case_id,created_at";
+// 第 5 欄 name 是 2026-07-28 才加的（決策：姓名跟病歷號一樣只留本機，雲端永遠不存）。
+// 舊檔案只有 4 欄也讀得動，name 會是空字串。
+const CSV_HEADER = "mrn,research_id,case_id,created_at,name";
 
 export function isFileSystemAccessSupported(): boolean {
   return typeof window !== "undefined" && "showSaveFilePicker" in window;
@@ -50,13 +52,29 @@ async function ensurePermission(handle: FileSystemFileHandle): Promise<boolean> 
   return (await handle.requestPermission(opts)) === "granted";
 }
 
-// 讓使用者選擇（或建立）本機對照表檔案，並記住這次選擇供之後的瀏覽器工作階段重用。
+// 建立一份新的本機對照表檔案（存檔對話框），並記住這次選擇供之後的瀏覽器工作階段重用。
 // 必須在使用者手勢（click）觸發的處理函式內直接呼叫，不能包在多層 await 之後。
 export async function pickMappingFile(): Promise<FileSystemFileHandle> {
   const handle = await window.showSaveFilePicker({
     suggestedName: "病歷號對照表.csv",
     types: [{ description: "CSV", accept: { "text/csv": [".csv"] } }],
   });
+  await saveHandle(handle);
+  return handle;
+}
+
+// 直接選一份「已經存在」的對照表 CSV（開檔對話框）。
+// 跟 pickMappingFile 的差別只在對話框種類：存檔對話框選既有檔案時瀏覽器會問「要不要取代」，
+// 對「我已經有一份對照表、只想掛上去」的情境很嚇人。開檔對話框拿到的 handle 預設只有唯讀權限，
+// 因此這裡立刻要求 readwrite（之後新增個案要把新的對應附加寫回同一個檔案）。
+export async function openExistingMappingFile(): Promise<FileSystemFileHandle> {
+  const [handle] = await window.showOpenFilePicker({
+    multiple: false,
+    types: [{ description: "CSV", accept: { "text/csv": [".csv"] } }],
+  });
+  if (!handle) throw new Error("沒有選到檔案");
+  const granted = await ensurePermission(handle);
+  if (!granted) throw new Error("需要讀寫權限才能維護對照表（新增個案時要寫回同一個檔案）");
   await saveHandle(handle);
   return handle;
 }
@@ -85,6 +103,8 @@ export interface MrnMappingRow {
   research_id: string;
   case_id: string;
   created_at: string;
+  /** 病人姓名。跟病歷號一樣只存在這個本機檔案，不會送到伺服器。舊格式的檔案沒有這欄，讀出來是空字串。 */
+  name: string;
 }
 
 export async function readAllRows(handle: FileSystemFileHandle): Promise<MrnMappingRow[]> {
@@ -93,8 +113,8 @@ export async function readAllRows(handle: FileSystemFileHandle): Promise<MrnMapp
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length <= 1) return [];
   return lines.slice(1).map((line) => {
-    const [mrn, research_id, case_id, created_at] = parseCsvLine(line);
-    return { mrn, research_id, case_id, created_at };
+    const [mrn, research_id, case_id, created_at, name] = parseCsvLine(line);
+    return { mrn, research_id, case_id, created_at, name: name ?? "" };
   });
 }
 
@@ -103,7 +123,7 @@ export async function appendMappingRow(handle: FileSystemFileHandle, row: MrnMap
   const file = await handle.getFile();
   const existingText = await file.text();
   const hasHeader = existingText.trim().length > 0;
-  const line = [row.mrn, row.research_id, row.case_id, row.created_at].map(csvField).join(",");
+  const line = [row.mrn, row.research_id, row.case_id, row.created_at, row.name ?? ""].map(csvField).join(",");
   const newText = hasHeader ? `${existingText.replace(/\s*$/, "")}\n${line}\n` : `${CSV_HEADER}\n${line}\n`;
   const writable = await handle.createWritable();
   await writable.write(newText);

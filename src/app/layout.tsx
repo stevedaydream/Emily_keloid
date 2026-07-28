@@ -3,6 +3,7 @@ import { Noto_Serif_TC, Noto_Sans_TC, IBM_Plex_Mono } from "next/font/google";
 import { cookies } from "next/headers";
 import AppHeader from "@/components/AppHeader";
 import BackToTopButton from "@/components/BackToTopButton";
+import { LocalNameProvider } from "@/components/LocalNameProvider";
 import "./globals.css";
 
 const notoSerifTC = Noto_Serif_TC({
@@ -43,10 +44,13 @@ export default async function RootLayout({
       className={`${notoSerifTC.variable} ${notoSansTC.variable} ${ibmPlexMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col font-body text-ink">
-        {session === "ok" && operator && <AppHeader operator={operator} />}
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
-          {children}
-        </main>
+        {/* 姓名只在瀏覽器端從本機對照表讀出後注入畫面，伺服器渲染的內容永遠不含姓名 */}
+        <LocalNameProvider>
+          {session === "ok" && operator && <AppHeader operator={operator} />}
+          <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
+            {children}
+          </main>
+        </LocalNameProvider>
         <BackToTopButton />
       </body>
     </html>
