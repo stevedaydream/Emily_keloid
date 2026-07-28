@@ -34,6 +34,7 @@ export default function PhotoCaptureFlow({
   sex,
   sites,
   initialLesionId,
+  initialZoneKey,
 }: {
   caseId: string;
   itemId: string;
@@ -42,9 +43,23 @@ export default function PhotoCaptureFlow({
   sites?: Site[];
   /** 從個案頁面的「拍這個部位」進來時直接跳到該部位的相機畫面 */
   initialLesionId?: string | null;
+  /** 從個案頁面的人形圖點選部位後直接進來拍照時帶的區塊代碼 */
+  initialZoneKey?: string | null;
 }) {
   const initialSite = initialLesionId ? (sites ?? []).find((s) => s.id === initialLesionId) : undefined;
-  const [target, setTarget] = useState<Target | null>(initialSite ? targetForSite(initialSite) : null);
+  // 人形圖帶進來的區塊：該個案已有同區塊的部位就直接對上，否則以區塊本身當目標
+  // （上傳時 uploadPhotoAction 會補建對應的部位，照片不會變成「未對應部位」）。
+  const initialZone = !initialSite && initialZoneKey ? zones.find((z) => z.zone_key === initialZoneKey) : undefined;
+  const initialZoneSite = initialZone ? (sites ?? []).find((s) => s.zoneKey === initialZone.zone_key) : undefined;
+  const [target, setTarget] = useState<Target | null>(
+    initialSite
+      ? targetForSite(initialSite)
+      : initialZoneSite
+      ? targetForSite(initialZoneSite)
+      : initialZone
+      ? { zoneKey: initialZone.zone_key, displayName: initialZone.display_name, doseCategory: initialZone.dose_category, lesionId: null }
+      : null
+  );
   const [showDiagram, setShowDiagram] = useState((sites ?? []).length === 0);
   const router = useRouter();
 

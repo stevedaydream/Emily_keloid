@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import BodyDiagram from "@/components/BodyDiagram";
 import Button from "@/components/ui/Button";
 import { createCaseAction } from "./actions";
+import DiagnosisPicker, { type IcdOption } from "./DiagnosisPicker";
 import {
   isFileSystemAccessSupported,
   getConfiguredHandle,
@@ -13,24 +13,21 @@ import {
   requestHandlePermission,
   appendMappingRow,
 } from "@/lib/localMrnStore";
-import type { BodyView } from "@/lib/bodyZones";
 
-type Zone = { id: string; zone_key: string; view: BodyView; display_name: string; dose_category: string };
 type Doctor = { id: string; code: string; name: string };
 type Template = { id: string; name: string };
 
 export default function NewCaseForm({
   doctors,
   templates,
-  zones,
+  icdCodes,
 }: {
   doctors: Doctor[];
   templates: Template[];
-  zones: Zone[];
+  icdCodes: IcdOption[];
 }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
-  const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
   const [sex, setSex] = useState("");
   const [mrn, setMrn] = useState("");
   // 姓名跟病歷號一樣只寫進本機對照表，送出前會從 FormData 移除，絕不進伺服器。
@@ -156,8 +153,6 @@ export default function NewCaseForm({
 
   return (
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-brand-100 bg-paper-raised p-6">
-      <input type="hidden" name="body_part_zone_id" value={selectedZone?.id ?? ""} />
-
       <div>
         <label className="block text-sm font-medium text-ink/80">負責醫師</label>
         <select name="doctor_id" required className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500">
@@ -236,13 +231,8 @@ export default function NewCaseForm({
       </div>
 
       <div>
-        <label className="mb-1 block text-sm font-medium text-ink/80">蟹足腫部位（第一處）</label>
-        <BodyDiagram zones={zones} currentZoneKey={selectedZone?.zone_key} onSelect={setSelectedZone} sex={sex} />
-        <p className="mt-1 text-xs text-ink/50">
-          {selectedZone
-            ? `已選擇：${selectedZone.display_name}（將建立為「部位1」，之後可在個案頁面新增其他部位並填尺寸）`
-            : "點選人形圖上的部位，建檔後會成為此個案的「部位1」；多處病灶可在個案頁面陸續新增"}
-        </p>
+        <label className="mb-1 block text-sm font-medium text-ink/80">診斷（ICD-9/10）</label>
+        <DiagnosisPicker codes={icdCodes} />
       </div>
 
       <div>

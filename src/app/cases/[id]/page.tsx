@@ -11,14 +11,15 @@ import {
   updateOutcomeAction,
   updateLegacyBiobankAction,
   updatePriorHistoryAction,
-  addLabResultAction,
+  addLabResultsBatchAction,
+  deleteLabResultAction,
 } from "./actions";
 import TreatmentForm from "./TreatmentForm";
+import TreatmentRecordList from "./TreatmentRecordList";
 import TermRecordForm from "./TermRecordForm";
 import DiagnosisSection from "./DiagnosisSection";
 import PipelineProgress from "./PipelineProgress";
 import IntakeOptionForm from "./IntakeOptionForm";
-import DeletePhotoButton from "./DeletePhotoButton";
 import FamilyHistoryPicker from "./FamilyHistoryPicker";
 import PriorTreatmentPicker from "./PriorTreatmentPicker";
 import MultiEntryInput from "./MultiEntryInput";
@@ -129,7 +130,7 @@ export default async function CaseDetailPage({
     supabase
       .from("treatment_records")
       .select(
-        "id, treatment_date, body_site, field_values, free_text, recorded_by, recurrence_observed, recurrence_description, blood_drawn, blood_drawn_note, treatment_types(name)"
+        "id, treatment_type_id, treatment_date, body_site, lesion_id, field_values, free_text, recorded_by, recurrence_observed, recurrence_description, blood_drawn, blood_drawn_note, treatment_types(name)"
       )
       .eq("case_id", id)
       .order("treatment_date", { ascending: false }),
@@ -137,7 +138,7 @@ export default async function CaseDetailPage({
     supabase
       .from("questionnaire_responses")
       .select(
-        "id, submitted_at, submitted_via, questionnaire_templates(name), questionnaire_answers(answer_value, questionnaire_questions(order_no))"
+        "id, submitted_at, submitted_via, questionnaire_templates(id, name), questionnaire_answers(answer_value, questionnaire_questions(order_no))"
       )
       .eq("case_id", id)
       .order("submitted_at", { ascending: false }),
@@ -170,7 +171,11 @@ export default async function CaseDetailPage({
       .select("*, body_part_zones(display_name, dose_category)")
       .eq("case_id", id)
       .order("site_no"),
-    supabase.from("questionnaire_templates").select("id, name").eq("active", true).order("created_at"),
+    supabase
+      .from("questionnaire_templates")
+      .select("id, name, category, required_for_intake")
+      .eq("active", true)
+      .order("created_at"),
   ]);
 
   if (!caseRow) {
@@ -253,22 +258,31 @@ export default async function CaseDetailPage({
     };
   });
 
-  // 照片依病灶部位分組呈現，讓病灶清單可以用錨點直接跳到該部位的照片。
-  const photoGroups = [
-    ...lesionList.map((l) => ({
-      key: l.id,
-      anchor: `photos-lesion-${l.id}`,
-      title: `部位${l.site_no} ${l.body_site}`,
-      photos: photosWithUrl.filter((p) => p.lesion_id === l.id),
-    })),
-    {
-      key: "unassigned",
-      anchor: "photos-unassigned",
-      title: "未對應部位",
-      photos: photosWithUrl.filter((p) => !p.lesion_id || !lesionList.some((l) => l.id === p.lesion_id)),
-    },
-  ].filter((g) => g.photos.length > 0 || g.key !== "unassigned");
-  const photoCountByLesion = new Map(photoGroups.map((g) => [g.key, g.photos.length]));
+  // 照片依病灶部位分組，縮圖直接顯示在該部位底下（決策 2026-07-28：取消獨立的「傷口照片」card）。
+  const photosByLesion = Object.fromEntries(
+    lesionList.map((l) => [l.id, photosWithUrl.filter((p) => p.lesion_id === l.id)])
+  );
+  // 新拍的照片一律會掛到部位（見 uploadPhotoAction），這裡只剩舊資料可能沒對應
+  const unassignedPhotos = photosWithUrl.filter(
+    (p) => !p.lesion_id || !lesionList.some((l) => l.id === p.lesion_id)
+  );
+
+  // 應填問卷清單（決策 2026-07-28）：後台在「問卷產生器」勾選哪些問卷是正式上線要填的
+  // （questionnaire_templates.required_for_intake），個案頁面就照這份清單列出待填/已完成，
+  // 不用再靠人記得有哪幾份。已填＝這個個案對該問卷至少有一筆回覆。
+  const responseCountByTemplate = new Map<string, { count: number; latest: string }>();
+  for (const r of responses ?? []) {
+    const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
+    if (!q?.id) continue;
+    const prev = responseCountByTemplate.get(q.id);
+    responseCountByTemplate.set(q.id, {
+      count: (prev?.count ?? 0) + 1,
+      latest: prev && prev.latest > r.submitted_at ? prev.latest : r.submitted_at,
+    });
+  }
+  const requiredQuestionnaires = (questionnaireTemplates ?? [])
+    .filter((t) => t.required_for_intake)
+    .map((t) => ({ ...t, done: responseCountByTemplate.get(t.id) }));
 
   // JSS 疤痕診斷分類表（JSW Scar Scale 2015）：同一份量表每次追蹤重複施測，
   // 以個案最早一筆回覆的總分當基準，計算每筆回覆的 Delta Score（基準分-本次分，正值代表改善）。
@@ -367,6 +381,23 @@ export default async function CaseDetailPage({
           </ul>
         </details>
       )}
+
+      {/* ICD 診斷（決策 2026-07-28：診斷是看診當下最先要確認的事，移到所有區塊最前面） */}
+      <section id="section-diagnosis" data-nav-section data-nav-label="診斷（ICD-9/10）" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-ink/80">
+          診斷（ICD-9/10）
+          <InfoTooltip text="用上方的 ICD-9 / ICD-10 開關切換要用哪個系統：選單只列出該系統的碼，已記錄的診斷也會換算成該系統顯示，對照碼附在後方。對照關係於後台 ICD 維護頁設定。" />
+        </h2>
+        <DiagnosisSection
+          caseId={id}
+          codes={icdCodes ?? []}
+          diagnoses={(diagnoses ?? []).map((d) => ({
+            id: d.id,
+            is_primary: d.is_primary,
+            icd: (Array.isArray(d.icd_codes) ? d.icd_codes[0] : d.icd_codes) ?? null,
+          }))}
+        />
+      </section>
 
       {/* 病人基本資料（舊資料對齊欄位） */}
       <section id="section-demographics" data-nav-section data-nav-label="病人基本資料" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
@@ -477,7 +508,8 @@ export default async function CaseDetailPage({
             lesions={lesionList}
             zones={bodyZones ?? []}
             sex={caseRow.sex}
-            photoCounts={Object.fromEntries(photoCountByLesion)}
+            photosByLesion={photosByLesion}
+            unassignedPhotos={unassignedPhotos}
           />
         </div>
       </section>
@@ -554,46 +586,6 @@ export default async function CaseDetailPage({
         })}
       </section>
 
-      {/* 同意書 */}
-      <section id="section-consent" data-nav-section data-nav-label="知情同意書" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-ink/80">
-          知情同意書
-          <InfoTooltip text="紙本簽署流程不變，這裡只記錄簽署日期與確認人，作為系統內的狀態追蹤，不影響實際同意書效力。" />
-        </h2>
-        <form action={updateConsentAction} className="flex items-center gap-3">
-          <input type="hidden" name="case_id" value={id} />
-          <input
-            type="date"
-            name="consent_signed_at"
-            defaultValue={caseRow.consent_signed_at ?? ""}
-            className="rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-          />
-          <SubmitButton pendingText="設定中…">更新</SubmitButton>
-          <span className="text-xs text-ink/40">
-            {caseRow.consent_signed_at
-              ? `已由 ${caseRow.consent_confirmed_by} 確認`
-              : "尚未簽署（紙本簽署流程不變，此僅為狀態記錄）"}
-          </span>
-        </form>
-      </section>
-
-      {/* ICD 診斷 */}
-      <section id="section-diagnosis" data-nav-section data-nav-label="診斷（ICD-9/10）" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-ink/80">
-          診斷（ICD-9/10）
-          <InfoTooltip text="用上方的 ICD-9 / ICD-10 開關切換要用哪個系統：選單只列出該系統的碼，已記錄的診斷也會換算成該系統顯示，對照碼附在後方。對照關係於後台 ICD 維護頁設定。" />
-        </h2>
-        <DiagnosisSection
-          caseId={id}
-          codes={icdCodes ?? []}
-          diagnoses={(diagnoses ?? []).map((d) => ({
-            id: d.id,
-            is_primary: d.is_primary,
-            icd: (Array.isArray(d.icd_codes) ? d.icd_codes[0] : d.icd_codes) ?? null,
-          }))}
-        />
-      </section>
-
       {/* 醫學術語紀錄 */}
       <section id="section-terms" data-nav-section data-nav-label="醫學術語紀錄" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
@@ -635,33 +627,28 @@ export default async function CaseDetailPage({
             }))}
           />
         </div>
-        <ul className="space-y-1">
-          {(treatmentRecords ?? []).map((r) => {
+        <TreatmentRecordList
+          caseId={id}
+          records={(treatmentRecords ?? []).map((r) => {
             const tt = Array.isArray(r.treatment_types) ? r.treatment_types[0] : r.treatment_types;
-            return (
-              <li key={r.id} className="break-words text-sm text-ink/70">
-                <span className="font-medium">{r.treatment_date}</span> ・ {tt?.name}
-                {r.body_site && (
-                  <span className="ml-1 rounded bg-brand-50 px-1.5 py-0.5 text-xs text-brand-800">部位：{r.body_site}</span>
-                )}{" "}
-                ・{" "}
-                {r.free_text || Object.entries(r.field_values ?? {}).map(([k, v]) => `${k}: ${v}`).join(", ")}
-                <span className="ml-2 text-xs text-ink/40">記錄人：{r.recorded_by}</span>
-                {r.recurrence_observed && (
-                  <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">
-                    復發：{r.recurrence_description || "（未填情形）"}
-                  </span>
-                )}
-                {r.blood_drawn && (
-                  <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-xs text-sky-700">
-                    抽血{r.blood_drawn_note ? `：${r.blood_drawn_note}` : ""}
-                  </span>
-                )}
-              </li>
-            );
+            return {
+              id: r.id,
+              treatment_type_id: r.treatment_type_id,
+              typeName: tt?.name ?? null,
+              treatment_date: r.treatment_date,
+              body_site: r.body_site,
+              lesion_id: r.lesion_id,
+              field_values: r.field_values,
+              free_text: r.free_text,
+              recorded_by: r.recorded_by,
+              recurrence_observed: r.recurrence_observed,
+              recurrence_description: r.recurrence_description,
+              blood_drawn: r.blood_drawn,
+              blood_drawn_note: r.blood_drawn_note,
+            };
           })}
-          {(!treatmentRecords || treatmentRecords.length === 0) && <li className="text-sm text-ink/40">尚無治療紀錄</li>}
-        </ul>
+          fieldSchemas={Object.fromEntries((treatmentTypes ?? []).map((t) => [t.id, t.field_schema ?? []]))}
+        />
       </section>
 
       {/* 放射治療進度（登打「手術切除」且已標記部位後自動產生） */}
@@ -737,11 +724,43 @@ export default async function CaseDetailPage({
       </section>
 
       {/* 生物資料庫 */}
-      <section id="section-biobank" data-nav-section data-nav-label="生物資料庫" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
+      <section id="section-biobank" data-nav-section data-nav-label="同意書與生物資料庫" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           生物資料庫
           <InfoTooltip text="勾選蠟塊、Keloid/Periskin fibroblast 原代培養、術前與術後第一天血液是否已收取，並記錄日期；可分次事後補填，不用一次填完。" />
         </h2>
+
+        {/* 知情同意書（決策 2026-07-28：同意書是收檢體的前提，整併到生物資料庫最前面，
+            不再是獨立 card。id 保留 section-consent，一條龍與完整度清單的錨點才不會失效） */}
+        <div id="section-consent" className="mb-3 scroll-mt-4 rounded-md border border-accent-200 bg-accent-50 p-3">
+          <h3 className="mb-1.5 text-xs font-semibold text-ink/70">
+            知情同意書簽署
+            <InfoTooltip text="紙本簽署流程不變，這裡只記錄簽署日期與確認人，作為系統內的狀態追蹤，不影響實際同意書效力。收取檢體前應先確認已簽署。" />
+          </h3>
+          <form action={updateConsentAction} className="flex flex-wrap items-center gap-3">
+            <input type="hidden" name="case_id" value={id} />
+            <input
+              type="date"
+              name="consent_signed_at"
+              defaultValue={caseRow.consent_signed_at ?? ""}
+              className="rounded-md border border-accent-300 px-2 py-1.5 text-sm"
+            />
+            <SubmitButton pendingText="設定中…">更新</SubmitButton>
+            <span
+              className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
+                caseRow.consent_signed_at ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+              }`}
+            >
+              {caseRow.consent_signed_at ? "已簽署" : "尚未簽署"}
+            </span>
+            <span className="text-xs text-ink/40">
+              {caseRow.consent_signed_at
+                ? `已由 ${caseRow.consent_confirmed_by} 確認`
+                : "紙本簽署流程不變，此僅為狀態記錄"}
+            </span>
+          </form>
+        </div>
+
         <form action={updateLegacyBiobankAction} className="mb-3 flex flex-wrap items-end gap-3 rounded-md border border-brand-50 p-3 text-sm">
           <input type="hidden" name="case_id" value={id} />
           <div>
@@ -827,40 +846,54 @@ export default async function CaseDetailPage({
           Lab 生物標記數據
           <InfoTooltip text="記錄 IgE、Exosome、IL-1α/β、IL-6、TNF-α、MMP2/9 等生物標記檢驗結果，可依採檢日期多次登打；標記清單於後台「Lab 生物標記清單」維護。" />
         </h2>
-        <form action={addLabResultAction} className="mb-3 flex flex-wrap items-end gap-3 rounded-md border border-brand-50 p-3 text-sm">
+        {/* 一次橫向列出所有標記、各自在下方填值後一次儲存（決策 2026-07-28）。
+            原本是「選一個標記→填一個值→送出」，一次採檢要重複十幾次。
+            手機每列 3 項自動換行，桌機依寬度放到 6 項。留空的項目不會建立資料列。 */}
+        <form action={addLabResultsBatchAction} className="mb-3 space-y-3 rounded-md border border-brand-50 p-3 text-sm">
           <input type="hidden" name="case_id" value={id} />
-          <div>
-            <label className="block text-xs font-medium text-ink/70">標記</label>
-            <select name="marker_id" required className="mt-1 rounded-md border border-brand-200 px-2 py-1.5 text-sm">
-              <option value="">請選擇…</option>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="block text-xs font-medium text-ink/70">採檢日期（本次共用）</label>
+              <input
+                type="date"
+                name="sample_date"
+                defaultValue={new Date().toISOString().slice(0, 10)}
+                className="mt-1 rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+              />
+            </div>
+            <div className="min-w-[160px] flex-1">
+              <label className="block text-xs font-medium text-ink/70">備註（套用到本次所有項目）</label>
+              <input name="note" className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm" />
+            </div>
+          </div>
+
+          {(labMarkers ?? []).length > 0 ? (
+            <div className="grid grid-cols-3 gap-x-3 gap-y-2 sm:grid-cols-4 lg:grid-cols-6">
               {(labMarkers ?? []).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.display_name}
-                  {m.unit ? `（${m.unit}）` : ""}
-                </option>
+                <div key={m.id}>
+                  <label className="block truncate text-xs font-medium text-ink/70" title={m.display_name}>
+                    {m.display_name}
+                  </label>
+                  {m.unit && <span className="block text-[10px] text-ink/40">{m.unit}</span>}
+                  <input
+                    name={`value__${m.id}`}
+                    inputMode="decimal"
+                    placeholder="—"
+                    className="mt-0.5 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+                  />
+                </div>
               ))}
-            </select>
+            </div>
+          ) : (
+            <p className="text-xs text-ink/40">後台「Lab 生物標記清單」尚未建立任何標記。</p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <SubmitButton variant="outline" pendingText="儲存中…">
+              儲存本次檢驗
+            </SubmitButton>
+            <span className="text-xs text-ink/40">沒驗到的項目留空即可（可 null），只有填了值的項目會被記錄。</span>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-ink/70">採檢日期</label>
-            <input
-              type="date"
-              name="sample_date"
-              defaultValue={new Date().toISOString().slice(0, 10)}
-              className="mt-1 rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-ink/70">數值</label>
-            <input name="value" placeholder="例如 12.5 或 <0.35" className="mt-1 w-32 rounded-md border border-brand-200 px-2 py-1.5 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-ink/70">備註</label>
-            <input name="note" className="mt-1 rounded-md border border-brand-200 px-2 py-1.5 text-sm" />
-          </div>
-          <SubmitButton variant="outline" pendingText="新增中…">
-            新增
-          </SubmitButton>
         </form>
         <ul className="divide-y divide-brand-50">
           {(labResults ?? []).map((r) => {
@@ -875,6 +908,18 @@ export default async function CaseDetailPage({
                 <span className="whitespace-nowrap text-xs text-ink/40">{r.sample_date}</span>
                 {r.note && <span className="text-xs text-ink/40">・{r.note}</span>}
                 <span className="whitespace-nowrap text-xs text-ink/20">・{r.recorded_by}</span>
+                <form action={deleteLabResultAction} className="ml-auto">
+                  <input type="hidden" name="case_id" value={id} />
+                  <input type="hidden" name="result_id" value={r.id} />
+                  <SubmitButton
+                    variant="ghost"
+                    size="sm"
+                    className="!px-0 !py-0 text-xs text-red-400 underline hover:!bg-transparent"
+                    pendingText="刪除中…"
+                  >
+                    刪除
+                  </SubmitButton>
+                </form>
               </li>
             );
           })}
@@ -939,6 +984,143 @@ export default async function CaseDetailPage({
             更新追蹤結果
           </SubmitButton>
         </form>
+      </section>
+
+      {/* 問卷填寫 */}
+      <section id="section-responses" data-nav-section data-nav-label="問卷填寫" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-ink/80">
+            問卷填寫
+            <InfoTooltip text="上半部是這個個案該填的問卷清單（哪些問卷正式上線需填寫，於後台「問卷產生器」勾選），已填的會打勾；下半部是歷次送出的回覆與計分。點問卷名稱即可填寫，不需等到排定的追蹤時間點。" />
+          </h2>
+          <Link
+            href={`/patient/${id}/questionnaire`}
+            className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
+          >
+            填寫其他問卷
+          </Link>
+        </div>
+
+        <div className="mb-4 rounded-md border border-brand-100 bg-paper-raised p-3">
+          <h3 className="mb-1.5 flex flex-wrap items-center gap-2 text-xs font-semibold text-ink/60">
+            應填問卷清單
+            <span className="font-data font-normal text-ink/40">
+              已完成 {requiredQuestionnaires.filter((q) => q.done).length}/{requiredQuestionnaires.length}
+            </span>
+          </h3>
+          <ul className="space-y-1">
+            {requiredQuestionnaires.map((q) => (
+              <li key={q.id} className="flex flex-wrap items-center gap-2 rounded-md bg-white px-3 py-1.5 text-sm">
+                <Link href={`/patient/${id}/questionnaire?questionnaire_id=${q.id}`} className="text-brand-800 hover:underline">
+                  {q.name}
+                </Link>
+                {q.done ? (
+                  <>
+                    <span className="whitespace-nowrap rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">
+                      ✓ 已完成
+                    </span>
+                    <span className="whitespace-nowrap text-xs text-ink/40">
+                      {new Date(q.done.latest).toLocaleDateString("zh-TW")}
+                      {q.done.count > 1 && ` ・共 ${q.done.count} 次`}
+                    </span>
+                  </>
+                ) : (
+                  <span className="whitespace-nowrap rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700">未完成</span>
+                )}
+              </li>
+            ))}
+            {requiredQuestionnaires.length === 0 && (
+              <li className="text-xs text-ink/40">
+                後台尚未指定任何「正式上線需填寫」的問卷（至「問卷產生器」勾選）。
+              </li>
+            )}
+          </ul>
+        </div>
+
+        <h3 className="mb-1.5 text-xs font-semibold text-ink/60">歷次回覆紀錄</h3>
+        <ul className="space-y-2">
+          {(responses ?? []).map((r) => {
+            const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
+            const answers = extractAnswers(r);
+            const isSF36 = q?.name === "SF-36 健康調查簡表";
+            const isPSQI = q?.name === "匹茲堡睡眠品質量表（PSQI）";
+            const isJSSClassification = q?.name === "JSS 疤痕診斷分類表";
+            return (
+              <li key={r.id} className="rounded-md border border-brand-50 p-2 text-sm text-ink/70">
+                <div>
+                  {new Date(r.submitted_at).toLocaleString("zh-TW")} ・ {q?.name} ・ 填寫人：
+                  {r.submitted_via === "line_sim" ? "舊LINE路徑（已停用）" : "診間人員"}
+                </div>
+                {isSF36 && (
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {computeSF36(answers).scales.map((s) => (
+                      <span key={s.key} className="whitespace-nowrap rounded bg-sky-50 px-2 py-0.5 text-xs text-sky-700">
+                        {s.label}：{s.score ?? "—"}
+                        {s.answeredCount < s.totalItems && <span className="text-sky-400">（{s.answeredCount}/{s.totalItems}題）</span>}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {isPSQI &&
+                  (() => {
+                    const psqi = computePSQI(answers);
+                    return (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        {psqi.components.map((c) => (
+                          <span key={c.key} className="whitespace-nowrap rounded bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">
+                            {c.label}：{c.score ?? "—"}
+                          </span>
+                        ))}
+                        <span
+                          className={`whitespace-nowrap rounded px-2 py-0.5 text-xs font-medium ${
+                            psqi.global === null
+                              ? "bg-ink/10 text-ink/40"
+                              : psqi.poorSleep
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-emerald-100 text-emerald-700"
+                          }`}
+                        >
+                          總分：{psqi.global ?? "資料不足"}
+                          {psqi.global !== null && `（${psqi.poorSleep ? "睡眠品質不佳" : "睡眠品質尚可"}）`}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                {isJSSClassification &&
+                  (() => {
+                    const result = computeJSSClassification(answers);
+                    // 同一份量表重複施測，第二次以後會附上跟初次總分相比的 Delta Score
+                    const delta = jssDeltaById.get(r.id);
+                    return (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        {result ? (
+                          <span className="whitespace-nowrap rounded bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">
+                            JSS 總分 {result.total} / 25
+                          </span>
+                        ) : (
+                          <span className="text-xs text-ink/40">資料不足，無法計分</span>
+                        )}
+                        {delta !== undefined && (
+                          <span
+                            className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
+                              delta > 0
+                                ? "bg-emerald-100 text-emerald-700"
+                                : delta < 0
+                                ? "bg-red-100 text-red-700"
+                                : "bg-ink/10 text-ink/50"
+                            }`}
+                          >
+                            Delta Score：{delta > 0 ? `+${delta}` : delta}（較初次{delta > 0 ? "改善" : delta < 0 ? "惡化" : "持平"}）
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
+              </li>
+            );
+          })}
+          {(!responses || responses.length === 0) && <li className="text-sm text-ink/40">尚無問卷回覆</li>}
+        </ul>
       </section>
 
       {/* 追蹤時程 */}
@@ -1042,160 +1224,6 @@ export default async function CaseDetailPage({
         </ul>
       </section>
 
-      {/* 問卷回覆 */}
-      <section id="section-responses" data-nav-section data-nav-label="問卷回覆紀錄" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-ink/80">
-            問卷回覆紀錄
-            <InfoTooltip text="顯示此個案已送出的問卷回覆（如 VSS 量表）。點右上「填寫問卷」可隨時新增，不需等到排定的追蹤時間點。" />
-          </h2>
-          <Link
-            href={`/patient/${id}/questionnaire`}
-            className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
-          >
-            填寫問卷
-          </Link>
-        </div>
-        <ul className="space-y-2">
-          {(responses ?? []).map((r) => {
-            const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
-            const answers = extractAnswers(r);
-            const isSF36 = q?.name === "SF-36 健康調查簡表";
-            const isPSQI = q?.name === "匹茲堡睡眠品質量表（PSQI）";
-            const isJSSClassification = q?.name === "JSS 疤痕診斷分類表";
-            return (
-              <li key={r.id} className="rounded-md border border-brand-50 p-2 text-sm text-ink/70">
-                <div>
-                  {new Date(r.submitted_at).toLocaleString("zh-TW")} ・ {q?.name} ・ 填寫人：
-                  {r.submitted_via === "line_sim" ? "舊LINE路徑（已停用）" : "診間人員"}
-                </div>
-                {isSF36 && (
-                  <div className="mt-1 flex flex-wrap gap-2">
-                    {computeSF36(answers).scales.map((s) => (
-                      <span key={s.key} className="whitespace-nowrap rounded bg-sky-50 px-2 py-0.5 text-xs text-sky-700">
-                        {s.label}：{s.score ?? "—"}
-                        {s.answeredCount < s.totalItems && <span className="text-sky-400">（{s.answeredCount}/{s.totalItems}題）</span>}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {isPSQI &&
-                  (() => {
-                    const psqi = computePSQI(answers);
-                    return (
-                      <div className="mt-1 flex flex-wrap items-center gap-2">
-                        {psqi.components.map((c) => (
-                          <span key={c.key} className="whitespace-nowrap rounded bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">
-                            {c.label}：{c.score ?? "—"}
-                          </span>
-                        ))}
-                        <span
-                          className={`whitespace-nowrap rounded px-2 py-0.5 text-xs font-medium ${
-                            psqi.global === null
-                              ? "bg-ink/10 text-ink/40"
-                              : psqi.poorSleep
-                              ? "bg-amber-100 text-amber-700"
-                              : "bg-emerald-100 text-emerald-700"
-                          }`}
-                        >
-                          總分：{psqi.global ?? "資料不足"}
-                          {psqi.global !== null && `（${psqi.poorSleep ? "睡眠品質不佳" : "睡眠品質尚可"}）`}
-                        </span>
-                      </div>
-                    );
-                  })()}
-                {isJSSClassification &&
-                  (() => {
-                    const result = computeJSSClassification(answers);
-                    // 同一份量表重複施測，第二次以後會附上跟初次總分相比的 Delta Score
-                    const delta = jssDeltaById.get(r.id);
-                    return (
-                      <div className="mt-1 flex flex-wrap items-center gap-2">
-                        {result ? (
-                          <span className="whitespace-nowrap rounded bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">
-                            JSS 總分 {result.total} / 25
-                          </span>
-                        ) : (
-                          <span className="text-xs text-ink/40">資料不足，無法計分</span>
-                        )}
-                        {delta !== undefined && (
-                          <span
-                            className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
-                              delta > 0
-                                ? "bg-emerald-100 text-emerald-700"
-                                : delta < 0
-                                ? "bg-red-100 text-red-700"
-                                : "bg-ink/10 text-ink/50"
-                            }`}
-                          >
-                            Delta Score：{delta > 0 ? `+${delta}` : delta}（較初次{delta > 0 ? "改善" : delta < 0 ? "惡化" : "持平"}）
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })()}
-              </li>
-            );
-          })}
-          {(!responses || responses.length === 0) && <li className="text-sm text-ink/40">尚無問卷回覆</li>}
-        </ul>
-      </section>
-
-      {/* 照片（依病灶部位分組，病灶清單可用錨點直接跳到對應群組） */}
-      <section id="section-photos" data-nav-section data-nav-label="傷口照片" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-ink/80">
-            傷口照片
-            <InfoTooltip text="依病灶部位分組顯示已上傳的照片。要新增照片可點右上「拍照」，或在上方病灶清單點該部位的「拍這個部位」。" />
-          </h2>
-          <Link
-            href={`/patient/${id}/photo`}
-            className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
-          >
-            拍照
-          </Link>
-        </div>
-        <div className="space-y-4">
-          {photoGroups.map((g) => (
-            <div key={g.key} id={g.anchor} className="scroll-mt-4">
-              <div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
-                <span className="font-semibold text-ink/70">{g.title}</span>
-                <span className="text-ink/40">{g.photos.length} 張</span>
-                {g.key !== "unassigned" && (
-                  <Link href={`/patient/${id}/photo?lesion_id=${g.key}`} className="text-brand-700 underline">
-                    拍這個部位
-                  </Link>
-                )}
-              </div>
-              {g.photos.length === 0 ? (
-                <p className="text-xs text-ink/30">尚無照片</p>
-              ) : (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                  {g.photos.map((p) => (
-                    <div key={p.id} className="group relative overflow-hidden rounded-lg border border-brand-100 bg-ink/5">
-                      <a href={p.imageUrl} target="_blank" rel="noreferrer">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={p.thumbUrl}
-                          alt={p.body_site ?? "傷口照片"}
-                          loading="lazy"
-                          className="aspect-square w-full object-cover transition-opacity group-hover:opacity-90"
-                        />
-                        <div className="p-2 text-xs text-ink/60">
-                          <div className="truncate">{p.body_site ?? "—"}</div>
-                          <div className="text-ink/40">{new Date(p.taken_at).toLocaleDateString("zh-TW")}</div>
-                        </div>
-                      </a>
-                      <DeletePhotoButton caseId={id} photoId={p.id} />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-          {photoGroups.length === 0 && <p className="text-sm text-ink/40">尚無照片</p>}
-        </div>
-      </section>
     </div>
   );
 }

@@ -4,12 +4,21 @@ import { useState } from "react";
 import Link from "next/link";
 import BodyDiagram from "@/components/BodyDiagram";
 import SubmitButton from "@/components/ui/SubmitButton";
+import DeletePhotoButton from "./DeletePhotoButton";
 import { DOSE_CATEGORY_LABEL, BODY_VIEW_LABEL, type BodyView } from "@/lib/bodyZones";
 import { addKeloidLesionAction, deleteKeloidLesionAction, updateKeloidLesionZoneAction } from "./actions";
 
 type Zone = { id: string; zone_key: string; view: BodyView; display_name: string; dose_category: string };
 
 const VIEW_ORDER: BodyView[] = ["front", "back", "head"];
+
+export type LesionPhoto = {
+  id: string;
+  taken_at: string;
+  body_site: string | null;
+  imageUrl: string;
+  thumbUrl: string;
+};
 
 type Lesion = {
   id: string;
@@ -28,19 +37,53 @@ function formatSize(l: Lesion) {
   return `${l.length_cm ?? "—"} x ${l.width_cm ?? "—"} x ${l.height_cm ?? "—"} cm`;
 }
 
+// 每個部位的照片縮圖列（決策 2026-07-28：取消獨立的「傷口照片」card，縮圖直接長在部位底下）。
+function PhotoStrip({ caseId, photos }: { caseId: string; photos: LesionPhoto[] }) {
+  if (photos.length === 0) {
+    return <p className="mt-1 text-[11px] text-ink/30">尚無照片</p>;
+  }
+  return (
+    <div className="mt-1.5 flex gap-2 overflow-x-auto pb-1">
+      {photos.map((p) => (
+        <div
+          key={p.id}
+          className="group relative w-20 shrink-0 overflow-hidden rounded-md border border-brand-100 bg-ink/5"
+        >
+          <a href={p.imageUrl} target="_blank" rel="noreferrer">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={p.thumbUrl}
+              alt={p.body_site ?? "傷口照片"}
+              loading="lazy"
+              className="aspect-square w-full object-cover transition-opacity group-hover:opacity-90"
+            />
+            <div className="px-1 py-0.5 text-center text-[10px] text-ink/40">
+              {new Date(p.taken_at).toLocaleDateString("zh-TW")}
+            </div>
+          </a>
+          <DeletePhotoButton caseId={caseId} photoId={p.id} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function KeloidLesionSection({
   caseId,
   lesions,
   zones,
   sex,
-  photoCounts,
+  photosByLesion,
+  unassignedPhotos = [],
 }: {
   caseId: string;
   lesions: Lesion[];
   zones: Zone[];
   sex?: string | null;
-  /** 各病灶已拍照張數（key = lesion id），供「照片 N 張」連結顯示 */
-  photoCounts: Record<string, number>;
+  /** 各病灶的照片（key = lesion id），縮圖直接顯示在該部位底下 */
+  photosByLesion: Record<string, LesionPhoto[]>;
+  /** 尚未掛到任何部位的舊照片（新拍的照片一律會掛到部位，見 uploadPhotoAction） */
+  unassignedPhotos?: LesionPhoto[];
 }) {
   // 人形圖點選的部位：同時決定新病灶的名稱（可再改）與部位分類（決定放療劑量方案）
   const [pickedZone, setPickedZone] = useState<Zone | null>(null);
@@ -75,10 +118,7 @@ export default function KeloidLesionSection({
                   {l.note && <span className="ml-2 text-xs text-ink/40">（{l.note}）</span>}
                 </span>
                 <span className="flex items-center gap-2 text-xs">
-                  {/* 跳到下方「傷口照片」區塊中這個部位的照片群組 */}
-                  <a href={`#photos-lesion-${l.id}`} className="whitespace-nowrap text-brand-700 underline">
-                    🖼 照片 {photoCounts[l.id] ?? 0} 張
-                  </a>
+                  <span className="whitespace-nowrap text-ink/40">🖼 {(photosByLesion[l.id] ?? []).length} 張</span>
                   <Link
                     href={`/patient/${caseId}/photo?lesion_id=${l.id}`}
                     className="whitespace-nowrap rounded border border-brand-200 px-1.5 py-0.5 text-brand-700 hover:bg-brand-50"
@@ -135,10 +175,19 @@ export default function KeloidLesionSection({
                   儲存
                 </SubmitButton>
               </form>
+              <PhotoStrip caseId={caseId} photos={photosByLesion[l.id] ?? []} />
             </li>
           );
         })}
         {lesions.length === 0 && <li className="text-xs text-ink/40">尚無病灶紀錄，請在下方人形圖點選部位新增</li>}
+        {unassignedPhotos.length > 0 && (
+          <li className="rounded-md border border-dashed border-amber-200 px-3 py-1.5 text-sm">
+            <span className="text-xs text-amber-700">
+              未對應部位的照片 {unassignedPhotos.length} 張（新拍的照片都會自動掛到部位，這些是舊資料）
+            </span>
+            <PhotoStrip caseId={caseId} photos={unassignedPhotos} />
+          </li>
+        )}
       </ul>
 
       <div className="mt-3 space-y-2">
@@ -179,6 +228,16 @@ export default function KeloidLesionSection({
           <SubmitButton variant="outline" size="sm" pendingText="新增中…">
             ＋ 新增病灶
           </SubmitButton>
+          {/* 點了人形圖就能直接去拍這個部位：拍照頁會跳到該部位的相機，
+              上傳時自動對應（或建立）這個部位，照片一定掛得上部位。 */}
+          {pickedZone && (
+            <Link
+              href={`/patient/${caseId}/photo?zone_key=${pickedZone.zone_key}`}
+              className="whitespace-nowrap rounded border border-brand-200 px-2 py-1 text-xs text-brand-700 hover:bg-brand-50"
+            >
+              📷 直接拍「{pickedZone.display_name}」
+            </Link>
+          )}
         </form>
         <p className="text-[11px] text-ink/40">
           部位名稱預設帶入人形圖區塊名稱，可再改成更精確的描述（例：「耳」改成「左耳垂」），部位分類仍沿用點選的區塊。
