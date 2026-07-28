@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Noto_Serif_TC, Noto_Sans_TC, IBM_Plex_Mono } from "next/font/google";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import AppHeader from "@/components/AppHeader";
+import { getCurrentOperatorContext } from "@/lib/operator";
 import BackToTopButton from "@/components/BackToTopButton";
 import { LocalNameProvider } from "@/components/LocalNameProvider";
 import "./globals.css";
@@ -37,6 +38,15 @@ export default async function RootLayout({
   const cookieStore = await cookies();
   const session = cookieStore.get("keloid_session")?.value;
   const operator = cookieStore.get("keloid_operator")?.value;
+  const signedIn = session === "ok" && Boolean(operator);
+
+  // 病人自填頁是要交到病人手上的全螢幕介面：不渲染導覽列，也不套 max-w-6xl 的內距，
+  // 免得長輩誤觸跑到別的地方，畫面也才留得住給大字級與大按鈕。
+  const pathname = (await headers()).get("x-pathname") ?? "";
+  const isPatientIntake = /^\/patient\/[^/]+\/intake(\/|$)/.test(pathname);
+
+  // landing_mode 決定 header 要給哪一組導覽（見 lib/operator.ts）
+  const operatorContext = signedIn && !isPatientIntake ? await getCurrentOperatorContext() : null;
 
   return (
     <html
@@ -46,12 +56,12 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col font-body text-ink">
         {/* 姓名只在瀏覽器端從本機對照表讀出後注入畫面，伺服器渲染的內容永遠不含姓名 */}
         <LocalNameProvider>
-          {session === "ok" && operator && <AppHeader operator={operator} />}
-          <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
+          {operatorContext && <AppHeader operator={operatorContext.name} landingMode={operatorContext.landingMode} />}
+          <main className={isPatientIntake ? "flex-1" : "mx-auto w-full max-w-6xl flex-1 px-4 py-6"}>
             {children}
           </main>
         </LocalNameProvider>
-        <BackToTopButton />
+        {!isPatientIntake && <BackToTopButton />}
       </body>
     </html>
   );
