@@ -115,15 +115,30 @@ export interface MrnMappingRow {
   name: string;
 }
 
-export async function readAllRows(handle: FileSystemFileHandle): Promise<MrnMappingRow[]> {
-  const file = await handle.getFile();
-  const text = await file.text();
+function parseRows(text: string): MrnMappingRow[] {
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length <= 1) return [];
   return lines.slice(1).map((line) => {
     const [mrn, research_id, case_id, created_at, name] = parseCsvLine(line);
     return { mrn, research_id, case_id, created_at, name: name ?? "" };
   });
+}
+
+export async function readAllRows(handle: FileSystemFileHandle): Promise<MrnMappingRow[]> {
+  const file = await handle.getFile();
+  return parseRows(await file.text());
+}
+
+/**
+ * 開發用逃生口：直接從 <input type="file"> 拿到的 File 讀出對照表。
+ *
+ * 跟 readAllRows 的差別是**沒有 handle**——因此讀完就結束，無法寫回、也無法在下次
+ * 開啟頁面時自動重讀。呼叫端只能把結果放在記憶體（見 LocalNameProvider 的 mountFromFile），
+ * **絕對不要寫進 IndexedDB／localStorage**：行動裝置是要交到病人手上的那一台，
+ * 病歷號與姓名不該在上面落地（見 pending.md C1b）。
+ */
+export async function readRowsFromFile(file: File): Promise<MrnMappingRow[]> {
+  return parseRows(await file.text());
 }
 
 // 新增一筆病歷號-研究編號對應，附加到本機檔案末端（保留既有內容）。

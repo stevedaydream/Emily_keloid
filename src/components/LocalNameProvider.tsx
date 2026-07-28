@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { getConfiguredHandle, readAllRows } from "@/lib/localMrnStore";
+import { getConfiguredHandle, readAllRows, readRowsFromFile } from "@/lib/localMrnStore";
 
 // 病人姓名只存在本機對照表檔案裡（決策 #1：雲端只有研究編號）。
 // 這個 Provider 在瀏覽器端把本機 CSV 讀成 research_id -> 姓名 的對照，供各頁面注入畫面；
@@ -20,6 +20,12 @@ type LocalNameContextValue = {
   toggleShowNames: () => void;
   /** 重新讀取本機檔案（新增個案寫入後呼叫） */
   reload: () => Promise<void>;
+  /** 這位操作者是否開啟了「行動裝置唯讀掛載」的開發旗標（operators.dev_mobile_mapping） */
+  devMobileMapping: boolean;
+  /** 目前的對照表是不是用開發逃生口掛的：唯讀、僅此工作階段、重整就沒 */
+  sessionOnly: boolean;
+  /** 開發逃生口：從 <input type="file"> 的 File 讀進記憶體（不落地） */
+  mountFromFile: (file: File) => Promise<number>;
 };
 
 const LocalNameContext = createContext<LocalNameContextValue>({
@@ -28,12 +34,22 @@ const LocalNameContext = createContext<LocalNameContextValue>({
   showNames: true,
   toggleShowNames: () => {},
   reload: async () => {},
+  devMobileMapping: false,
+  sessionOnly: false,
+  mountFromFile: async () => 0,
 });
 
-export function LocalNameProvider({ children }: { children: React.ReactNode }) {
+export function LocalNameProvider({
+  children,
+  devMobileMapping = false,
+}: {
+  children: React.ReactNode;
+  devMobileMapping?: boolean;
+}) {
   const [names, setNames] = useState<Map<string, string>>(new Map());
   const [linked, setLinked] = useState(false);
   const [showNames, setShowNames] = useState(true);
+  const [sessionOnly, setSessionOnly] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -59,6 +75,17 @@ export function LocalNameProvider({ children }: { children: React.ReactNode }) {
     void reload();
   }, [reload]);
 
+  // 開發逃生口：只塞進 React state，重整就沒。刻意不寫 IndexedDB／localStorage，
+  // 因為行動裝置是要交到病人手上的那一台，病歷號與姓名不該在上面落地。
+  const mountFromFile = useCallback(async (file: File) => {
+    const rows = await readRowsFromFile(file);
+    const withNames = rows.filter((r) => r.name?.trim());
+    setNames(new Map(withNames.map((r) => [r.research_id.trim(), r.name.trim()])));
+    setLinked(true);
+    setSessionOnly(true);
+    return rows.length;
+  }, []);
+
   const toggleShowNames = useCallback(() => {
     setShowNames((prev) => {
       const next = !prev;
@@ -68,8 +95,8 @@ export function LocalNameProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ names, linked, showNames, toggleShowNames, reload }),
-    [names, linked, showNames, toggleShowNames, reload]
+    () => ({ names, linked, showNames, toggleShowNames, reload, devMobileMapping, sessionOnly, mountFromFile }),
+    [names, linked, showNames, toggleShowNames, reload, devMobileMapping, sessionOnly, mountFromFile]
   );
 
   return <LocalNameContext.Provider value={value}>{children}</LocalNameContext.Provider>;

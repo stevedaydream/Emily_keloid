@@ -9,13 +9,18 @@ import {
   openExistingMappingFile,
   requestHandlePermission,
   readAllRows,
+  readRowsFromFile,
   appendMappingRow,
   type MrnMappingRow,
 } from "@/lib/localMrnStore";
+import { useLocalNames } from "@/components/LocalNameProvider";
 import { lookupCaseIdByResearchId } from "./actions";
 
 export default function MrnMappingPage() {
+  const { devMobileMapping, mountFromFile } = useLocalNames();
   const [supported, setSupported] = useState(true);
+  // 開發逃生口掛上來的資料：唯讀、只在記憶體，重整就沒
+  const [sessionRows, setSessionRows] = useState<MrnMappingRow[] | null>(null);
   const [handle, setHandle] = useState<FileSystemFileHandle | null>(null);
   const [rows, setRows] = useState<MrnMappingRow[]>([]);
   const [q, setQ] = useState("");
@@ -117,8 +122,69 @@ export default function MrnMappingPage() {
 
   if (!supported) {
     return (
-      <div className="max-w-xl space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-        <p className="font-medium">這一頁需要在桌機上開啟</p>
+      <div className="max-w-xl space-y-4">
+        {/* 開發逃生口：唯讀掛載，只給後台勾了 dev_mobile_mapping 的操作者 */}
+        {devMobileMapping && (
+          <div className="space-y-2 rounded-lg border border-sky-300 bg-sky-50 p-4 text-sm text-sky-900">
+            <p className="font-medium">工程模式：唯讀掛載（僅此工作階段）</p>
+            <p>
+              選一份對照表 CSV，姓名就會顯示在各頁面，方便開發時對問題。
+              <b>只讀不寫、不會存進這台裝置</b>，重新整理或關掉分頁就沒了，也無法新增對應。
+            </p>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setError(null);
+                try {
+                  const total = await mountFromFile(file);
+                  setSessionRows(await readRowsFromFile(file));
+                  if (total === 0) setError("這份 CSV 沒有資料列（只有表頭或是空檔）");
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "讀取 CSV 失敗");
+                }
+              }}
+              className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-sky-600 file:px-3 file:py-2 file:text-white"
+            />
+            {sessionRows && (
+              <p className="text-sky-800">
+                ✓ 已讀入 {sessionRows.length} 筆，其中 {sessionRows.filter((r) => r.name?.trim()).length} 筆有姓名。
+              </p>
+            )}
+            {error && <p className="text-red-700">{error}</p>}
+            <p className="text-xs text-sky-700">
+              這是開發用的旗標（`operators.dev_mobile_mapping`），正式收案前請到「操作者清單」全部關掉。
+            </p>
+          </div>
+        )}
+
+        {sessionRows && sessionRows.length > 0 && (
+          <div className="overflow-x-auto rounded-lg border border-brand-100 bg-white">
+            <table className="w-full min-w-max text-sm">
+              <thead className="border-b border-brand-100 bg-brand-50/60 text-left text-xs text-ink/60">
+                <tr>
+                  <th className="whitespace-nowrap px-3 py-2 font-medium">病歷號</th>
+                  <th className="whitespace-nowrap px-3 py-2 font-medium">姓名</th>
+                  <th className="whitespace-nowrap px-3 py-2 font-medium">研究編號</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sessionRows.slice(0, 200).map((r, i) => (
+                  <tr key={i} className="border-b border-brand-50 last:border-0">
+                    <td className="whitespace-nowrap px-3 py-1.5 font-data">{r.mrn}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5">{r.name}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5 font-data">{r.research_id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        <p className="font-medium">這一頁的完整功能需要在桌機上開啟</p>
         <p>
           病歷號對照表是直接讀寫你電腦上的 CSV 檔，用的是瀏覽器的 File System Access API，
           <b>只有桌機版的 Chrome / Edge 有實作</b>。
@@ -130,6 +196,7 @@ export default function MrnMappingPage() {
         <p className="text-amber-700">
           請改用診間電腦開啟本頁。平板／公務機的用途是拍照與交給病人填寫問卷，那些都不需要對照表。
         </p>
+        </div>
       </div>
     );
   }

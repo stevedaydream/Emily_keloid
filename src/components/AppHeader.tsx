@@ -39,13 +39,19 @@ const NAV_LINKS: Record<LandingMode, { href: string; label: string }[]> = {
 
 // 姓名顯示開關：只有掛了本機對照表（linked）才有意義，沒掛的時候整顆隱藏。
 function ShowNamesToggle({ className = "" }: { className?: string }) {
-  const { linked, showNames, toggleShowNames } = useLocalNames();
+  const { linked, showNames, toggleShowNames, sessionOnly } = useLocalNames();
   if (!linked) return null;
   return (
     <button
       type="button"
       onClick={toggleShowNames}
-      title={showNames ? "目前顯示病人姓名（點擊隱藏）" : "目前隱藏病人姓名（點擊顯示）"}
+      title={
+        sessionOnly
+          ? "工程模式：對照表只讀進記憶體，重新整理就會消失"
+          : showNames
+          ? "目前顯示病人姓名（點擊隱藏）"
+          : "目前隱藏病人姓名（點擊顯示）"
+      }
       className={`whitespace-nowrap rounded-md border px-2 py-1 text-xs ${
         showNames
           ? "border-brand-300 bg-brand-50 text-brand-800"
@@ -53,6 +59,8 @@ function ShowNamesToggle({ className = "" }: { className?: string }) {
       } ${className}`}
     >
       {showNames ? "姓名：顯示中" : "姓名：已隱藏"}
+      {/* 工程模式掛的對照表重整就沒，標一下免得以為壞掉 */}
+      {sessionOnly && <span className="ml-1 text-sky-600">(暫)</span>}
     </button>
   );
 }
