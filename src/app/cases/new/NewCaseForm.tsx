@@ -147,7 +147,9 @@ export default function NewCaseForm({
       // 避免這些資料真的送出前，本機儲存這一步就先失敗。
       if (trimmedMrn || trimmedName) {
         if (!supported) {
-          throw new Error("此瀏覽器不支援本機檔案存取（需使用 Chrome 或 Edge），請改用不需病歷號對照的方式建立個案，或更換瀏覽器");
+          throw new Error(
+            "這台裝置沒辦法寫入本機對照表：病歷號/姓名要存到你電腦上的 CSV，需要桌機版 Chrome / Edge 的 File System Access API，手機與平板的瀏覽器（含 Android Chrome、iPad Safari）一律沒有這個功能。請改用診間電腦建檔，或先把病歷號與姓名留空、之後在電腦上補對照。"
+          );
         }
         if (!handle) {
           handle = await pickMappingFile();
@@ -235,7 +237,7 @@ export default function NewCaseForm({
         <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-ink/50">
           <span>
             {!supported
-              ? "此瀏覽器不支援本機檔案存取，需使用 Chrome 或 Edge"
+              ? "手機／平板無法寫入本機對照表（需桌機版 Chrome/Edge）。這兩欄請留空，改在診間電腦補。"
               : fileHandle
               ? "已設定本機對照表檔案"
               : "尚未設定本機對照表檔案（送出時會請你選擇）"}

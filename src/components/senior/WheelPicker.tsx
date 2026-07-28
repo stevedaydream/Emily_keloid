@@ -55,6 +55,12 @@ function Column({
         className="pointer-events-none absolute inset-x-0 z-10 rounded-lg border-2 border-brand-500"
         style={{ top: ITEM_HEIGHT, height: ITEM_HEIGHT }}
       />
+      {/* 對齊的數學：容器高 = ITEM_HEIGHT × VISIBLE，內容 = 上墊片 + 各項目 + 下墊片。
+          snap-center 把項目中心對到 snapport 中心（= 容器中心 84），項目 k 的中心在
+          內容座標 56 + k×56 + 28，所以 scrollTop = k×56——正好跟 effect 的 scrollTo
+          與 handleScroll 的 round(scrollTop/56) 一致，也跟高亮框（top=56、高 56）重合。
+          ⚠️ 不要加 scrollPaddingTop：那會把 snapport 上緣往下推，中心從 84 變 112，
+          每一項就會停在高亮框偏半格（28px）的位置。 */}
       <div
         ref={ref}
         onScroll={handleScroll}
@@ -62,7 +68,6 @@ function Column({
         aria-label={ariaLabel}
         tabIndex={0}
         className="h-full snap-y snap-mandatory overflow-y-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        style={{ scrollPaddingTop: ITEM_HEIGHT }}
       >
         {/* 上下各墊一格，第一個與最後一個項目才捲得到中間 */}
         <div style={{ height: ITEM_HEIGHT }} aria-hidden />

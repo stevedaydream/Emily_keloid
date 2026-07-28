@@ -2,7 +2,15 @@
 
 // 病歷號 <-> 研究編號對照表：全程只在瀏覽器本機執行，透過 File System Access API
 // 直接讀寫使用者選定的本機 CSV 檔案，這段程式碼「不會」對任何伺服器（含本平台的 Vercel/Supabase）
-// 發出任何網路請求，病歷號因此完全不會離開這台電腦。僅支援 Chrome / Edge（桌面版）。
+// 發出任何網路請求，病歷號因此完全不會離開這台電腦。
+//
+// ⚠️ 僅支援**桌機版** Chrome / Edge。手機與平板（Android Chrome、iPad Safari/Chrome）
+// 都沒有實作 File System Access API，那是瀏覽器本身的限制，不是權限設定問題。
+//
+// 刻意不做行動版的替代方案：用 <input type="file"> 是讀得到 CSV，但拿不到可持續的
+// handle，重新整理就沒了，要能用就得把「病歷號＋姓名」快取進該裝置的 IndexedDB——
+// 而平板是要交到病人手上的（見 pending.md C1b：Phase 0 沒有裝置隔離），
+// 等於在最不該留身分資料的裝置上留一份。所以行動裝置一律不掛對照表。
 
 const DB_NAME = "keloid-local-tools";
 const STORE_NAME = "handles";

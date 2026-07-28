@@ -117,8 +117,19 @@ export default function MrnMappingPage() {
 
   if (!supported) {
     return (
-      <div className="max-w-xl rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-        此瀏覽器不支援本機檔案存取功能（File System Access API），請改用 Chrome 或 Edge 開啟這一頁。
+      <div className="max-w-xl space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        <p className="font-medium">這一頁需要在桌機上開啟</p>
+        <p>
+          病歷號對照表是直接讀寫你電腦上的 CSV 檔，用的是瀏覽器的 File System Access API，
+          <b>只有桌機版的 Chrome / Edge 有實作</b>。
+        </p>
+        <p>
+          <b>手機與平板一律不支援</b>——包含 Android 版 Chrome 與 iPad 版 Safari/Chrome。
+          這不是權限沒開，是行動版瀏覽器根本沒有這個功能，開啟任何設定都沒有用。
+        </p>
+        <p className="text-amber-700">
+          請改用診間電腦開啟本頁。平板／公務機的用途是拍照與交給病人填寫問卷，那些都不需要對照表。
+        </p>
       </div>
     );
   }

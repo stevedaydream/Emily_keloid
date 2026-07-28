@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { BigChoice, BigMultiChoice, type BigChoiceOption } from "@/components/senior/BigChoice";
 import { TimeWheel, HoursWheel, YearWheel } from "@/components/senior/WheelPicker";
 import BigNumpad from "@/components/senior/BigNumpad";
@@ -91,6 +92,15 @@ export default function PatientIntakeFlow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
+  // 本次填寫已經建立的資料列 id。病人按「上一步」回頭改答案、再往前走一次時，
+  // 會再次跨越同一個段落邊界並重存——記住上次建的 id，重存時取代掉，
+  // 否則同一次收案會留下兩份同一份問卷的回覆／兩筆互相矛盾的選項紀錄。
+  const [savedIds, setSavedIds] = useState<{
+    history: string | null;
+    intakeOptions: (string | null)[];
+    sf36: string | null;
+    psqi: string | null;
+  }>({ history: null, intakeOptions: [], sf36: null, psqi: null });
 
   const setAnswer = (qid: string, value: string | string[]) => setAnswers((a) => ({ ...a, [qid]: value }));
 
@@ -266,22 +276,36 @@ export default function PatientIntakeFlow({
     if (segment === "basic") {
       await savePatientBasicAction(caseId, { sex, birthYear: birthYear || null, phone });
     } else if (segment === "history") {
-      await savePatientHistoryAction(caseId, {
+      const { recordId } = await savePatientHistoryAction(caseId, {
         familyHistory: familyDiseaseOptions.filter((o) => family.includes(o.id)).map((o) => o.label),
         familyHistoryUnknown: family.includes(UNKNOWN),
         keloidHistoryOptionIds: keloidHistory.filter((v) => v !== NONE && v !== UNKNOWN),
         onsetYear: onsetYear || null,
         priors,
+        replaceRecordId: savedIds.history,
       });
+      setSavedIds((s) => ({ ...s, history: recordId }));
     } else if (segment === "intake_options") {
-      await savePatientIntakeOptionsAction(caseId, {
+      const { recordIds } = await savePatientIntakeOptionsAction(caseId, {
         onsetCauseIds: onsetCause.filter((v) => v !== NONE && v !== UNKNOWN),
         referralIds: referral.filter((v) => v !== NONE && v !== UNKNOWN),
+        replaceRecordIds: savedIds.intakeOptions,
       });
+      setSavedIds((s) => ({ ...s, intakeOptions: recordIds }));
     } else if (segment === "sf36" && sf36) {
-      await savePatientQuestionnaireAction(caseId, "sf36", { questionnaireId: sf36.id, answers });
+      const { responseId } = await savePatientQuestionnaireAction(caseId, "sf36", {
+        questionnaireId: sf36.id,
+        answers,
+        replaceResponseId: savedIds.sf36,
+      });
+      setSavedIds((s) => ({ ...s, sf36: responseId }));
     } else if (segment === "psqi" && psqi) {
-      await savePatientQuestionnaireAction(caseId, "psqi", { questionnaireId: psqi.id, answers });
+      const { responseId } = await savePatientQuestionnaireAction(caseId, "psqi", {
+        questionnaireId: psqi.id,
+        answers,
+        replaceResponseId: savedIds.psqi,
+      });
+      setSavedIds((s) => ({ ...s, psqi: responseId }));
     }
   }
 
@@ -308,7 +332,7 @@ export default function PatientIntakeFlow({
   // ── 歡迎 / 完成畫面 ──────────────────────────────────────────
   if (finished || (index === null && allDone)) {
     return (
-      <Shell>
+      <Shell caseId={caseId}>
         <div className="text-center">
           <p className="text-6xl">✓</p>
           <h1 className="mt-4 text-3xl font-semibold text-ink">已經填完了</h1>
@@ -317,6 +341,8 @@ export default function PatientIntakeFlow({
             <br />
             請把平板交還給診間人員。
           </p>
+          {/* 人員拿回平板後要知道出口在哪；字級刻意小，病人不會特別注意 */}
+          <p className="mt-8 text-sm text-ink/35">診間人員：請按右上角「診間人員」返回系統</p>
         </div>
       </Shell>
     );
@@ -325,7 +351,7 @@ export default function PatientIntakeFlow({
   if (index === null) {
     const resuming = completedSegments.length > 0;
     return (
-      <Shell>
+      <Shell caseId={caseId}>
         <div>
           <h1 className="text-3xl font-semibold leading-snug text-ink">
             {resuming ? "接著填寫" : "請您填寫幾個問題"}
@@ -370,9 +396,10 @@ export default function PatientIntakeFlow({
   const segmentMeta = PATIENT_INTAKE_SEGMENTS.find((s) => s.key === screen.segment);
 
   return (
-    <Shell>
+    <Shell caseId={caseId}>
       <div className="flex min-h-[100dvh] flex-col">
-        <div className="pt-2">
+        {/* pr-24：右上角固定著「診間人員」出口，進度文字要讓開 */}
+        <div className="pt-2 pr-24">
           <div className="flex items-baseline justify-between text-base text-ink/50">
             <span>{segmentMeta?.label}</span>
             <span className="tabular-nums">
@@ -439,11 +466,68 @@ export default function PatientIntakeFlow({
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ caseId, children }: { caseId: string; children: React.ReactNode }) {
   return (
     <div className="min-h-[100dvh] bg-paper-raised">
+      <StaffExit caseId={caseId} />
       <div className="mx-auto flex min-h-[100dvh] max-w-xl flex-col justify-center px-5">{children}</div>
     </div>
+  );
+}
+
+/**
+ * 診間人員的出口（2026-07-29）。這條路由刻意不渲染導覽列，所以人員拿回平板後
+ * 需要一個回主畫面的路徑；但出口不能太顯眼——病人的手指就在螢幕上，而我們在
+ * Phase 0 決定不做裝置隔離（見 pending.md C1b），一按就會進到完整系統。
+ *
+ * 折衷：固定在右上角的小按鈕（病人填題時視線在題目與選項上，不會跑到這裡），
+ * 且要兩步——先點按鈕、再從選單挑目的地，避免誤觸就跳出。
+ */
+function StaffExit({ caseId }: { caseId: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="fixed right-2 top-2 z-40 rounded-md border border-brand-200 bg-white/90 px-2.5 py-1.5 text-xs text-ink/45 backdrop-blur hover:text-ink/70"
+      >
+        診間人員
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-4 sm:items-center" onClick={() => setOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-paper-raised p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-ink">離開填寫畫面</h2>
+            <p className="mt-1 text-sm text-ink/50">
+              病人已填的部分都存好了，之後可以從這裡接續。
+            </p>
+            <div className="mt-4 space-y-2">
+              <Link
+                href={`/cases/${caseId}`}
+                className="block rounded-xl bg-brand-700 px-4 py-3 text-center text-base font-medium text-white hover:bg-brand-800"
+              >
+                回到這位的個案頁
+              </Link>
+              <Link
+                href="/intake"
+                className="block rounded-xl border-2 border-brand-200 px-4 py-3 text-center text-base text-ink/80 hover:bg-brand-50"
+              >
+                回到收案頁
+              </Link>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="w-full rounded-xl px-4 py-3 text-center text-base text-ink/50 hover:bg-ink/5"
+              >
+                取消，繼續填寫
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
