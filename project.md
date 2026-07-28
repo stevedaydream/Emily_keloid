@@ -306,8 +306,20 @@
 - **一併清掉**：舊的 7 筆 demo 個案與其附屬資料、以及舊資料匯入示範批次（`legacy_import_rows`／`legacy_import_batches`；前者的 `committed_case_id` 是 NO ACTION 不會跟著 cascade，會擋住刪除）。後台設定清單（醫師/ICD/術語庫/問卷範本/時程範本/部位區塊/Lab標記/操作者/衛教資料庫/選單選項）全部保留。
 - **觀察到可利用的線索**：RT 的 Total Dose 剛好是 1800/1500/800 cGy 配 3/2/1 次，正好對應平台三種劑量方案（胸肩胛/其他/耳），之後要批次回推部位分類時可用這個當依據。
 
+**2026-07-28：用 RT 劑量批次回推部位分類（81 筆中的 71 筆）**
+
+兩個訊號互相驗證，**一致才自動套用**，衝突或判不出來的一律不猜：
+- **RT 劑量 → 劑量分類**（1800cGy×3＝胸/肩胛、800cGy×1＝耳、1500cGy×2＝其他）。這是實際治療紀錄，可信度高，但只給得出「分類」。
+- **部位英文文字 → 具體區塊**（含左右側）。決定人形圖上點哪一塊。關鍵字規則：ear/auricul/helix/lobe→耳、scapula→肩胛、shoulder/deltoid→肩、chest/sternal/precordi→前胸、abdom/umbilic→腹部、lumbar→下背，等等。
+
+結果：**A 自動套用 63 筆**（文字與劑量一致）、**B 需確認左右 8 筆**（文字有部位但沒寫左右或寫 bilateral，先套左側）、**C 衝突 7 筆**、**D 判不出來 3 筆**（C/D 共 10 筆保留未分類）。套用後分布：胸/肩胛 46、耳 19、其他 6；區塊以前胸 32、左耳 14、左肩 10 為大宗。
+
+**刻意不做的事**：一開始的版本在「文字判不出來」時會用同劑量分類的代表區塊（例如胸/肩胛→前胸）硬套，實測發現 `pubic keloid`（RT 用 1800cGy）會被標到前胸，人形圖上位置明顯錯誤。因為每筆病灶都有部位文字，文字判不出來就代表規則沒涵蓋那段描述，硬套等於用劑量蓋掉文字帶的資訊——已改為這種列一律留給人工。
+
 **仍未處理 / 待確認**：
-- 81 筆病灶都還沒指定部位分類（放療自動排程要用），需在個案頁逐筆補；可考慮用上面提到的 RT 劑量線索批次回推
+- **B 組 8 筆的左右側需人工確認**（原文是 `bilateral ear lobe`、`ear helix`、`bilateral scapular` 這類沒寫或雙側的描述，目前一律先套左側）
+- **C 組 7 筆文字與劑量衝突**，需臨床判讀哪個對：`R't scapular area`(RT=耳)、`left breast, chest and pubic area`(RT=其他)、`Left below axillary`(RT=胸肩胛)、`Abdomen keloid`(RT=胸肩胛)、`right upper arm`(RT=胸肩胛)、`postauricular region`(RT=其他)、`umbilical keloid`(RT=胸肩胛)
+- **D 組 3 筆判不出來**：`pubic area`、`left posterior keloid`、`pubic keloid`（人形圖目前沒有恥骨區塊，可能要在 `/admin` 的部位對照表新增，或歸到腹部）
 - 匯入的舊資料沒有 ICD 診斷、術語紀錄、問卷回覆、照片（舊表本來就沒有），所以收案一條龍平均只有 3.7/8
 - **兩支 migration 尚未套用**：`20260727160000_icd_cgh_bidirectional_mapping.sql`、`20260727170000_drop_jss_evaluation_questionnaire.sql`，需在 Supabase SQL Editor 依序執行
 - 有 4 筆先前手動新增的病灶沒有部位分類可回填（CHN-2026-001 左耳垂、CHN-2026-003 右耳垂、YAN-2026-005 左胸與右上背），需在個案頁病灶清單用下拉選單補指定，否則該部位不會自動排放療；連帶有 4 筆舊放療列（CHN-2026-001 一次、YAN-2026-005 三次）掛不到部位，會歸在放療區塊的「未指定部位」組
