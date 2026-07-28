@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Button from "@/components/ui/Button";
@@ -35,20 +35,30 @@ type Column = { key: keyof BatchCaseRow; label: string; kind: ColumnKind; width:
 
 // 預設只顯示最常補的欄位，一鍵展開才出現其餘欄位（18 欄在診間螢幕一定要左右捲，
 // 而批次補資料最痛苦的就是「往右捲填一格、往左捲確認這是誰」）。
+//
+// width 直接掛在 input/select 上而不是 <td>：表格是 auto layout，<td> 的寬度只是建議值，
+// 真正決定欄寬的是格子裡那個元件的寬度。手機上表格整體用 min-w-max 撐開後左右捲動，
+// 所以這裡的寬度要「放得下內容」而不是「擠進畫面」。
 const COMPACT_COLUMNS: Column[] = [
   { key: "sex", label: "性別", kind: "sex", width: "w-20" },
-  { key: "age_at_enrollment", label: "年齡", kind: "int", width: "w-16" },
-  { key: "phone_number", label: "手機", kind: "text", width: "w-32" },
-  { key: "consent_signed_at", label: "同意書日期", kind: "date", width: "w-36" },
+  // 年齡是 number input，Chrome 會在右側疊上上下箭頭，w-16 會把數字擠掉
+  { key: "age_at_enrollment", label: "年齡", kind: "int", width: "w-20" },
+  // 手機號碼 09xx-xxx-xxx 連同 padding 要 ~150px
+  { key: "phone_number", label: "手機", kind: "text", width: "w-40" },
+  { key: "consent_signed_at", label: "同意書日期", kind: "date", width: "w-40" },
   { key: "jsw_score", label: "JSW score", kind: "text", width: "w-28" },
 ];
 
 const EXTRA_COLUMNS: Column[] = [
   { key: "recurrence_status", label: "復發狀態", kind: "recurrence", width: "w-28" },
-  { key: "recurrence_date", label: "復發日期", kind: "date", width: "w-36" },
-  { key: "followup_cutoff_date", label: "最後追蹤日", kind: "date", width: "w-36" },
+  { key: "recurrence_date", label: "復發日期", kind: "date", width: "w-40" },
+  { key: "followup_cutoff_date", label: "最後追蹤日", kind: "date", width: "w-40" },
   { key: "notes", label: "備註", kind: "text", width: "w-48" },
 ];
+
+// number input 的上下箭頭會蓋掉右側數字，且只有 hover 時出現，欄位看起來就像被截斷。
+const NUMBER_INPUT_RESET =
+  "[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
 const SEX_OPTIONS = [
   { value: "", label: "未填" },
@@ -84,6 +94,44 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
   const [result, setResult] = useState<{ saved: number; errors: string[] } | null>(null);
 
   const columns = showAllColumns ? [...COMPACT_COLUMNS, ...EXTRA_COLUMNS] : COMPACT_COLUMNS;
+
+  // 92 筆一次載入不分頁，所以表格自己的左右捲軸落在整頁最底部——要往右捲一格，
+  // 得先把整頁滑到最下面。這裡另外放一條「代理捲軸」黏在螢幕最下方，跟表格雙向同步，
+  // 捲到哪一列都能直接拉。（表格本身仍可直接橫向捲動／觸控滑動，這條只是多一個入口。）
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const proxyRef = useRef<HTMLDivElement>(null);
+  const syncingRef = useRef(false);
+  const [scrollMetrics, setScrollMetrics] = useState({ scrollWidth: 0, clientWidth: 0 });
+  const overflowing = scrollMetrics.scrollWidth > scrollMetrics.clientWidth + 1;
+
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    const table = tableRef.current;
+    if (!scroller || !table) return;
+    // 量測放在 ResizeObserver 的 callback 裡（observe 後會立刻非同步回呼一次），
+    // 而不是 effect 本體直接 setState——後者會多一輪串聯 render。
+    const observer = new ResizeObserver(() =>
+      setScrollMetrics({ scrollWidth: table.scrollWidth, clientWidth: scroller.clientWidth })
+    );
+    observer.observe(table);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, []);
+
+  // 兩邊互相寫 scrollLeft 會來回觸發 scroll 事件，用一個旗標讓回聲那一次不做事
+  function syncScroll(from: "table" | "proxy") {
+    if (syncingRef.current) {
+      syncingRef.current = false;
+      return;
+    }
+    const scroller = scrollerRef.current;
+    const proxy = proxyRef.current;
+    if (!scroller || !proxy) return;
+    syncingRef.current = true;
+    if (from === "table") proxy.scrollLeft = scroller.scrollLeft;
+    else scroller.scrollLeft = proxy.scrollLeft;
+  }
 
   // 未儲存變更時，關掉分頁前給瀏覽器的提示（擋不了強制關閉整個瀏覽器，但擋得掉多數誤觸）
   useEffect(() => {
@@ -263,27 +311,33 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
         顯示 {filtered.length} / {rows.length} 筆
       </p>
 
-      <div className="overflow-x-auto rounded-lg border border-brand-100 bg-white">
-        <table className="w-full text-sm">
+      {/* min-w-max：表格取自己的自然寬度，容器負責左右捲動。
+          先前是 w-full，表格會被壓到容器寬度，欄位互相擠壓、文字換行，手機上尤其明顯。 */}
+      <div
+        ref={scrollerRef}
+        onScroll={() => syncScroll("table")}
+        className="overflow-x-auto rounded-lg border border-brand-100 bg-white"
+      >
+        <table ref={tableRef} className="w-full min-w-max text-sm">
           <thead className="border-b border-brand-100 bg-brand-50/60 text-left text-xs text-ink/60">
             <tr>
-              <th className="sticky left-0 z-10 bg-brand-50 px-3 py-2 font-medium">研究編號</th>
-              {withNames && <th className="px-3 py-2 font-medium">姓名</th>}
+              <th className="sticky left-0 z-10 whitespace-nowrap bg-brand-50 px-3 py-2 font-medium">研究編號</th>
+              {withNames && <th className="whitespace-nowrap px-3 py-2 font-medium">姓名</th>}
               {columns.map((c) => (
-                <th key={String(c.key)} className="px-3 py-2 font-medium">
+                <th key={String(c.key)} className="whitespace-nowrap px-3 py-2 font-medium">
                   {c.label}
                 </th>
               ))}
-              <th className="px-3 py-2 font-medium">部位</th>
+              <th className="whitespace-nowrap px-3 py-2 font-medium">部位</th>
               {showAllColumns && (
                 <>
-                  <th className="px-3 py-2 font-medium">治療</th>
-                  <th className="px-3 py-2 font-medium">照片</th>
-                  <th className="px-3 py-2 font-medium">待辦時程</th>
+                  <th className="whitespace-nowrap px-3 py-2 font-medium">治療</th>
+                  <th className="whitespace-nowrap px-3 py-2 font-medium">照片</th>
+                  <th className="whitespace-nowrap px-3 py-2 font-medium">待辦時程</th>
                 </>
               )}
-              <th className="px-3 py-2 font-medium">待補</th>
-              <th className="px-3 py-2 font-medium">詳細</th>
+              <th className="whitespace-nowrap px-3 py-2 font-medium">待補</th>
+              <th className="whitespace-nowrap px-3 py-2 font-medium">詳細</th>
             </tr>
           </thead>
           <tbody>
@@ -303,11 +357,11 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
                   const key = editKey(row.id, String(col.key));
                   const dirty = edits.has(key);
                   const value = valueOf(row, col.key);
-                  const cls = `w-full rounded border px-1.5 py-1 text-xs ${
-                    dirty ? "border-amber-400 bg-amber-50" : "border-brand-100"
-                  }`;
+                  const cls = `${col.width} max-w-none rounded border px-1.5 py-1 text-xs ${
+                    col.kind === "int" ? NUMBER_INPUT_RESET : ""
+                  } ${dirty ? "border-amber-400 bg-amber-50" : "border-brand-100"}`;
                   return (
-                    <td key={String(col.key)} className={`px-2 py-1 ${col.width}`}>
+                    <td key={String(col.key)} className="whitespace-nowrap px-2 py-1">
                       {col.kind === "sex" || col.kind === "recurrence" ? (
                         <select value={value} onChange={(e) => setValue(row, col.key, e.target.value)} className={cls}>
                           {(col.kind === "sex" ? SEX_OPTIONS : RECURRENCE_OPTIONS).map((o) => (
@@ -337,12 +391,12 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
                 </td>
                 {showAllColumns && (
                   <>
-                    <td className="px-3 py-1.5 text-center font-data text-xs text-ink/50">{row.treatmentCount}</td>
-                    <td className="px-3 py-1.5 text-center font-data text-xs text-ink/50">{row.photoCount}</td>
-                    <td className="px-3 py-1.5 text-center font-data text-xs text-ink/50">{row.pendingScheduleCount}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5 text-center font-data text-xs text-ink/50">{row.treatmentCount}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5 text-center font-data text-xs text-ink/50">{row.photoCount}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5 text-center font-data text-xs text-ink/50">{row.pendingScheduleCount}</td>
                   </>
                 )}
-                <td className="px-3 py-1.5 text-center">
+                <td className="whitespace-nowrap px-3 py-1.5 text-center">
                   {row.pendingCompletenessCount > 0 ? (
                     <span className="rounded bg-amber-100 px-1.5 py-0.5 font-data text-xs text-amber-700">
                       {row.pendingCompletenessCount}
@@ -372,6 +426,19 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
           </tbody>
         </table>
       </div>
+
+      {/* 黏在螢幕最下方的代理捲軸。sticky 的容器是外層那個 div，所以捲到表格範圍以外時
+          它會停在原位，不會一直懸浮在頁尾。用 overflow-x-scroll（不是 auto）讓拉桿恆常可見。 */}
+      {overflowing && (
+        <div
+          ref={proxyRef}
+          onScroll={() => syncScroll("proxy")}
+          aria-hidden
+          className="sticky bottom-0 z-30 -mt-3 overflow-x-scroll rounded-b-lg border-x border-b border-brand-100 bg-white/95 shadow-[0_-2px_6px_rgba(0,0,0,0.06)] backdrop-blur"
+        >
+          <div style={{ width: scrollMetrics.scrollWidth, height: 1 }} />
+        </div>
+      )}
 
       {drawerCaseId && <CaseDrawer caseId={drawerCaseId} onClose={() => setDrawerCaseId(null)} />}
     </div>

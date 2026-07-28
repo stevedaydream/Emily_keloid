@@ -874,7 +874,10 @@ export default async function CaseDetailPage({
                   <label className="block truncate text-xs font-medium text-ink/70" title={m.display_name}>
                     {m.display_name}
                   </label>
-                  {m.unit && <span className="block text-[10px] text-ink/40">{m.unit}</span>}
+                  {/* 單位那一行一律佔位（目前只有 Exosome 沒有單位）——條件渲染會讓沒單位的那一格
+                      少一行高度，輸入框就跟同一列其他格對不齊。
+                      佔位字元必須是不斷行空白 U+00A0：一般空白會被摺疊掉，那一行仍然是 0 高度。 */}
+                  <span className="block truncate text-[10px] text-ink/40">{m.unit || " "}</span>
                   <input
                     name={`value__${m.id}`}
                     inputMode="decimal"
