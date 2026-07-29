@@ -538,3 +538,65 @@ navbar 從 2 項變 4 項：今日門診／批次編輯／後台管理／資料�
 - `case_patient_intake_progress`（case_id, segment_key, filled_via, completed_at）
 - `case_intake_followups`（case_id, field_key, reason, patient_answer, status, staff_note…）
 - `questionnaire_responses.submitted_via` 與 `photos.uploaded_via` 的 CHECK 放寬，新增 `'patient'`（原本只允許 `line_sim` / `staff`，實測時就是被這個 constraint 擋下來才發現）
+
+---
+
+**2026-07-29：LINE 回診／放療提醒 ＋ 衛教機器人（平台端完成，等憑證上線）**
+
+Phase 1 的第一塊。沿用 2026-07-25 決策 #2 的 **GAS 轉接層**架構（使用者選擇），但把職責切得更清楚：
+
+```
+病人的 LINE ──webhook──> GAS ──x-line-relay-secret──> 平台 /api/line/*  ──> Supabase
+GAS 每日排程 ─────────> 平台 /api/line/reminders（拿名單）──> LINE push ──> 回報 ack
+```
+
+**GAS 只是薄轉接層**（收 webhook、呼叫 LINE API、每日觸發），所有業務判斷與資料讀寫都在平台——
+這樣邏輯留在有型別檢查與版控的地方，GAS 那份不到 200 行且幾乎不會改。
+**平台完全不持有 LINE 憑證**：channel access token 只在 GAS 的指令碼屬性裡，Vercel 這邊即使外洩也發不了訊息，
+也因此不需要 Vercel Cron。
+
+### 綁定：兩條路、同一組碼
+
+- 個案頁新增「LINE 提醒綁定」區塊（排在追蹤時程之前，因為要提醒的正是下面那些項目）。
+- **QR code**：內容是 LINE 的 `oaMessage` scheme，掃了會開啟與官方帳號的對話並**預填**「綁定 XXXXXX」，
+  病人只要按送出——長輩打錯字是綁定碼最大的失敗來源。QR 在伺服器端用 `qrcode` 套件產生，
+  不呼叫任何外部服務（綁定碼不會離開伺服器）。未設定 `LINE_OA_BASIC_ID` 時自動降級成只顯示綁定碼。
+- **綁定碼**：6 碼，字母表避開易混字元（沒有 0/O、1/I/L、2/Z、5/S、8/B），有效 72 小時，
+  綁定成功立刻清空。`line_bind_code` 與 `line_user_id` 各有部分唯一索引——前者避免兩人拿到同一組碼，
+  後者確保一支 LINE 只綁一個個案。
+- 病人**封鎖官方帳號（unfollow）自動解除綁定**，否則那個 user id 會卡住唯一索引、換手機後綁不回來。
+  人員也可在個案頁手動解除。
+
+### 提醒：重跑不會重複推
+
+- `line_reminder_log` 對 `(kind, ref_id, due_date)` 建**只約束成功紀錄**的唯一索引。排程重跑、手動再執行、
+  GAS 逾時重試都不會讓病人收到第二則；失敗的留紀錄並在下次自然重試。
+- **回診提醒補推、放療提醒不補推**：回診逾期了提醒仍有意義（`due_date <= 今天`）；放療是當天的事，
+  隔天才推只會造成困惑（`due_date = 今天`）。
+- **訊息不含任何可識別資訊**——沒有研究編號、部位、病歷號。LINE 訊息可能被家人看到，也會出現在鎖定畫面通知。
+
+### 衛教機器人
+
+- 走既有的 `src/lib/gemini.ts` 與後台「衛教資料庫」，**不帶入任何個案資料**（決策 2026-07-26：
+  不用免費層做個人化諮詢）。資料庫沒涵蓋的問題一律回「請洽詢診間人員」。
+- 用 reply token 回覆，**不佔官方帳號的推播額度**。
+
+### 實測（不需要真實 LINE 憑證的部分全部跑過）
+
+用真實資料庫走完一輪並還原：產生綁定碼 → 模擬病人送出 → `line_bound` / `line_user_id` 寫入 →
+提醒清單撈到該個案的「第3個月」回診 → 回報 ack → **再查同一天變 0 筆**（不會重複推）→
+重複回報被唯一索引擋下（`recorded:0`）→ unfollow 解除綁定。另外驗證了：未帶密鑰回 401、
+中文前綴「綁定 XXXXXX」與純 6 碼都認得、已綁的 LINE 帳號再送碼會被擋、QR 產生為 320px 的 data URL。
+
+### 檔案
+
+- `src/lib/line.ts`（綁定碼、深層連結、訊息文案、`collectDueReminders`）
+- `src/app/api/line/{message,event,reminders}/route.ts`（GAS 呼叫的三支端點，`_auth.ts` 驗證共用密鑰）
+- `src/app/cases/[id]/LineBindingSection.tsx` ＋ `generateLineBindCodeAction` / `unbindLineAction`
+- `gas/line-relay.gs`（貼到 Google Apps Script 的轉接層）、`gas/README.md`（上線步驟）
+- migration `20260729010000_line_binding_and_reminders.sql`
+- `src/proxy.ts` 放行 `/api/line`（GAS 不是瀏覽器、沒有 session cookie）
+
+**還沒能做的**：LINE Messaging API channel 尚未建立（使用者已有官方帳號但還沒開 Messaging API），
+所以真實收發訊息、每日排程實際推播都還沒測。步驟寫在 `gas/README.md`，環境變數 `LINE_RELAY_SECRET`
+與 `LINE_OA_BASIC_ID` 已在 `.env.local` 預留（本機那組 secret 是開發用，正式請更換）。
