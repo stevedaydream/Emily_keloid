@@ -734,6 +734,47 @@ export async function addKeloidLesionAction(formData: FormData) {
 }
 
 // 指定/更換某個病灶的部位分類（決定該部位自己的放療劑量方案）。
+// 就地編輯部位的名稱／尺寸／備註。刻意跟「刪除後重建」區隔：重建會讓已綁定的照片
+// 掉成「未對應部位」（photos.lesion_id 是 on delete set null）、該部位的放療排程被刪、
+// 而且 site_no 會拿新號碼造成跳號。改用 update 就完全不動這三者。
+// site_no 不開放修改：照片的 body_site 當初就寫死「部位N ○○」的文字，改編號會讓舊照片的標籤對不上。
+export async function updateKeloidLesionAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const lesionId = formData.get("lesion_id") as string;
+  const bodySite = (formData.get("body_site") as string)?.trim();
+  const lengthRaw = (formData.get("length_cm") as string)?.trim();
+  const widthRaw = (formData.get("width_cm") as string)?.trim();
+  const heightRaw = (formData.get("height_cm") as string)?.trim();
+  const note = (formData.get("note") as string)?.trim() || null;
+  if (!bodySite) return;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  await supabase
+    .from("case_keloid_lesions")
+    .update({
+      body_site: bodySite,
+      length_cm: lengthRaw ? Number(lengthRaw) : null,
+      width_cm: widthRaw ? Number(widthRaw) : null,
+      height_cm: heightRaw ? Number(heightRaw) : null,
+      note,
+    })
+    .eq("id", lesionId);
+
+  // cases.body_site 是病灶清單的去正規化摘要，改名後要跟著更新
+  await syncCaseBodySite(supabase, caseId);
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "update_keloid_lesion",
+    entity: "case_keloid_lesions",
+    entityId: lesionId,
+    detail: { bodySite },
+  });
+  revalidatePath(`/cases/${caseId}`);
+}
+
 export async function updateKeloidLesionZoneAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
   const lesionId = formData.get("lesion_id") as string;
