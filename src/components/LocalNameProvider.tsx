@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { getConfiguredHandle, readAllRows, readRowsFromFile } from "@/lib/localMrnStore";
+import { getConfiguredHandle, readAllRows, readRowsFromFile, type MrnMappingRow } from "@/lib/localMrnStore";
 
 // 病人姓名只存在本機對照表檔案裡（決策 #1：雲端只有研究編號）。
 // 這個 Provider 在瀏覽器端把本機 CSV 讀成 research_id -> 姓名 的對照，供各頁面注入畫面；
@@ -26,6 +26,8 @@ type LocalNameContextValue = {
   sessionOnly: boolean;
   /** 開發逃生口：從 <input type="file"> 的 File 讀進記憶體（不落地） */
   mountFromFile: (file: File) => Promise<number>;
+  /** 雲端加密保管庫：解密後的對照直接進記憶體（同樣不落地） */
+  mountFromRows: (rows: MrnMappingRow[]) => number;
 };
 
 const LocalNameContext = createContext<LocalNameContextValue>({
@@ -37,6 +39,7 @@ const LocalNameContext = createContext<LocalNameContextValue>({
   devMobileMapping: false,
   sessionOnly: false,
   mountFromFile: async () => 0,
+  mountFromRows: () => 0,
 });
 
 export function LocalNameProvider({
@@ -86,6 +89,16 @@ export function LocalNameProvider({
     return rows.length;
   }, []);
 
+  // 雲端加密保管庫解密後的對照。跟開發逃生口一樣只放 React state：
+  // 解密結果與通行碼都不寫 IndexedDB／localStorage，重整就要重新輸入通行碼，
+  // 這樣交到病人手上的那台裝置不會殘留任何身分資料（見 pending.md C1b）。
+  const mountFromRows = useCallback((rows: MrnMappingRow[]) => {
+    setNames(new Map(rows.filter((r) => r.name?.trim()).map((r) => [r.research_id.trim(), r.name.trim()])));
+    setLinked(true);
+    setSessionOnly(true);
+    return rows.length;
+  }, []);
+
   const toggleShowNames = useCallback(() => {
     setShowNames((prev) => {
       const next = !prev;
@@ -95,8 +108,8 @@ export function LocalNameProvider({
   }, []);
 
   const value = useMemo(
-    () => ({ names, linked, showNames, toggleShowNames, reload, devMobileMapping, sessionOnly, mountFromFile }),
-    [names, linked, showNames, toggleShowNames, reload, devMobileMapping, sessionOnly, mountFromFile]
+    () => ({ names, linked, showNames, toggleShowNames, reload, devMobileMapping, sessionOnly, mountFromFile, mountFromRows }),
+    [names, linked, showNames, toggleShowNames, reload, devMobileMapping, sessionOnly, mountFromFile, mountFromRows]
   );
 
   return <LocalNameContext.Provider value={value}>{children}</LocalNameContext.Provider>;

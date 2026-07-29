@@ -15,6 +15,7 @@ import {
 } from "@/lib/localMrnStore";
 import { useLocalNames } from "@/components/LocalNameProvider";
 import { lookupCaseIdByResearchId } from "./actions";
+import VaultPanel from "./VaultPanel";
 
 export default function MrnMappingPage() {
   const { devMobileMapping, mountFromFile } = useLocalNames();
@@ -186,6 +187,9 @@ export default function MrnMappingPage() {
           </div>
         )}
 
+        {/* 行動裝置掛不上本機檔案，但可以用通行碼解開雲端保管庫（密文才上雲端，見 lib/mrnVault.ts） */}
+        <VaultPanel localRows={null} />
+
         <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
         <p className="font-medium">這一頁的完整功能需要在桌機上開啟</p>
         <p>
@@ -217,6 +221,9 @@ export default function MrnMappingPage() {
           </span>
         </p>
       </div>
+
+      {/* 診間電腦掛上本機對照表後，可在這裡加密上傳一份給手機／平板查詢用 */}
+      <VaultPanel localRows={rows.length > 0 ? rows : null} />
 
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-white p-3 text-sm">
         <span className="text-slate-600">{handle ? "已連結本機對照表檔案" : "尚未設定本機對照表檔案"}</span>
