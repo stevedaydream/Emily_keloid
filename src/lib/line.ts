@@ -44,6 +44,47 @@ export function extractBindCode(text: string): string | null {
   return m ? m[1] : null;
 }
 
+// ── LINE Quick Reply（訊息下方浮出的按鈕）────────────────────────────
+// 讓病人不用打字就能瀏覽衛教。選 Quick Reply 而不是 Rich Menu（六宮格）的理由：
+// Rich Menu 要一張 2500×1686 的圖片（美術成本），Quick Reply 純 JSON、零圖片，
+// 而且能隨衛教資料庫的內容自動長出來，不必每次改內容就重畫圖。
+
+/** LINE 的 label 上限 20 字元，超過會整顆按鈕被拒收，所以一律截斷。 */
+const QUICK_LABEL_MAX = 20;
+/** LINE 單則訊息最多 13 顆 quick reply。留一顆給「找診間」。 */
+const QUICK_REPLY_MAX = 12;
+
+export const KB_MENU_KEYWORDS = ["衛教", "選單", "諮詢", "主題", "menu"];
+/** 病人點主題按鈕時實際送出的文字前綴，用來跟一般提問區分。 */
+export const KB_TOPIC_PREFIX = "衛教主題：";
+
+export type QuickReplyItem = { label: string; text: string };
+
+function truncateLabel(text: string): string {
+  const t = text.trim();
+  return t.length > QUICK_LABEL_MAX ? `${t.slice(0, QUICK_LABEL_MAX - 1)}…` : t;
+}
+
+/** 依衛教資料庫產生主題按鈕。內容變多時只會列前 12 則（依 sort_order）。 */
+export function kbQuickReplies(entries: { topic: string }[]): QuickReplyItem[] {
+  const items = entries.slice(0, QUICK_REPLY_MAX).map((e) => ({
+    label: truncateLabel(e.topic),
+    text: `${KB_TOPIC_PREFIX}${e.topic}`,
+  }));
+  return items;
+}
+
+/** 病人送出的文字是不是在點某個主題按鈕；是的話回傳主題名稱。 */
+export function extractKbTopic(text: string): string | null {
+  const t = (text ?? "").trim();
+  return t.startsWith(KB_TOPIC_PREFIX) ? t.slice(KB_TOPIC_PREFIX.length).trim() : null;
+}
+
+export function isKbMenuRequest(text: string): boolean {
+  const t = (text ?? "").trim().toLowerCase();
+  return KB_MENU_KEYWORDS.some((k) => t === k.toLowerCase());
+}
+
 export type ReminderKind = "visit" | "radiotherapy";
 
 export type PendingReminder = {
