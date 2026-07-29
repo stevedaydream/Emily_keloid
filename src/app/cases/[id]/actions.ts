@@ -5,6 +5,7 @@ import { supabaseServer } from "@/lib/supabase";
 import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
 import { withTermGroup } from "@/lib/terms";
+import { generateBindCode, BIND_CODE_TTL_HOURS } from "@/lib/line";
 
 async function operatorOrThrow() {
   const op = await getCurrentOperator();
@@ -798,5 +799,47 @@ export async function deleteKeloidLesionAction(formData: FormData) {
 
   await syncCaseBodySite(supabase, caseId);
   await logAudit({ caseId, operatorName: operator, action: "delete_keloid_lesion", entity: "case_keloid_lesions", entityId: lesionId });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+// ── LINE 綁定（2026-07-29）─────────────────────────────────────────────
+// 平台只負責產生／清除綁定碼與顯示狀態；真正把 line_user_id 寫進來的是
+// GAS 轉接層呼叫的 /api/line/message（病人在 LINE 送出綁定碼時）。
+
+export async function generateLineBindCodeAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  // 綁定碼有唯一索引，理論上會撞（機率極低），撞到就重抽
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateBindCode();
+    const expiresAt = new Date(Date.now() + BIND_CODE_TTL_HOURS * 3600_000).toISOString();
+    const { error } = await supabase
+      .from("cases")
+      .update({ line_bind_code: code, line_bind_code_expires_at: expiresAt })
+      .eq("id", caseId);
+    if (!error) {
+      await logAudit({ caseId, operatorName: operator, action: "generate_line_bind_code", entity: "cases", entityId: caseId });
+      revalidatePath(`/cases/${caseId}`);
+      return;
+    }
+    if (!String(error.message).includes("duplicate")) throw error;
+  }
+  throw new Error("產生綁定碼失敗，請再試一次");
+}
+
+/** 解除綁定：病人換手機、或綁錯人時使用。line_user_id 一併清掉，那支 LINE 才能重新綁。 */
+export async function unbindLineAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  await supabase
+    .from("cases")
+    .update({ line_bound: false, line_user_id: null, line_bound_at: null, line_bind_code: null, line_bind_code_expires_at: null })
+    .eq("id", caseId);
+
+  await logAudit({ caseId, operatorName: operator, action: "line_unbind_by_staff", entity: "cases", entityId: caseId });
   revalidatePath(`/cases/${caseId}`);
 }

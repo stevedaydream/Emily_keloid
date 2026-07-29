@@ -136,8 +136,8 @@
 
 不是 bug，是「先做到能用」留下的缺口，決定要不要補：
 
-- **LINE 綁定沒有寫入路徑**：`cases.line_bound`／`line_bind_code`／`line_user_id` 三個欄位全站沒有任何地方會寫入（要等 Phase 1 接 LINE 官方帳號），所以收案一條龍的「LINE 綁定」燈號永遠不會亮、dashboard 的綁定率恆為 0%。若 Phase 1 前要讓畫面合理，可考慮暫時把這個階段從一條龍隱藏。
-- **時程動作「回診提醒」沒有任何行為**：後台時程範本可以勾，但沒有發送提醒的程式，個案頁也只渲染「填問卷／拍照」兩種動作，勾了不會有任何顯示。同屬 Phase 1（GAS 排程推播）。
+- ~~**LINE 綁定沒有寫入路徑**~~ → 2026-07-29 已做：個案頁「LINE 提醒綁定」可產生綁定碼與 QR code，病人在 LINE 送出後由 `/api/line/message` 寫入。一條龍的「LINE 綁定」燈號與 dashboard 綁定率現在會真的動。
+- ~~**時程動作「回診提醒」沒有任何行為**~~ → 2026-07-29 已做：GAS 每日排程呼叫 `/api/line/reminders` 取得當日名單並推播。**但要等你完成 LINE Messaging API 與 GAS 部署才會真的送出**（見 `gas/README.md`）。
 - **飲食運動習慣問卷**：DB 裡的名稱就是「飲食運動習慣問卷（示範，待補齊正式題目）」，5 題示範題（對應 A4 的待確認項目）。因此 2026-07-29 新增「正式上線需填寫」（`questionnaire_templates.required_for_intake`）時**刻意沒有勾它**——題目定稿後到 `/admin/questionnaires` 按「設為必填」即可列進每個個案的應填問卷清單。
 - **時程範本**：只有一份「標準術後追蹤（示範）」，5 個時間點。
 - **治療類型與套組**：後台要手打 JSON 定義欄位與套組內容；目前只有 1 個套組。決策 #6 的「選套組微調後另存新套組」在個案頁沒有實作。
@@ -180,8 +180,9 @@
 
 ### C3. 其他 Phase 1 項目
 
-- 正式 LINE 官方帳號 + GAS 串接（回診提醒推播、衛教機器人 webhook）
-- `GEMINI_API_KEY` 已設定，但衛教機器人尚未實際對話測試
+- **LINE 上線的剩餘步驟（2026-07-29 程式已完成，等你操作）**：① LINE Developers 建立 Messaging API channel 並連結既有官方帳號、發行 long-lived token；② 部署 GAS（`gas/line-relay.gs`）並填三個指令碼屬性；③ Vercel 設定 `LINE_RELAY_SECRET`（與 GAS 同一組）與 `LINE_OA_BASIC_ID`。完整步驟見 `gas/README.md`。
+- **衛教資料庫只有 4 則示範內容**：機器人只依資料庫回答，資料庫沒涵蓋就回「請洽診間」——實測問「傷口會癢怎麼辦」得到的正是這個回覆。上線前需在 `/admin/health-kb` 補齊常見問題，否則病人問什麼都得到同一句。
+- `GEMINI_API_KEY` 已設定，衛教問答的伺服器端路徑已實測會呼叫 Gemini 並回覆，但**尚未透過真實 LINE 對話測過**
 - 診間本機病歷號對照工具的正式部署流程（目前是瀏覽器 File System Access API，僅 Chrome/Edge 桌面版支援）
   - **2026-07-29 實測確認**：手機／平板完全掛不上對照表，包含 Android Chrome 與 iPad Safari/Chrome。這是瀏覽器沒有實作 File System Access API，**不是權限沒開**，裝置端沒有任何設定可以打開它。訊息已從「請改用 Chrome 或 Edge」改成明講「桌機版」，先前在 Android Chrome 上看到那句會非常困惑。
   - **刻意不做行動版替代方案**：`<input type="file">` 讀得到 CSV，但拿不到可持續的 handle，重整就沒了；要能用就得把「病歷號＋姓名」快取進該裝置的 IndexedDB——而平板正是要交到病人手上的那一台（見 C1b，Phase 0 沒有裝置隔離），等於在最不該留身分資料的裝置上留一份。
