@@ -43,7 +43,18 @@ function fromBase64(text: string): Uint8Array {
   return out;
 }
 
-async function deriveKey(passphrase: string, salt: Uint8Array, iterations: number): Promise<CryptoKey> {
+/** 新建保管庫時用的隨機 salt（base64）。之後重新加密都沿用同一組，見 encryptWithKey。 */
+export function newSalt(): string {
+  return toBase64(crypto.getRandomValues(new Uint8Array(SALT_BYTES)));
+}
+
+/**
+ * 從通行碼導出 AES-GCM 金鑰。
+ *
+ * extractable 固定為 false：這把金鑰可以被 structured clone 存進 IndexedDB 重複使用
+ * （見 vaultSession.ts），但任何人都匯不出它的原始材料，通行碼也就不必留在任何地方。
+ */
+export async function deriveVaultKey(passphrase: string, salt: string, iterations: number): Promise<CryptoKey> {
   const baseKey = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(passphrase),
@@ -52,7 +63,7 @@ async function deriveKey(passphrase: string, salt: Uint8Array, iterations: numbe
     ["deriveKey"]
   );
   return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: salt as BufferSource, iterations, hash: "SHA-256" },
+    { name: "PBKDF2", salt: fromBase64(salt) as BufferSource, iterations, hash: "SHA-256" },
     baseKey,
     { name: "AES-GCM", length: 256 },
     false,
@@ -61,23 +72,29 @@ async function deriveKey(passphrase: string, salt: Uint8Array, iterations: numbe
 }
 
 // 對照表在保管庫裡就是一份 JSON 陣列（欄位與本機 CSV 相同）。
-export async function encryptRows(rows: MrnMappingRow[], passphrase: string): Promise<EncryptedVault> {
-  const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
+//
+// salt 由呼叫端帶入而不是每次重新產生：自動同步時金鑰是快取的，而金鑰綁著導出它的那組 salt，
+// 換 salt 就等於要重打通行碼。salt 的用途是擋 KDF 的預先計算表，不需要每次更換；
+// 真正每次都必須換的是 iv，這裡照做。
+export async function encryptWithKey(
+  rows: MrnMappingRow[],
+  key: CryptoKey,
+  salt: string,
+  iterations: number
+): Promise<EncryptedVault> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-  const key = await deriveKey(passphrase, salt, PBKDF2_ITERATIONS);
   const plaintext = new TextEncoder().encode(JSON.stringify(rows));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv as BufferSource }, key, plaintext);
   return {
     ciphertext: toBase64(ciphertext),
-    salt: toBase64(salt),
+    salt,
     iv: toBase64(iv),
-    iterations: PBKDF2_ITERATIONS,
+    iterations,
     row_count: rows.length,
   };
 }
 
-export async function decryptRows(vault: EncryptedVault, passphrase: string): Promise<MrnMappingRow[]> {
-  const key = await deriveKey(passphrase, fromBase64(vault.salt), vault.iterations || PBKDF2_ITERATIONS);
+export async function decryptWithKey(vault: EncryptedVault, key: CryptoKey): Promise<MrnMappingRow[]> {
   let plaintext: ArrayBuffer;
   try {
     plaintext = await crypto.subtle.decrypt(
@@ -93,6 +110,19 @@ export async function decryptRows(vault: EncryptedVault, passphrase: string): Pr
   if (!Array.isArray(parsed)) throw new Error("保管庫內容格式不正確");
   return parsed as MrnMappingRow[];
 }
+
+export async function encryptRows(rows: MrnMappingRow[], passphrase: string): Promise<EncryptedVault> {
+  const salt = newSalt();
+  const key = await deriveVaultKey(passphrase, salt, PBKDF2_ITERATIONS);
+  return encryptWithKey(rows, key, salt, PBKDF2_ITERATIONS);
+}
+
+export async function decryptRows(vault: EncryptedVault, passphrase: string): Promise<MrnMappingRow[]> {
+  const key = await deriveVaultKey(passphrase, vault.salt, vault.iterations || PBKDF2_ITERATIONS);
+  return decryptWithKey(vault, key);
+}
+
+export { PBKDF2_ITERATIONS };
 
 // 通行碼強度：保管庫的安全性完全繫於這串字，弱通行碼等於沒加密（密文是公開可讀的）。
 export function passphraseIssue(passphrase: string): string | null {

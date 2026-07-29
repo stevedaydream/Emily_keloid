@@ -13,7 +13,10 @@ import {
   openExistingMappingFile,
   requestHandlePermission,
   appendMappingRow,
+  readAllRows,
 } from "@/lib/localMrnStore";
+import { syncVaultIfUnlocked } from "@/lib/vaultSession";
+import { loadVaultAction } from "@/app/local-tools/mrn-mapping/vaultActions";
 
 type Doctor = { id: string; code: string; name: string };
 type Template = { id: string; name: string };
@@ -66,10 +69,36 @@ export default function NewCaseForm({
     name: string;
   } | null>(null);
 
+  // 保管庫同步狀態：只有在雲端真的有保管庫時才提示，否則沒用過這功能的人會看到莫名其妙的警告
+  const [vaultExists, setVaultExists] = useState(false);
+  const [vaultSync, setVaultSync] = useState<"syncing" | "synced" | "locked" | "failed" | null>(null);
+  const [vaultSyncMsg, setVaultSyncMsg] = useState<string | null>(null);
+
   useEffect(() => {
     setSupported(isFileSystemAccessSupported());
     getConfiguredHandle().then(setFileHandle);
+    loadVaultAction()
+      .then((v) => setVaultExists(!!v))
+      .catch(() => setVaultExists(false));
   }, []);
+
+  // 新的一筆對應寫進本機 CSV 之後，把整份對照表重新加密覆蓋雲端保管庫，
+  // 讓手機／平板端查得到剛收的病人。沒解鎖就只留提示，不擋收案動線（決策 2026-07-29）。
+  // 刻意不 await：保管庫同步失敗不該讓已經建好的個案卡在畫面上。
+  function syncVaultInBackground(handle: FileSystemFileHandle) {
+    setVaultSync("syncing");
+    setVaultSyncMsg(null);
+    void (async () => {
+      try {
+        const result = await syncVaultIfUnlocked(await readAllRows(handle));
+        setVaultSync(result.status);
+        setVaultSyncMsg(result.message ?? null);
+      } catch (err) {
+        setVaultSync("failed");
+        setVaultSyncMsg(err instanceof Error ? err.message : "讀取本機對照表失敗");
+      }
+    })();
+  }
 
   // 已經有一份對照表就直接選它（開檔對話框，不會跳「要取代嗎」）；沒有的話才用存檔對話框建立新的。
   async function handleChooseFile() {
@@ -105,6 +134,7 @@ export default function NewCaseForm({
         created_at: new Date().toISOString(),
         name: pendingMapping.name,
       });
+      syncVaultInBackground(fileHandle);
       const created = { caseId: pendingMapping.caseId, researchId: pendingMapping.researchId };
       setPendingMapping(null);
       setError(null);
@@ -174,6 +204,7 @@ export default function NewCaseForm({
             created_at: new Date().toISOString(),
             name: trimmedName,
           });
+          syncVaultInBackground(handle);
         } catch (err) {
           // 個案已經建立成功，只是本機寫入失敗——保留下來讓使用者重試，不要憑空遺失這筆對應。
           setPendingMapping({ caseId, researchId, mrn: trimmedMrn, name: trimmedName });
@@ -253,6 +284,32 @@ export default function NewCaseForm({
             </span>
           )}
         </div>
+
+        {/* 保管庫同步：手機／平板端要靠它才查得到剛收的病人 */}
+        {vaultExists && vaultSync && (
+          <p
+            className={`mt-2 rounded border px-2 py-1.5 text-xs ${
+              vaultSync === "synced"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : vaultSync === "syncing"
+                ? "border-brand-200 bg-brand-50 text-brand-800"
+                : "border-amber-300 bg-amber-50 text-amber-900"
+            }`}
+          >
+            {vaultSync === "syncing" && "同步保管庫中…"}
+            {vaultSync === "synced" && "✓ 已同步至雲端保管庫，手機／平板端查得到這位病人了"}
+            {vaultSync === "locked" && (
+              <>
+                保管庫未解鎖，這筆對應<b>還沒同步到雲端</b>——手機／平板端目前查不到這位病人。{" "}
+                <Link href="/local-tools/mrn-mapping" className="underline">
+                  前往解鎖並同步
+                </Link>
+                （解鎖一次可管到分頁關閉）
+              </>
+            )}
+            {vaultSync === "failed" && `保管庫同步失敗：${vaultSyncMsg ?? "未知錯誤"}。本機對照表已寫入，可稍後到對照表頁重新上傳。`}
+          </p>
+        )}
       </div>
 
       <div>
