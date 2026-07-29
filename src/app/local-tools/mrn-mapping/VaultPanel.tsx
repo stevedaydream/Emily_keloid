@@ -3,11 +3,28 @@
 import { useEffect, useState } from "react";
 import Button from "@/components/ui/Button";
 import { useLocalNames } from "@/components/LocalNameProvider";
-import { decryptRows, encryptRows, passphraseIssue } from "@/lib/mrnVault";
+import {
+  decryptWithKey,
+  deriveVaultKey,
+  encryptWithKey,
+  newSalt,
+  passphraseIssue,
+  PBKDF2_ITERATIONS,
+} from "@/lib/mrnVault";
+import { forgetVaultKey, getVaultKey, rememberVaultKey, subscribeVaultSession } from "@/lib/vaultSession";
 import { loadVaultAction, saveVaultAction } from "./vaultActions";
 import type { MrnMappingRow } from "@/lib/localMrnStore";
 
 type VaultMeta = { row_count: number; updated_at: string; updated_by: string | null };
+
+function RememberToggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-1.5 text-[11px] text-ink/60">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      記住到分頁關閉為止（之後新增個案自動同步，不必再打通行碼）
+    </label>
+  );
+}
 
 /**
  * 雲端加密保管庫。
@@ -29,6 +46,9 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
   const [busy, setBusy] = useState<null | "unlock" | "upload">(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 記住金鑰＝之後新增個案會自動同步到保管庫，不用再打通行碼（見 lib/vaultSession.ts）
+  const [remember, setRemember] = useState(true);
+  const [unlocked, setUnlocked] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -43,6 +63,12 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
     })();
   }, []);
 
+  useEffect(() => {
+    const refresh = () => void getVaultKey().then((k) => setUnlocked(!!k));
+    refresh();
+    return subscribeVaultSession(refresh);
+  }, []);
+
   async function handleUnlock() {
     setError(null);
     setNotice(null);
@@ -50,16 +76,29 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
     try {
       const v = await loadVaultAction();
       if (!v) throw new Error("雲端還沒有保管庫，請先在診間電腦上傳一次");
-      const rows = await decryptRows(v, unlockPass);
+      const iterations = v.iterations || PBKDF2_ITERATIONS;
+      // 先導出金鑰再解密，這樣「記住」時存的是金鑰本身，通行碼用完就丟
+      const key = await deriveVaultKey(unlockPass, v.salt, iterations);
+      const rows = await decryptWithKey(v, key);
       const count = mountFromRows(rows);
       const withName = rows.filter((r) => r.name?.trim()).length;
-      setNotice(`✓ 已解密 ${count} 筆（其中 ${withName} 筆有姓名）。重整或關掉分頁就會清除。`);
+      if (remember) await rememberVaultKey(key, v.salt, iterations);
+      setNotice(
+        `✓ 已解密 ${count} 筆（其中 ${withName} 筆有姓名）。${
+          remember ? "新增個案時會自動同步，關掉分頁才需重打通行碼。" : "重整或關掉分頁就會清除。"
+        }`
+      );
       setUnlockPass("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "解密失敗");
     } finally {
       setBusy(null);
     }
+  }
+
+  async function handleLock() {
+    await forgetVaultKey();
+    setNotice("已鎖定，新增個案將不再自動同步。");
   }
 
   async function handleUpload() {
@@ -80,10 +119,13 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
     }
     setBusy("upload");
     try {
-      const payload = await encryptRows(localRows, uploadPass);
+      const salt = newSalt();
+      const key = await deriveVaultKey(uploadPass, salt, PBKDF2_ITERATIONS);
+      const payload = await encryptWithKey(localRows, key, salt, PBKDF2_ITERATIONS);
       const result = await saveVaultAction(payload);
       if (!result.ok) throw new Error(result.message);
-      setNotice(`✓ ${result.message}`);
+      if (remember) await rememberVaultKey(key, salt, PBKDF2_ITERATIONS);
+      setNotice(`✓ ${result.message}${remember ? "，之後新增個案會自動同步" : ""}`);
       setMeta({ row_count: payload.row_count, updated_at: new Date().toISOString(), updated_by: null });
       setUploadPass("");
       setUploadPass2("");
@@ -104,15 +146,25 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
         </p>
       </div>
 
-      <p className="rounded-md bg-brand-50 px-3 py-2 text-xs text-brand-900">
-        {loadingMeta
-          ? "讀取保管庫狀態…"
-          : meta
-          ? `雲端目前有 ${meta.row_count} 筆，最後更新 ${new Date(meta.updated_at).toLocaleString("zh-TW")}${
-              meta.updated_by ? `（${meta.updated_by}）` : ""
-            }`
-          : "雲端尚未建立保管庫"}
-      </p>
+      <div className="flex flex-wrap items-center gap-2 rounded-md bg-brand-50 px-3 py-2 text-xs text-brand-900">
+        <span>
+          {loadingMeta
+            ? "讀取保管庫狀態…"
+            : meta
+            ? `雲端目前有 ${meta.row_count} 筆，最後更新 ${new Date(meta.updated_at).toLocaleString("zh-TW")}${
+                meta.updated_by ? `（${meta.updated_by}）` : ""
+              }`
+            : "雲端尚未建立保管庫"}
+        </span>
+        {unlocked && (
+          <span className="ml-auto flex items-center gap-2">
+            <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-800">🔓 本分頁已解鎖，新增個案自動同步</span>
+            <button type="button" onClick={() => void handleLock()} className="underline hover:text-red-600">
+              鎖定
+            </button>
+          </span>
+        )}
+      </div>
 
       {/* 解密掛載：任何裝置都能用 */}
       {meta && (
@@ -126,6 +178,7 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
             autoComplete="off"
             className="w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
           />
+          <RememberToggle checked={remember} onChange={setRemember} />
           <Button
             type="button"
             onClick={handleUnlock}
@@ -136,7 +189,8 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
             解密並顯示姓名
           </Button>
           <p className="text-[11px] text-ink/40">
-            解密結果只放在記憶體，<b>不會寫進這台裝置</b>；重整或關掉分頁就清除，需要時再輸入一次。
+            解密出來的姓名只放在記憶體，<b>不會寫進這台裝置</b>，重整就清除。
+            勾了「記住」則另外把<b>金鑰</b>（不是通行碼）留到分頁關閉為止，供自動同步使用。
           </p>
         </div>
       )}
@@ -165,6 +219,7 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
               autoComplete="new-password"
               className="w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
             />
+            <RememberToggle checked={remember} onChange={setRemember} />
             <Button
               type="button"
               variant="outline"
