@@ -81,3 +81,39 @@ GAS 每日排程 ─────────> 平台 /api/line/reminders（拿�
   病人換手機後綁不回來。
 - **衛教問答不帶入任何個案資料**（決策 2026-07-26）：不用免費層做個人化諮詢，
   機器人只依後台「衛教資料庫」的內容回答，資料庫沒涵蓋就請病人洽詢診間。
+
+---
+
+## 用 clasp 部署（不用再手動貼程式碼）
+
+專案根目錄有 `dev-tools.bat`，選 **1. GAS push + deploy** 就會把 `gas/` 推上去並更新部署。
+
+### 第一次設定
+
+```bash
+npm i -g @google/clasp
+clasp login
+```
+
+然後把 Apps Script 的 **Script ID** 填進根目錄的 `.clasp.json`：
+Apps Script 編輯器 → 專案設定 → ID → 複製「指令碼 ID」。
+
+```json
+{ "scriptId": "貼在這裡", "rootDir": "./gas" }
+```
+
+### deployment id 一定要固定住
+
+`gas/deployment-id.txt` 存的是部署 ID。**這件事比看起來重要**：
+LINE 的 webhook URL 綁的是特定部署，每次 `clasp deploy` 不帶 `-i` 都會建立**新的**部署、產生**新的網址**，
+舊網址仍然指向舊版程式 —— bot 看起來還活著，但你改的東西永遠不會生效。
+
+第一次部署後，把產生的 deployment id 存進 `gas/deployment-id.txt`（單獨一行），
+之後 `dev-tools.bat` 就會自動用 `-i` 更新同一個部署，webhook URL 保持不變。
+
+已經在網頁介面部署過的話，用 `clasp list-deployments` 找出現有的 ID。
+
+### 這支 GAS 要的權限很小
+
+`gas/appsscript.json` 只宣告了一個 scope：`script.external_request`（連到外部服務）。
+因為資料都在 Supabase，這支腳本不碰 Google Sheet 也不碰 Drive —— 授權時看到的畫面會相對單純。

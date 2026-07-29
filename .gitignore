@@ -42,3 +42,6 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# clasp 的部署 ID：每個人/每個環境的部署不同，不進版控
+gas/deployment-id.txt
