@@ -5,6 +5,8 @@ import { supabaseServer } from "@/lib/supabase";
 import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
 import type { PatientIntakeSegmentKey } from "@/lib/patientIntake";
+import QRCode from "qrcode";
+import { generateBindCode, bindDeepLink, BIND_CODE_TTL_HOURS } from "@/lib/line";
 
 // 病人自助填寫的寫入路徑（決策 2026-07-29）。
 //
@@ -296,4 +298,61 @@ export async function resolveFollowupAction(formData: FormData) {
 
   await logAudit({ caseId, operatorName: operator, action: "resolve_intake_followup", entity: "case_intake_followups", entityId: followupId });
   revalidatePath(`/cases/${caseId}`);
+}
+
+// 填完那一頁順手綁 LINE（2026-07-29 使用者要求）：病人的手機就在手上、人也還在，
+// 是整個流程裡最容易完成綁定的時機。
+//
+// 刻意做成「按鈕觸發的 action」而不是在頁面渲染時就備好 QR：
+// 產生綁定碼是對 cases 的寫入，不該是 GET 的副作用（Next 可能重複渲染、也可能被預取）。
+export async function patientBindQrAction(caseId: string): Promise<
+  | { state: "bound" }
+  | { state: "ready"; code: string; qrDataUrl: string | null }
+  | { state: "error"; message: string }
+> {
+  const supabase = supabaseServer();
+
+  const { data: caseRow } = await supabase
+    .from("cases")
+    .select("id, line_bound, line_bind_code, line_bind_code_expires_at")
+    .eq("id", caseId)
+    .maybeSingle();
+  if (!caseRow) return { state: "error", message: "找不到個案" };
+  if (caseRow.line_bound) return { state: "bound" };
+
+  const stillValid =
+    caseRow.line_bind_code &&
+    caseRow.line_bind_code_expires_at &&
+    new Date(caseRow.line_bind_code_expires_at) > new Date();
+
+  let code = stillValid ? (caseRow.line_bind_code as string) : "";
+  if (!code) {
+    for (let attempt = 0; attempt < 5 && !code; attempt++) {
+      const candidate = generateBindCode();
+      const { error } = await supabase
+        .from("cases")
+        .update({
+          line_bind_code: candidate,
+          line_bind_code_expires_at: new Date(Date.now() + BIND_CODE_TTL_HOURS * 3600_000).toISOString(),
+        })
+        .eq("id", caseId);
+      if (!error) code = candidate;
+      else if (!String(error.message).includes("duplicate")) {
+        return { state: "error", message: "產生綁定碼失敗" };
+      }
+    }
+    if (!code) return { state: "error", message: "產生綁定碼失敗，請洽診間人員" };
+
+    await logAudit({
+      caseId,
+      operatorName: `${(await getCurrentOperator()) ?? "未知操作者"}（病人自填頁）`,
+      action: "generate_line_bind_code",
+      entity: "cases",
+      entityId: caseId,
+    });
+  }
+
+  const link = bindDeepLink(code, process.env.LINE_OA_BASIC_ID);
+  const qrDataUrl = link ? await QRCode.toDataURL(link, { width: 320, margin: 1, errorCorrectionLevel: "M" }) : null;
+  return { state: "ready", code, qrDataUrl };
 }

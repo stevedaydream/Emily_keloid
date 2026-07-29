@@ -1,20 +1,25 @@
 // Gemini API 免費層呼叫（決策 2026-07-26：僅能依後台衛教資料庫內容回答，不帶入病人個資）。
 const GEMINI_MODEL = "gemini-flash-latest";
 
-export async function askGeminiWithKb(question: string, kbEntries: { topic: string; content: string }[]) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return { ok: false as const, answer: "尚未設定 Gemini API 金鑰（環境變數 GEMINI_API_KEY），請聯繫系統管理者設定。" };
-  }
+export type KbEntry = {
+  id?: string;
+  topic: string;
+  content: string;
+  category?: string | null;
+  pdf_url?: string | null;
+  video_url?: string | null;
+};
 
-  const kbText = kbEntries.map((e, i) => `[${i + 1}] ${e.topic}：${e.content}`).join("\n");
-  const systemInstruction = `你是蟹足腫衛教機器人。你「只能」根據下方「衛教資料庫」的內容回答病人的問題，用親切、簡短的口吻重新描述，不要引用資料庫以外的醫學知識或自行推論。
-如果病人的問題在資料庫中找不到相關內容，請回覆：「這個問題建議您洽詢診間人員，我們會盡快協助您。」
-絕對不要編造資料庫沒有的內容，也不要要求或記錄病人的個人資料（姓名、病歷號、聯絡方式等）。
+/** 把醫院衛教單張／影片連結接在回覆後面（參考 CGH_spine 專案的呈現方式）。 */
+function withAttachments(answer: string, entry: KbEntry | null): string {
+  if (!entry) return answer;
+  let out = answer;
+  if (entry.video_url?.trim()) out += `\n\n🎬 衛教影片：\n${entry.video_url.trim()}`;
+  if (entry.pdf_url?.trim()) out += `\n\n📄 醫院衛教單張：\n${entry.pdf_url.trim()}`;
+  return out;
+}
 
-衛教資料庫：
-${kbText}`;
-
+async function callGemini(systemInstruction: string, userText: string, apiKey: string): Promise<string | null> {
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
     {
@@ -22,17 +27,77 @@ ${kbText}`;
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemInstruction }] },
-        contents: [{ role: "user", parts: [{ text: question }] }],
+        contents: [{ role: "user", parts: [{ text: userText }] }],
       }),
     }
   );
+  if (!res.ok) return null;
+  const data = await res.json();
+  return (data?.candidates?.[0]?.content?.parts?.[0]?.text as string | undefined) ?? null;
+}
 
-  if (!res.ok) {
-    const errText = await res.text();
-    return { ok: false as const, answer: `衛教機器人暫時無法回應（${res.status}）：${errText.slice(0, 200)}` };
+/**
+ * 病人的問題對應到哪一則衛教。
+ *
+ * 為什麼要先比對、而不是把整個資料庫丟給模型讓它自由回答（原本的作法）：
+ *  ① 只有知道「用了哪一則」，才能附上那一則對應的醫院衛教單張連結
+ *  ② 回覆內容就是後台審核過的文字，模型不會在改寫時把劑量、天數這類細節說錯
+ * 這也是 CGH_spine 專案的作法。
+ *
+ * 回傳 null 代表資料庫沒有相關內容——那就照決策 2026-07-26 請病人洽詢診間，不要讓模型自由發揮。
+ */
+async function matchKbEntry(question: string, entries: KbEntry[], apiKey: string): Promise<KbEntry | null> {
+  if (entries.length === 0) return null;
+
+  const catalog = entries.map((e, i) => `${i + 1}. ${e.category ? `[${e.category}] ` : ""}${e.topic}`).join("\n");
+  const systemInstruction = `你是衛教問題比對助理。以下是衛教主題清單：
+
+${catalog}
+
+請判斷病人的問題與哪一個主題最相關（主題要高度吻合，不能勉強配對）。
+若相關，只回傳該主題的編號數字（例如 3），不要有其他文字。
+若沒有任何主題相關，只回傳 none。`;
+
+  const raw = await callGemini(systemInstruction, `病人的問題：${question}`, apiKey);
+  if (!raw) return null;
+  const cleaned = raw.trim().replace(/[^0-9a-z]/gi, "");
+  if (!cleaned || cleaned.toLowerCase() === "none") return null;
+  const index = Number(cleaned);
+  if (!Number.isInteger(index) || index < 1 || index > entries.length) return null;
+  return entries[index - 1];
+}
+
+export async function askGeminiWithKb(question: string, kbEntries: KbEntry[]) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return { ok: false as const, answer: "尚未設定 Gemini API 金鑰（環境變數 GEMINI_API_KEY），請聯繫系統管理者設定。", entry: null };
   }
 
-  const data = await res.json();
-  const answer: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  return { ok: true as const, answer: answer ?? "抱歉，暫時無法產生回覆，請洽詢診間人員。" };
+  const matched = await matchKbEntry(question, kbEntries, apiKey);
+  if (!matched) {
+    return {
+      ok: true as const,
+      answer: "這個問題建議您洽詢診間人員，我們會盡快協助您。",
+      entry: null,
+    };
+  }
+
+  // 比對到之後才改寫語氣，而且只餵那一則——模型看不到其他主題，就不會把別則的內容混進來。
+  const systemInstruction = `你是蟹足腫衛教機器人。請用親切、簡短、口語的方式，把下面這則衛教內容說給病人聽。
+
+規則：
+- 只能根據這則內容回答，不可以加入任何資料庫以外的醫學知識或自行推論
+- 不要更動任何數字（天數、時數、劑量、溫度）
+- 不要要求或記錄病人的個人資料（姓名、病歷號、聯絡方式等）
+- 3-6 行以內，不要條列超過 5 點
+
+衛教主題：${matched.topic}
+衛教內容：
+${matched.content}`;
+
+  const rewritten = await callGemini(systemInstruction, `病人的問題：${question}`, apiKey);
+  // 改寫失敗就直接給原文，總比沒有回應好
+  const answer = rewritten?.trim() || `【${matched.topic}】\n${matched.content}`;
+
+  return { ok: true as const, answer: withAttachments(answer, matched), entry: matched };
 }

@@ -352,8 +352,19 @@ export default async function CaseDetailPage({
           )}
         </div>
         <p className="mt-1 text-sm text-ink/50">
-          負責醫師：{doctor?.code} {doctor?.name} ・ LINE 綁定：{caseRow.line_bound ? "已綁定" : "未綁定"}
+          負責醫師：{doctor?.code} {doctor?.name}
         </p>
+        {/* LINE 綁定狀態擺在研究編號下方、一條龍上方（2026-07-29 使用者要求）：
+            它是個案的整體狀態，不是某個要填的區塊。平常只是一顆徽章，要給病人掃碼時才展開。 */}
+        <div className="mt-2">
+          <LineBindingSection
+            caseId={id}
+            lineBound={!!caseRow.line_bound}
+            lineBoundAt={caseRow.line_bound_at ?? null}
+            bindCode={caseRow.line_bind_code ?? null}
+            bindCodeExpiresAt={caseRow.line_bind_code_expires_at ?? null}
+          />
+        </div>
       </div>
 
       {/* 收案一條龍進度 */}
@@ -1253,15 +1264,6 @@ export default async function CaseDetailPage({
           {(!responses || responses.length === 0) && <li className="text-sm text-ink/40">尚無問卷回覆</li>}
         </ul>
       </section>
-
-      {/* LINE 提醒綁定：擺在追蹤時程前面，因為要提醒的正是下方那些時程與放療 */}
-      <LineBindingSection
-        caseId={id}
-        lineBound={!!caseRow.line_bound}
-        lineBoundAt={caseRow.line_bound_at ?? null}
-        bindCode={caseRow.line_bind_code ?? null}
-        bindCodeExpiresAt={caseRow.line_bind_code_expires_at ?? null}
-      />
 
       {/* 追蹤時程 */}
       <section id="section-schedule" data-nav-section data-nav-label="追蹤時程" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">

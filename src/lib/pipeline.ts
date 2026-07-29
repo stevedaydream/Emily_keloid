@@ -5,7 +5,7 @@
 export const PIPELINE_STAGES = [
   { key: "step_created", label: "建檔", en: "Created", anchor: null },
   { key: "step_consent", label: "同意書", en: "Consent", anchor: "section-consent" },
-  { key: "step_line", label: "LINE 綁定", en: "LINE bound", anchor: null },
+  { key: "step_line", label: "LINE 綁定", en: "LINE bound", anchor: "section-line" },
   { key: "step_diagnosis", label: "診斷", en: "Diagnosis", anchor: "section-diagnosis" },
   { key: "step_treatment", label: "治療紀錄", en: "Treatment", anchor: "section-treatment" },
   { key: "step_schedule", label: "追蹤時程", en: "Schedule", anchor: "section-schedule" },
