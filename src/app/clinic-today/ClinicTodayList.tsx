@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Button from "@/components/ui/Button";
 import { useLocalNames } from "@/components/LocalNameProvider";
-import { lookupCaseIdByResearchId } from "@/app/local-tools/mrn-mapping/actions";
 import ClinicCard from "./ClinicCard";
 
 type AutoEntry = {
@@ -14,18 +13,43 @@ type AutoEntry = {
   earliestDue: string;
 };
 
+export type SearchableCase = {
+  caseId: string;
+  researchId: string;
+  bodySite: string;
+  enrollmentYear: number | null;
+  dataSource: string;
+  doctor: string;
+};
+
+// 一次最多列這麼多筆：打「yen」會命中幾十筆，全列出來反而找不到人。
+// 超過就提示縮小範圍，而不是安靜截斷。
+const MAX_RESULTS = 20;
+
+// 比對前把大小寫與連字號/空白抹平，讓「yen2024」也搜得到「YEN-2024-003」。
+function normalize(text: string): string {
+  return text.toLowerCase().replace(/[\s-]/g, "");
+}
+
 // 手動加入的名單只存在瀏覽器本機、且只在當天有效——「今天誰來看診」是門診現場的暫時狀態，
 // 不是研究資料，沒必要寫進資料庫（也就不用多一張表）。
 const STORAGE_KEY = "keloid_clinic_today";
 
 type Stored = { date: string; caseIds: string[] };
 
-export default function ClinicTodayList({ auto, today }: { auto: AutoEntry[]; today: string }) {
+export default function ClinicTodayList({
+  auto,
+  today,
+  searchable,
+}: {
+  auto: AutoEntry[];
+  today: string;
+  searchable: SearchableCase[];
+}) {
   const { names, showNames } = useLocalNames();
   const [manualIds, setManualIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     try {
@@ -48,36 +72,59 @@ export default function ClinicTodayList({ auto, today }: { auto: AutoEntry[]; to
   );
 
   const autoIds = useMemo(() => new Set(auto.map((a) => a.caseId)), [auto]);
+  const inListIds = useMemo(() => new Set([...autoIds, ...manualIds]), [autoIds, manualIds]);
 
-  async function handleAdd(e: React.FormEvent) {
+  // 全部比對都在瀏覽器內做（見 page.tsx 的說明）：關鍵字可能是病人姓名，
+  // 而姓名只存在本機對照表，送去伺服器搜尋就等於把姓名送上雲端。
+  const matches = useMemo(() => {
+    const q = normalize(query);
+    if (!q) return [];
+    const hits = searchable.filter((c) => {
+      // 姓名只在使用者開著「顯示姓名」時才納入比對，跟 PatientName 的行為一致
+      // （投影或有訪客時關掉，就不該還能用姓名搜到人）。
+      const name = showNames ? names.get(c.researchId) ?? "" : "";
+      const haystack = normalize(
+        [c.researchId, name, c.doctor, c.bodySite, c.enrollmentYear ?? "", c.dataSource].join(" ")
+      );
+      return haystack.includes(q);
+    });
+    // 已在清單中的排到後面，避免佔住前排位置
+    return hits.sort((a, b) => Number(inListIds.has(a.caseId)) - Number(inListIds.has(b.caseId)));
+  }, [query, searchable, names, showNames, inListIds]);
+
+  const selectable = matches.filter((m) => !inListIds.has(m.caseId));
+  const shown = matches.slice(0, MAX_RESULTS);
+  const selectedCount = selected.size;
+
+  function toggle(caseId: string) {
+    if (inListIds.has(caseId)) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(caseId)) next.delete(caseId);
+      else next.add(caseId);
+      return next;
+    });
+  }
+
+  function addSelected() {
+    const toAdd = [...selected].filter((id) => !inListIds.has(id));
+    if (toAdd.length === 0) return;
+    persist([...manualIds, ...toAdd]);
+    setSelected(new Set());
+    setQuery("");
+  }
+
+  // 只有一筆結果時按 Enter 直接加入——最常見的情境是打完編號就想收工
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== "Enter") return;
     e.preventDefault();
-    const q = query.trim();
-    if (!q) return;
-    setAdding(true);
-    setError(null);
-    try {
-      // 先在本機對照表用姓名換研究編號（姓名不會送到伺服器），再用研究編號查個案 id
-      let researchId = q;
-      const lower = q.toLowerCase();
-      for (const [rid, name] of names) {
-        if (name.toLowerCase().includes(lower)) {
-          researchId = rid;
-          break;
-        }
-      }
-      const caseId = await lookupCaseIdByResearchId(researchId);
-      if (!caseId) {
-        setError(`找不到「${q}」對應的個案（請確認研究編號，或該病人是否已建檔）`);
-        return;
-      }
-      if (autoIds.has(caseId) || manualIds.includes(caseId)) {
-        setError("這位病人已經在今日清單中");
-        return;
-      }
-      persist([...manualIds, caseId]);
+    if (selectedCount > 0) {
+      addSelected();
+      return;
+    }
+    if (selectable.length === 1) {
+      persist([...manualIds, selectable[0].caseId]);
       setQuery("");
-    } finally {
-      setAdding(false);
     }
   }
 
@@ -88,24 +135,93 @@ export default function ClinicTodayList({ auto, today }: { auto: AutoEntry[]; to
 
   return (
     <div className="space-y-4">
-      <form onSubmit={handleAdd} className="flex flex-wrap items-end gap-2 rounded-lg border border-brand-100 bg-white p-3">
-        <div className="flex-1">
-          <label className="block text-xs font-medium text-ink/60">
-            加入病人{showNames ? "（研究編號或姓名）" : "（研究編號）"}
-          </label>
+      <div className="rounded-lg border border-brand-100 bg-white p-3">
+        <label className="block text-xs font-medium text-ink/60">
+          加入病人（可打研究編號{showNames ? "、姓名" : ""}、醫師或部位；打「yen」會列出所有 YEN 的病人）
+        </label>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
           <input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="例如 YEN-2024-003"
-            className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSelected(new Set());
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder="例如 yen、2024、王、楊醫師"
+            className="min-w-0 flex-1 rounded-md border border-brand-200 px-2 py-1.5 text-sm"
           />
+          {query && (
+            <button type="button" onClick={() => setQuery("")} className="text-xs text-ink/40 underline">
+              清除
+            </button>
+          )}
+          <Button type="button" size="sm" onClick={addSelected} disabled={selectedCount === 0}>
+            加入選取的 {selectedCount} 位
+          </Button>
         </div>
-        <Button type="submit" size="sm" pending={adding} pendingText="加入中…">
-          加入今日清單
-        </Button>
-      </form>
 
-      {error && <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+        {query && (
+          <div className="mt-2">
+            {matches.length === 0 ? (
+              <p className="rounded-md bg-brand-50 px-2 py-1.5 text-xs text-ink/50">
+                找不到符合「{query}」的個案（試試只打編號的一部分，或確認該病人是否已建檔）
+              </p>
+            ) : (
+              <>
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs text-ink/50">
+                  <span>
+                    符合 {matches.length} 筆
+                    {matches.length > MAX_RESULTS && `，以下顯示前 ${MAX_RESULTS} 筆——請再打細一點`}
+                  </span>
+                  {selectable.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelected(
+                          selectedCount === selectable.length ? new Set() : new Set(selectable.map((s) => s.caseId))
+                        )
+                      }
+                      className="underline hover:text-brand-700"
+                    >
+                      {selectedCount === selectable.length ? "取消全選" : `全選（${selectable.length} 位）`}
+                    </button>
+                  )}
+                </div>
+                <ul className="max-h-72 divide-y divide-brand-50 overflow-y-auto rounded-md border border-brand-100">
+                  {shown.map((c) => {
+                    const already = inListIds.has(c.caseId);
+                    const name = showNames ? names.get(c.researchId) : null;
+                    return (
+                      <li key={c.caseId}>
+                        <label
+                          className={`flex items-center gap-2 px-2 py-1.5 text-sm ${
+                            already ? "cursor-default bg-brand-50/40 text-ink/40" : "cursor-pointer hover:bg-brand-50"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected.has(c.caseId)}
+                            disabled={already}
+                            onChange={() => toggle(c.caseId)}
+                          />
+                          <span className="font-data whitespace-nowrap">{c.researchId}</span>
+                          {name && <span className="whitespace-nowrap">{name}</span>}
+                          <span className="truncate text-xs text-ink/40">
+                            {[c.doctor, c.bodySite].filter(Boolean).join(" ・ ")}
+                          </span>
+                          {already && (
+                            <span className="ml-auto whitespace-nowrap text-xs text-ink/40">已在清單中</span>
+                          )}
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {entries.length === 0 ? (
         <div className="rounded-lg border border-dashed border-brand-200 p-6 text-center text-sm text-ink/40">
