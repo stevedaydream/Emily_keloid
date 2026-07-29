@@ -96,7 +96,7 @@ export default function ClinicTodayList({ auto, today }: { auto: AutoEntry[]; to
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="例如 YAN-2024-003"
+            placeholder="例如 YEN-2024-003"
             className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
           />
         </div>

@@ -296,8 +296,8 @@
 來源：`20230912_keloid病人治療table(1)-2.xlsm` 的 `raw data (update 20230912)` 分頁（92 列 × 135 欄，表頭與平台匯出格式一致）。
 
 - **去識別化嚴格執行**：Excel 的病歷號與受試者姓名 92 筆全有值，兩者**都沒有上傳**。研究編號在匯入腳本產生，`病歷號 ↔ 研究編號 ↔ case_id` 對照寫到 `C:\Users\user\Downloads\keloid_mrn_mapping.csv`（格式對齊 `localMrnStore.ts` 的 `mrn,research_id,case_id,created_at`，可直接被 `/local-tools/mrn-mapping` 選用）。該檔只在本機、不進 git、不進 Supabase。姓名連對照表都沒收，只留在原始 Excel。匯入後掃描 `cases` 全表確認沒有任何疑似病歷號的欄位。
-- **研究編號**：`[醫師代碼]-[開刀日年份]-[序號]`，年份用該筆的原始開刀年份（非匯入當年，決策 #13），序號依醫師+年份各自從 001 起、以開刀日先後排序。分布 2019–2026，YAN 83 筆 / PU 9 筆。
-- **醫師**：`YAN` 姓名更正為「顏毓秀」；新增 `PU` 蒲啟明。
+- **研究編號**：`[醫師代碼]-[開刀日年份]-[序號]`，年份用該筆的原始開刀年份（非匯入當年，決策 #13），序號依醫師+年份各自從 001 起、以開刀日先後排序。分布 2019–2026，YEN 83 筆 / PU 9 筆。
+- **醫師**：`YEN` 姓名更正為「顏毓秀」；新增 `PU` 蒲啟明。
 - **建立的資料**：cases 92、case_keloid_lesions 81（部位英文文字，**刻意不指定部位分類**，決策：先匯文字、分類之後在個案頁手動補）、treatment_records 172（手術切除 93＋放射治療 79，其中一筆「2024/1/10;2024/11/20」拆成兩次手術）、case_schedule_items 522（歷次追蹤，狀態 done）、biobank_samples 51、case_data_completeness 1288。
 - **復發欄位的判讀取捨**：舊表 `是否復發` 只有 YES(4)/NA(56)/空(32)，且 NA 的列「復發日期」欄也有值——判定那其實是最後追蹤/統計截止日，故 NA → `recurrence_status='none'` 且該日期寫入 `followup_cutoff_date`（不寫 `recurrence_date`，避免誤判為復發）；YES → `recurred` 並帶入復發日期與天數；空 → `unknown`。**若這個判讀有誤，改一行 SQL 即可**。
 - **同意書**：舊表只記 `Y`（11 筆），沒有簽署日期，所以 `consent_signed_at` 留空、`consent_confirmed_by` 註記「舊表記為已簽署」，完整度清單列為待補。
@@ -626,7 +626,7 @@ GAS 每日排程 ─────────> 平台 /api/line/reminders（拿�
 ### 已填入的單張
 
 四則現有衛教都掛上了 **[惱人的「蟹」足腫真的可以根治？](https://sijhih.cgh.org.tw/rwd102/store/F1/3.%E6%83%B1%E4%BA%BA%E7%9A%84%E3%80%8C%E8%9F%B9%E3%80%8D%E8%B6%B3%E8%85%AB%E7%9C%9F%E7%9A%84%E5%8F%AF%E4%BB%A5%E6%A0%B9%E6%B2%BB%EF%BC%9F.pdf)**
-（汐止國泰整形外科暨醫美中心主任顏毓秀撰寫，即本專案的 YAN 醫師）。已驗證該網址回 200 / application/pdf。
+（汐止國泰整形外科暨醫美中心主任顏毓秀撰寫，即本專案的 YEN 醫師）。已驗證該網址回 200 / application/pdf。
 各則另補了 `category`（疤痕護理／傷口照護），之後要做 LINE Quick Reply 主題按鈕時可以直接用。
 
 實測：問「傷口很癢可以抓嗎」→ 依資料庫內容改寫並附上單張連結；問「停車場在哪裡」→ 回「請洽詢診間人員」。

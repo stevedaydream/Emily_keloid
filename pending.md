@@ -17,21 +17,21 @@
 
 | 研究編號 | 部位原文 | RT 劑量推出的分類 | 文字推出的分類 |
 |---|---|---|---|
-| YAN-2023-007 | R't scapular area | 耳 | 胸/肩胛 |
-| YAN-2020-005 | left breast, chest and pubic area | 其他 | 胸/肩胛 |
-| YAN-2020-006 | Left below axillary | 胸/肩胛 | 其他 |
-| YAN-2021-004 | Abdomen keloid | 胸/肩胛 | 其他 |
-| YAN-2021-007 | right upper arm | 胸/肩胛 | 其他 |
-| YAN-2022-007 | postauricular region | 其他 | 耳 |
-| YAN-2023-022 | umbilical keloid | 胸/肩胛 | 其他 |
+| YEN-2023-007 | R't scapular area | 耳 | 胸/肩胛 |
+| YEN-2020-005 | left breast, chest and pubic area | 其他 | 胸/肩胛 |
+| YEN-2020-006 | Left below axillary | 胸/肩胛 | 其他 |
+| YEN-2021-004 | Abdomen keloid | 胸/肩胛 | 其他 |
+| YEN-2021-007 | right upper arm | 胸/肩胛 | 其他 |
+| YEN-2022-007 | postauricular region | 其他 | 耳 |
+| YEN-2023-022 | umbilical keloid | 胸/肩胛 | 其他 |
 
 **判不出來（3 筆）**：
 
 | 研究編號 | 部位原文 | 問題 |
 |---|---|---|
-| YAN-2020-002 | pubic area | ~~人形圖沒有恥骨/鼠蹊區塊~~ → 2026-07-28 已新增「恥骨上區」「左/右鼠蹊」，可直接指定 |
-| YAN-2024-009 | pubic keloid | 同上（RT 劑量是 1800cGy，推出胸/肩胛，但部位明顯不符 → 建議選恥骨上區） |
-| YAN-2023-005 | left posterior keloid | 只寫「後側」，不知道是哪個部位 |
+| YEN-2020-002 | pubic area | ~~人形圖沒有恥骨/鼠蹊區塊~~ → 2026-07-28 已新增「恥骨上區」「左/右鼠蹊」，可直接指定 |
+| YEN-2024-009 | pubic keloid | 同上（RT 劑量是 1800cGy，推出胸/肩胛，但部位明顯不符 → 建議選恥骨上區） |
+| YEN-2023-005 | left posterior keloid | 只寫「後側」，不知道是哪個部位 |
 
 → 恥骨兩筆的熱區已建好（分類為「其他部位」15Gy×2），仍需人工在個案頁指定。
 
@@ -41,14 +41,14 @@
 
 | 研究編號 | 目前套用 | 部位原文 |
 |---|---|---|
-| YAN-2019-001 | 左肩 | Bilateral shoulders, right back and anterior chest keloid |
-| YAN-2019-003 | 左耳 | ear helix |
-| YAN-2020-008 | 左耳 | bilateral ear lobe |
-| YAN-2020-009 | 左耳 | Bilateral earlobe |
-| YAN-2021-005 | 左肩胛 | bilateral scapular |
+| YEN-2019-001 | 左肩 | Bilateral shoulders, right back and anterior chest keloid |
+| YEN-2019-003 | 左耳 | ear helix |
+| YEN-2020-008 | 左耳 | bilateral ear lobe |
+| YEN-2020-009 | 左耳 | Bilateral earlobe |
+| YEN-2021-005 | 左肩胛 | bilateral scapular |
 | PU-2022-001 | 左耳 | ear lobe |
-| YAN-2022-010 | 左耳 | ear lobe |
-| YAN-2023-014 | 左耳 | ear helix |
+| YEN-2022-010 | 左耳 | ear lobe |
+| YEN-2023-014 | 左耳 | ear helix |
 | PU-2024-001 | 前胸 | upper chest wall, bilateral upper arm |
 
 ### A3. 舊資料復發欄位的判讀是否正確
