@@ -10,7 +10,7 @@ export async function askHealthEducationBotAction(_prev: unknown, formData: Form
   const supabase = supabaseServer();
   const { data: kbEntries } = await supabase
     .from("health_education_kb")
-    .select("topic, content")
+    .select("id, topic, content, category, pdf_url, video_url")
     .eq("active", true)
     .order("sort_order");
 

@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
   //    決策 2026-07-26：不用免費層做個人化諮詢，機器人只依後台衛教資料庫回答。
   const { data: kbEntries } = await supabase
     .from("health_education_kb")
-    .select("topic, content")
+    .select("id, topic, content, category, pdf_url, video_url")
     .eq("active", true)
     .order("sort_order");
 

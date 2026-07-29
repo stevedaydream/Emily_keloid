@@ -6,6 +6,7 @@ import { BigChoice, BigMultiChoice, type BigChoiceOption } from "@/components/se
 import { TimeWheel, HoursWheel, YearWheel } from "@/components/senior/WheelPicker";
 import BigNumpad from "@/components/senior/BigNumpad";
 import Spinner from "@/components/ui/Spinner";
+import LineBindPrompt from "./LineBindPrompt";
 import {
   PATIENT_INTAKE_SEGMENTS,
   paginateQuestions,
@@ -341,6 +342,11 @@ export default function PatientIntakeFlow({
             <br />
             請把平板交還給診間人員。
           </p>
+          {/* 綁 LINE 放在這裡而不是流程中間：病人手機就在手上、人也還在，
+              回家後才想加好友通常就不會做了。不強制，跳過也能完成填寫。 */}
+          <div className="mx-auto mt-2 max-w-md text-left">
+            <LineBindPrompt caseId={caseId} />
+          </div>
           {/* 人員拿回平板後要知道出口在哪；字級刻意小，病人不會特別注意 */}
           <p className="mt-8 text-sm text-ink/35">診間人員：請按右上角「診間人員」返回系統</p>
         </div>
