@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { supabaseServer } from "@/lib/supabase";
 import { logAudit } from "@/lib/audit";
 import { askGeminiWithKb } from "@/lib/gemini";
-import { extractBindCode } from "@/lib/line";
+import { extractBindCode, kbQuickReplies, extractKbTopic, isKbMenuRequest } from "@/lib/line";
 import { assertRelaySecret } from "../_auth";
 
 // GAS 收到 LINE 的文字訊息後轉來這裡，平台判斷這是「綁定碼」還是「衛教提問」，
@@ -86,12 +86,41 @@ export async function POST(request: NextRequest) {
 
   // ② 其餘一律當衛教提問。刻意不帶入任何個案資料——
   //    決策 2026-07-26：不用免費層做個人化諮詢，機器人只依後台衛教資料庫回答。
-  const { data: kbEntries } = await supabase
+  const { data: kbRows } = await supabase
     .from("health_education_kb")
     .select("id, topic, content, category, pdf_url, video_url")
     .eq("active", true)
     .order("sort_order");
+  const kbEntries = kbRows ?? [];
 
-  const result = await askGeminiWithKb(text, kbEntries ?? []);
-  return NextResponse.json({ reply: result.answer, kind: "kb" });
+  // 訊息下方一律附上主題按鈕，長輩不必打字也能瀏覽衛教（Quick Reply，2026-07-29）
+  const quickReply = kbQuickReplies(kbEntries);
+
+  // ②-a 病人點了主題按鈕：直接回那一則，不必再問 Gemini（省一次呼叫也不會答錯則）
+  const topic = extractKbTopic(text);
+  if (topic) {
+    const entry = kbEntries.find((e) => e.topic === topic);
+    if (entry) {
+      let reply = `【${entry.topic}】\n${entry.content}`;
+      if (entry.video_url?.trim()) reply += `\n\n🎬 衛教影片：\n${entry.video_url.trim()}`;
+      if (entry.pdf_url?.trim()) reply += `\n\n📄 醫院衛教單張：\n${entry.pdf_url.trim()}`;
+      return NextResponse.json({ reply, kind: "kb_topic", quickReply });
+    }
+  }
+
+  // ②-b 病人輸入「衛教」「選單」等關鍵字：只給選單，不呼叫 Gemini
+  if (isKbMenuRequest(text)) {
+    return NextResponse.json({
+      reply:
+        kbEntries.length > 0
+          ? "請點選您想了解的主題，或直接輸入問題："
+          : "目前尚無衛教內容，請洽詢診間人員。",
+      kind: "kb_menu",
+      quickReply,
+    });
+  }
+
+  // ②-c 自由提問
+  const result = await askGeminiWithKb(text, kbEntries);
+  return NextResponse.json({ reply: result.answer, kind: "kb", quickReply });
 }

@@ -50,18 +50,32 @@ function callPlatform(path, method, payload) {
   return JSON.parse(text);
 }
 
-/** LINE 回覆（用 webhook 事件帶的 replyToken，免費且不佔推播額度） */
-function replyToLine(replyToken, text) {
+/**
+ * LINE 回覆（用 webhook 事件帶的 replyToken，免費且不佔推播額度）
+ * quickReply：平台回傳的 [{ label, text }]，會變成訊息下方的按鈕列，
+ * 讓長輩不用打字也能瀏覽衛教。平台沒給就是一般純文字訊息。
+ */
+function replyToLine(replyToken, text, quickReply) {
   if (!text) return;
+  var message = { type: 'text', text: String(text).slice(0, 4900) };
+
+  if (quickReply && quickReply.length > 0) {
+    message.quickReply = {
+      items: quickReply.slice(0, 13).map(function (q) {
+        return {
+          type: 'action',
+          action: { type: 'message', label: String(q.label).slice(0, 20), text: String(q.text) },
+        };
+      }),
+    };
+  }
+
   UrlFetchApp.fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'post',
     contentType: 'application/json',
     headers: { Authorization: 'Bearer ' + LINE_TOKEN },
     muteHttpExceptions: true,
-    payload: JSON.stringify({
-      replyToken: replyToken,
-      messages: [{ type: 'text', text: String(text).slice(0, 4900) }],
-    }),
+    payload: JSON.stringify({ replyToken: replyToken, messages: [message] }),
   });
 }
 
@@ -114,7 +128,7 @@ function handleEvent(event) {
       lineUserId: lineUserId,
       text: event.message.text,
     });
-    replyToLine(event.replyToken, result.reply);
+    replyToLine(event.replyToken, result.reply, result.quickReply);
     return;
   }
 
@@ -124,9 +138,10 @@ function handleEvent(event) {
     return;
   }
 
-  // 貼圖、圖片等其他事件：給一句引導，不做其他事
+  // 貼圖、圖片等其他事件：給一句引導並附上衛教主題按鈕（長輩常誤傳貼圖）
   if (event.type === 'message' && event.replyToken) {
-    replyToLine(event.replyToken, '請以文字輸入您的問題，或輸入診間提供的綁定碼。');
+    var menu = callPlatform('/api/line/message', 'post', { lineUserId: lineUserId, text: '衛教' });
+    replyToLine(event.replyToken, '請以文字輸入您的問題，或直接點選下方主題：', menu.quickReply);
   }
 }
 
