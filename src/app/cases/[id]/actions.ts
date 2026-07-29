@@ -843,3 +843,69 @@ export async function unbindLineAction(formData: FormData) {
   await logAudit({ caseId, operatorName: operator, action: "line_unbind_by_staff", entity: "cases", entityId: caseId });
   revalidatePath(`/cases/${caseId}`);
 }
+
+// ── 追蹤時程的日期與提醒（2026-07-29）─────────────────────────────
+// 時程項目的 due_date 原本是「建檔日 + 範本天數」算出來的，但真正的回診日由掛號決定，
+// 兩者常差好幾天。沒有這支 action 的話，推出去的回診提醒日子會是錯的。
+
+export async function updateScheduleItemDateAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const itemId = formData.get("item_id") as string;
+  const dueDate = ((formData.get("due_date") as string) ?? "").trim();
+  const remind = formData.get("remind") === "on";
+  const operator = await operatorOrThrow();
+  if (!caseId || !itemId || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return;
+
+  const supabase = supabaseServer();
+  const { data: item } = await supabase
+    .from("case_schedule_items")
+    .select("actions, due_date")
+    .eq("id", itemId)
+    .single();
+
+  // 提醒與否跟日期在同一個表單，所以一起寫；actions 其餘動作（問卷／拍照）保持不動。
+  const actions: string[] = (item?.actions ?? []).filter((a: string) => a !== "visit_reminder");
+  if (remind) actions.push("visit_reminder");
+
+  await supabase.from("case_schedule_items").update({ due_date: dueDate, actions }).eq("id", itemId);
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "update_schedule_item_date",
+    entity: "case_schedule_items",
+    entityId: itemId,
+    detail: { from: item?.due_date ?? null, to: dueDate, remind },
+  });
+  revalidatePath(`/cases/${caseId}`);
+  revalidatePath("/clinic-today");
+}
+
+/** 範本外的臨時回診（例：「兩週後回來看傷口」）。追蹤時程實務上很難完全照範本走。 */
+export async function addScheduleItemAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const label = ((formData.get("label") as string) ?? "").trim() || "臨時回診";
+  const dueDate = ((formData.get("due_date") as string) ?? "").trim();
+  const remind = formData.get("remind") === "on";
+  const operator = await operatorOrThrow();
+  if (!caseId || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return;
+
+  const supabase = supabaseServer();
+  await supabase.from("case_schedule_items").insert({
+    case_id: caseId,
+    label,
+    due_date: dueDate,
+    status: "pending",
+    actions: remind ? ["visit_reminder"] : [],
+  });
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "add_schedule_item",
+    entity: "case_schedule_items",
+    detail: { label, dueDate, remind },
+  });
+  revalidatePath(`/cases/${caseId}`);
+  revalidatePath("/clinic-today");
+}

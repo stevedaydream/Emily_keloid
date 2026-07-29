@@ -160,6 +160,8 @@ function sendDailyReminders() {
       caseId: r.caseId,
       refId: r.refId,
       dueDate: r.dueDate,
+      // 提前提醒與當天提醒是兩則，回報時要帶著才不會被平台的唯一索引當成同一筆
+      leadDays: r.leadDays,
       lineUserId: r.lineUserId,
       message: r.message,
     };
