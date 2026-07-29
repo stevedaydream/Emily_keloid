@@ -40,10 +40,12 @@ export default function UploadForm() {
     <form onSubmit={handleSubmit} className="space-y-3 rounded-lg border border-brand-100 bg-white p-4">
       <div>
         <label className="block text-xs font-medium text-ink/60">選擇檔案（.csv / .xlsx / .xlsm）</label>
+        {/* 不設 accept：Android 的檔案選擇器依系統認定的 MIME type 過濾而非副檔名，
+            同一個 .csv/.xlsx 因來源不同會被標成 octet-stream 等而變灰選不到。
+            副檔名與內容格式由伺服器端解析時驗證。 */}
         <input
           type="file"
           name="file"
-          accept=".csv,.xlsx,.xlsm,.txt"
           required
           className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
         />
