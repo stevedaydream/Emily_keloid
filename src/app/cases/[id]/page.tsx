@@ -13,6 +13,8 @@ import {
   updatePriorHistoryAction,
   addLabResultsBatchAction,
   deleteLabResultAction,
+  updateScheduleItemDateAction,
+  addScheduleItemAction,
 } from "./actions";
 import TreatmentForm from "./TreatmentForm";
 import TreatmentRecordList from "./TreatmentRecordList";
@@ -1269,8 +1271,34 @@ export default async function CaseDetailPage({
       <section id="section-schedule" data-nav-section data-nav-label="追蹤時程" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           追蹤時程
-          <InfoTooltip text="個案套用時程範本後自動產生的追蹤項目。待處理項目可點連結直接填問卷或拍照，完成後記得標記完成。" />
+          <InfoTooltip text="套用範本後自動產生的追蹤項目，日期是「建檔日＋範本天數」的預估值。實際約診日確定後請改成正確日期——LINE 回診提醒是依這個日期推播的（提前 3 天與當天各一則）。" />
         </h2>
+
+        {/* 臨時回診：實務上追蹤很難完全照範本走（例：「兩週後回來看傷口」） */}
+        <details className="mb-3 rounded-md border border-brand-100 bg-paper-sunken p-2">
+          <summary className="cursor-pointer text-xs text-brand-800">＋ 新增一次回診（範本以外）</summary>
+          <form action={addScheduleItemAction} className="mt-2 flex flex-wrap items-end gap-2">
+            <input type="hidden" name="case_id" value={id} />
+            <div>
+              <label className="block text-xs text-ink/50">名稱</label>
+              <input
+                name="label"
+                placeholder="例：拆線回診"
+                className="mt-0.5 w-36 rounded-md border border-brand-200 px-2 py-1 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-ink/50">回診日期</label>
+              <input type="date" name="due_date" required className="mt-0.5 rounded-md border border-brand-200 px-2 py-1 text-sm" />
+            </div>
+            <label className="flex items-center gap-1 text-xs text-ink/60">
+              <input type="checkbox" name="remind" defaultChecked /> LINE 提醒
+            </label>
+            <SubmitButton variant="outline" size="sm" pendingText="新增中…">
+              新增
+            </SubmitButton>
+          </form>
+        </details>
         <ul className="space-y-2">
           {(scheduleItems ?? []).map((item) => (
             <li key={item.id} className="rounded-md border border-brand-100 bg-paper-raised px-3 py-2 text-sm">
@@ -1297,6 +1325,32 @@ export default async function CaseDetailPage({
                     {item.status === "done" ? "已完成" : item.status === "skipped" ? "已跳過" : "待處理"}
                   </span>
                 </div>
+
+                {/* 改期：範本算出來的日期只是預估，實際約診日確定後改這裡，提醒才會在對的日子送出 */}
+                {item.status === "pending" && (
+                  <form action={updateScheduleItemDateAction} className="flex flex-wrap items-center gap-2 text-xs">
+                    <input type="hidden" name="case_id" value={id} />
+                    <input type="hidden" name="item_id" value={item.id} />
+                    <span className="text-ink/40">實際回診日</span>
+                    <input
+                      type="date"
+                      name="due_date"
+                      defaultValue={item.due_date ?? ""}
+                      className="rounded border border-brand-200 px-1.5 py-0.5 text-xs"
+                    />
+                    <label className="flex items-center gap-1 text-ink/60">
+                      <input
+                        type="checkbox"
+                        name="remind"
+                        defaultChecked={(item.actions ?? []).includes("visit_reminder")}
+                      />
+                      LINE 提醒
+                    </label>
+                    <SubmitButton variant="ghost" size="sm" className="!px-1 !py-0 text-xs underline" pendingText="儲存中…">
+                      儲存日期
+                    </SubmitButton>
+                  </form>
+                )}
                 {item.status === "pending" && (
                   <div className="-mx-3 overflow-x-auto px-3">
                     <span className="flex w-max items-center gap-3 whitespace-nowrap">

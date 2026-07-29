@@ -93,6 +93,8 @@ export type PendingReminder = {
   researchId: string;
   refId: string;
   dueDate: string;
+  /** 提前幾天送出這則。3＝提前提醒、0＝當天（含逾期補推）。同一個項目兩則各推一次。 */
+  leadDays: number;
   lineUserId: string;
   message: string;
 };
@@ -101,14 +103,17 @@ export type PendingReminder = {
  * 組提醒訊息。**刻意不帶任何可識別身分的內容**（不放研究編號、不放部位、不放病歷號）——
  * LINE 訊息可能被家人看到，也可能出現在鎖定畫面的通知上。
  */
-export function visitReminderMessage(dueDate: string, label: string): string {
-  return [
-    "【回診提醒】",
-    `您有一次追蹤預定於 ${dueDate}（${label}）。`,
-    "請依約回診，若需要改期請與診間聯繫。",
-    "",
-    "（此為自動提醒，請勿直接回覆此訊息以外的個人資料）",
-  ].join("\n");
+/** 回診提醒提前幾天先通知一次（決策 2026-07-29：提前 3 天＋當天各一則）。 */
+export const VISIT_REMINDER_LEAD_DAYS = 3;
+
+export function visitReminderMessage(dueDate: string, label: string, leadDays: number): string {
+  // 提前那則要讓病人「來得及安排」，當天那則要讓他「今天別忘了」——目的不同，措辭也不同。
+  const head =
+    leadDays > 0
+      ? [`【回診提醒】`, `提醒您，${dueDate}（${label}）安排了回診，還有 ${leadDays} 天。`, "若當天不方便，請提前與診間聯繫改期。"]
+      : [`【今日回診提醒】`, `今天是您預定回診的日子（${label}）。`, "請記得前來，若臨時無法前往請與診間聯繫。"];
+
+  return [...head, "", "（此為自動提醒，請勿直接回覆此訊息以外的個人資料）"].join("\n");
 }
 
 export function radiotherapyReminderMessage(dueDate: string, fractionNo: number, totalFractions: number): string {
@@ -121,11 +126,19 @@ export function radiotherapyReminderMessage(dueDate: string, fractionNo: number,
   ].join("\n");
 }
 
+/** date 加減天數，回傳 YYYY-MM-DD。用 UTC 避免跨時區時多跳一天。 */
+function shiftDate(date: string, days: number): string {
+  const d = new Date(date + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 /**
  * 撈出指定日期該推的提醒。
- * - 回診：`case_schedule_items` 裡 pending、動作含 `visit_reminder`、到期日 ≤ 指定日期（逾期的也要提醒）
- * - 放療：`radiotherapy_sessions` 裡 pending、到期日 = 指定日期（放療是當天的事，逾期補推沒有意義）
- * 兩者都只挑**已綁定 LINE**的個案，並排除今天已經推過的（依 line_reminder_log 的唯一索引）。
+ * - 回診：`case_schedule_items` 裡 pending、動作含 `visit_reminder`，分兩則——
+ *     提前提醒（到期日 = 指定日期 + 3）與 當天提醒（到期日 ≤ 指定日期，逾期一併補推）
+ * - 放療：`radiotherapy_sessions` 裡 pending、到期日 = 指定日期（放療是當天的事，隔天才推只會造成困惑）
+ * 兩者都只挑**已綁定 LINE**的個案，並排除已經推過的（依 line_reminder_log 的唯一索引，含 lead_days）。
  */
 export async function collectDueReminders(
   supabase: SupabaseClient,
@@ -141,12 +154,15 @@ export async function collectDueReminders(
   if (caseById.size === 0) return [];
   const caseIds = [...caseById.keys()];
 
+  const leadDate = shiftDate(date, VISIT_REMINDER_LEAD_DAYS);
+
   const [{ data: visits }, { data: sessions }, { data: alreadySent }] = await Promise.all([
     supabase
       .from("case_schedule_items")
       .select("id, case_id, label, due_date, actions")
       .eq("status", "pending")
-      .lte("due_date", date)
+      // 一次撈到「已逾期到提前 3 天」這個區間，下面再依各自的 due_date 決定要送哪一則
+      .lte("due_date", leadDate)
       .in("case_id", caseIds),
     supabase
       .from("radiotherapy_sessions")
@@ -154,30 +170,41 @@ export async function collectDueReminders(
       .eq("status", "pending")
       .eq("due_date", date)
       .in("case_id", caseIds),
-    supabase.from("line_reminder_log").select("kind, ref_id, due_date").eq("status", "sent"),
+    supabase.from("line_reminder_log").select("kind, ref_id, due_date, lead_days").eq("status", "sent"),
   ]);
 
-  const sentKey = new Set((alreadySent ?? []).map((r) => `${r.kind}:${r.ref_id}:${r.due_date}`));
+  const sentKey = new Set(
+    (alreadySent ?? []).map((r) => `${r.kind}:${r.ref_id}:${r.due_date}:${r.lead_days ?? 0}`)
+  );
   const out: PendingReminder[] = [];
 
   for (const item of visits ?? []) {
     const actions: string[] = item.actions ?? [];
     if (!actions.includes("visit_reminder")) continue;
-    if (sentKey.has(`visit:${item.id}:${item.due_date}`)) continue;
     const c = caseById.get(item.case_id)!;
-    out.push({
-      kind: "visit",
-      caseId: item.case_id,
-      researchId: c.research_id,
-      refId: item.id,
-      dueDate: item.due_date,
-      lineUserId: c.line_user_id,
-      message: visitReminderMessage(item.due_date, item.label),
-    });
+
+    // 只在 T-3 與 T-0 這兩天推；中間那兩天刻意不推，免得變成連環訊息。
+    const stages: number[] = [];
+    if (item.due_date === leadDate) stages.push(VISIT_REMINDER_LEAD_DAYS);
+    if (item.due_date <= date) stages.push(0); // 當天，以及逾期未完成的補推
+
+    for (const leadDays of stages) {
+      if (sentKey.has(`visit:${item.id}:${item.due_date}:${leadDays}`)) continue;
+      out.push({
+        kind: "visit",
+        caseId: item.case_id,
+        researchId: c.research_id,
+        refId: item.id,
+        dueDate: item.due_date,
+        leadDays,
+        lineUserId: c.line_user_id,
+        message: visitReminderMessage(item.due_date, item.label, leadDays),
+      });
+    }
   }
 
   for (const s of sessions ?? []) {
-    if (sentKey.has(`radiotherapy:${s.id}:${s.due_date}`)) continue;
+    if (sentKey.has(`radiotherapy:${s.id}:${s.due_date}:0`)) continue;
     const c = caseById.get(s.case_id)!;
     out.push({
       kind: "radiotherapy",
@@ -185,6 +212,7 @@ export async function collectDueReminders(
       researchId: c.research_id,
       refId: s.id,
       dueDate: s.due_date,
+      leadDays: 0,
       lineUserId: c.line_user_id,
       message: radiotherapyReminderMessage(s.due_date, s.fraction_no, s.total_fractions),
     });

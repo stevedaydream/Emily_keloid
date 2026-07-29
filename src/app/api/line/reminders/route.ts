@@ -33,6 +33,7 @@ type AckItem = {
   caseId: string;
   refId: string;
   dueDate: string;
+  leadDays?: number;
   lineUserId?: string;
   message?: string;
   status?: "sent" | "failed";
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest) {
       due_date: r.dueDate,
       line_user_id: r.lineUserId ?? null,
       message: r.message ?? null,
+      lead_days: typeof r.leadDays === "number" ? r.leadDays : 0,
       status: r.status === "failed" ? "failed" : "sent",
       error: r.error ?? null,
     }));
