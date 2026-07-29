@@ -1,5 +1,9 @@
 @echo off
 chcp 65001 > nul
+:: Delayed expansion is required: variables set inside an if/for block are not
+:: visible with %VAR% until the block finishes, so the deployment id read from
+:: the file has to be referenced as !DEPLOY_ID!.
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 :MENU
@@ -49,16 +53,9 @@ if %errorlevel% equ 0 (
     goto MENU
 )
 
-for /f "tokens=1-3 delims=/" %%a in ("%date%") do (
-    set YY=%%a
-    set MM=%%b
-    set DD=%%c
-)
-for /f "tokens=1-2 delims=:" %%a in ("%time: =0%") do (
-    set HH=%%a
-    set MIN=%%b
-)
-set DESC=%YY%%MM%%DD%_%HH%%MIN%
+:: %date% 的格式隨系統地區設定而異（中文 Windows 還會帶星期），
+:: 直接叫 PowerShell 取一個固定格式最省事。
+for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmm"') do set DESC=%%i
 
 echo [clasp push]
 call clasp push --force
@@ -77,13 +74,14 @@ echo [clasp deploy]
 :: would silently break the bot.
 if exist "gas\deployment-id.txt" (
     set /p DEPLOY_ID=<gas\deployment-id.txt
-    call clasp deploy -i %DEPLOY_ID% -d "%DESC%"
+    echo Updating deployment !DEPLOY_ID!
+    call clasp deploy -i !DEPLOY_ID! -d "!DESC!"
 ) else (
     echo No gas\deployment-id.txt found -- creating a NEW deployment.
     echo After it finishes, copy the deployment id into gas\deployment-id.txt
     echo so future deploys update this same URL instead of making new ones.
     echo.
-    call clasp deploy -d "%DESC%"
+    call clasp deploy -d "!DESC!"
 )
 if %errorlevel% neq 0 (
     echo.
@@ -93,7 +91,7 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [DONE] Push and deploy completed. (%DESC%)
+echo [DONE] Push and deploy completed. (!DESC!)
 echo Reminder: the webhook URL only stays the same if you reused a deployment id.
 pause
 goto MENU
