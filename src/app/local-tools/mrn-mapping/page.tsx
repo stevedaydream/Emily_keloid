@@ -131,9 +131,11 @@ export default function MrnMappingPage() {
               選一份對照表 CSV，姓名就會顯示在各頁面，方便開發時對問題。
               <b>只讀不寫、不會存進這台裝置</b>，重新整理或關掉分頁就沒了，也無法新增對應。
             </p>
+            {/* 不設 accept：Android 的檔案選擇器是依系統認定的 MIME type 過濾，不是看副檔名。
+                同樣是 .csv，來源不同會被標成 application/vnd.ms-excel、application/octet-stream
+                等等，設了 accept 就會整批變灰選不到。內容本來就由 readRowsFromFile 驗證。 */}
             <input
               type="file"
-              accept=".csv,text/csv"
               onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
@@ -143,7 +145,8 @@ export default function MrnMappingPage() {
                   setSessionRows(await readRowsFromFile(file));
                   if (total === 0) setError("這份 CSV 沒有資料列（只有表頭或是空檔）");
                 } catch (err) {
-                  setError(err instanceof Error ? err.message : "讀取 CSV 失敗");
+                  const detail = err instanceof Error ? err.message : "讀取 CSV 失敗";
+                  setError(`${detail}（請確認選到的是對照表 CSV：${file.name}）`);
                 }
               }}
               className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-sky-600 file:px-3 file:py-2 file:text-white"
