@@ -21,6 +21,26 @@ export default async function ClinicTodayPage() {
 
   const researchIdById = new Map((cases ?? []).map((c) => [c.id, c.research_id]));
 
+  // 搜尋用的完整個案清單一次送到瀏覽器（不到百筆、幾 KB），比對全部在前端做。
+  // 這不只是省一次往返：助理很可能直接打病人姓名，而姓名只存在本機對照表——
+  // 若改成把關鍵字送去伺服器搜尋，等於把姓名送上雲端，決策 #1 就破了。
+  const { data: allCases } = await supabase
+    .from("cases")
+    .select("id, research_id, body_site, enrollment_year, data_source, doctors(code, name)")
+    .order("research_id");
+
+  const searchable = (allCases ?? []).map((c) => {
+    const doctor = Array.isArray(c.doctors) ? c.doctors[0] : c.doctors;
+    return {
+      caseId: c.id,
+      researchId: c.research_id ?? "",
+      bodySite: c.body_site ?? "",
+      enrollmentYear: c.enrollment_year ?? null,
+      dataSource: c.data_source ?? "",
+      doctor: doctor ? `${doctor.code} ${doctor.name}` : "",
+    };
+  });
+
   const auto = caseIds.map((id) => {
     const own = (items ?? []).filter((i) => i.case_id === id);
     const overdue = own.filter((i) => i.due_date < today).length;
@@ -43,7 +63,7 @@ export default async function ClinicTodayPage() {
         </p>
       </div>
 
-      <ClinicTodayList auto={auto} today={today} />
+      <ClinicTodayList auto={auto} today={today} searchable={searchable} />
     </div>
   );
 }
