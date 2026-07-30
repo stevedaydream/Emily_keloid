@@ -3,7 +3,17 @@ import type { NextRequest } from "next/server";
 import { supabaseServer } from "@/lib/supabase";
 import { logAudit } from "@/lib/audit";
 import { askGeminiWithKb } from "@/lib/gemini";
-import { extractBindCode, kbQuickReplies, extractKbTopic, isKbMenuRequest } from "@/lib/line";
+import {
+  extractBindCode,
+  extractKbTopic,
+  extractKbCategory,
+  isKbMenuRequest,
+  kbCategoryOf,
+  kbMenuQuickReplies,
+  kbTopicQuickReplies,
+  withKbMenuHint,
+} from "@/lib/line";
+import { loadLineTemplates } from "@/lib/lineTemplates";
 import { assertRelaySecret } from "../_auth";
 
 // GAS 收到 LINE 的文字訊息後轉來這裡，平台判斷這是「綁定碼」還是「衛教提問」，
@@ -19,9 +29,13 @@ export async function POST(request: NextRequest) {
   const text = (body?.text ?? "").trim();
 
   if (!lineUserId) return NextResponse.json({ error: "缺少 lineUserId" }, { status: 400 });
-  if (!text) return NextResponse.json({ reply: "請直接輸入您的問題，或輸入診間提供的綁定碼完成綁定。" });
 
   const supabase = supabaseServer();
+  // 所有對外文案都走後台可維護的樣板（/admin/line-messages），撈不到就回退程式裡的預設值。
+  const t = await loadLineTemplates(supabase);
+
+  if (!text) return NextResponse.json({ reply: t.text("bind.empty_text") });
+
   const code = extractBindCode(text);
 
   // ① 綁定碼
@@ -33,10 +47,10 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     if (!target) {
-      return NextResponse.json({ reply: "綁定碼不正確，請確認診間提供的內容，或請診間重新產生一組。" });
+      return NextResponse.json({ reply: t.text("bind.code_invalid") });
     }
     if (target.line_bind_code_expires_at && new Date(target.line_bind_code_expires_at) < new Date()) {
-      return NextResponse.json({ reply: "這組綁定碼已逾期，請洽診間重新產生。" });
+      return NextResponse.json({ reply: t.text("bind.code_expired") });
     }
 
     // 這支 LINE 帳號已經綁在別的個案上（line_user_id 有唯一索引，直接寫會撞）
@@ -46,9 +60,7 @@ export async function POST(request: NextRequest) {
       .eq("line_user_id", lineUserId)
       .maybeSingle();
     if (existing && existing.id !== target.id) {
-      return NextResponse.json({
-        reply: "這個 LINE 帳號已經完成過綁定。若需要更換，請洽診間協助解除後再重新綁定。",
-      });
+      return NextResponse.json({ reply: t.text("bind.already_bound") });
     }
 
     const { error } = await supabase
@@ -62,7 +74,7 @@ export async function POST(request: NextRequest) {
       })
       .eq("id", target.id);
     if (error) {
-      return NextResponse.json({ reply: "綁定時發生問題，請稍後再試或洽診間協助。" }, { status: 200 });
+      return NextResponse.json({ reply: t.text("bind.failed") }, { status: 200 });
     }
 
     await logAudit({
@@ -73,15 +85,7 @@ export async function POST(request: NextRequest) {
       entityId: target.id,
     });
 
-    return NextResponse.json({
-      reply: [
-        "綁定完成！",
-        "之後回診與放射治療的提醒會透過這裡通知您。",
-        "",
-        "您也可以直接輸入問題詢問傷口照顧相關的衛教內容。",
-      ].join("\n"),
-      bound: true,
-    });
+    return NextResponse.json({ reply: t.text("bind.success"), bound: true });
   }
 
   // ② 其餘一律當衛教提問。刻意不帶入任何個案資料——
@@ -90,11 +94,15 @@ export async function POST(request: NextRequest) {
     .from("health_education_kb")
     .select("id, topic, content, category, pdf_url, video_url")
     .eq("active", true)
-    .order("sort_order");
+    .order("sort_order")
+    // sort_order 沒特別設定時全是同一個值，只靠它排序 Postgres 不保證順序，
+    // 會導致「哪幾則排進按鈕列」每次不一樣。加這個 tiebreaker 讓順序穩定可預期。
+    .order("created_at");
   const kbEntries = kbRows ?? [];
 
-  // 訊息下方一律附上主題按鈕，長輩不必打字也能瀏覽衛教（Quick Reply，2026-07-29）
-  const quickReply = kbQuickReplies(kbEntries);
+  // 訊息下方一律附上按鈕，長輩不必打字也能瀏覽衛教（Quick Reply，2026-07-29）。
+  // 內容超過一則訊息裝得下的量時，自動改成「分類 → 主題」兩層（2026-07-30）。
+  const menu = kbMenuQuickReplies(kbEntries, t);
 
   // ②-a 病人點了主題按鈕：直接回那一則，不必再問 Gemini（省一次呼叫也不會答錯則）
   const topic = extractKbTopic(text);
@@ -104,23 +112,42 @@ export async function POST(request: NextRequest) {
       let reply = `【${entry.topic}】\n${entry.content}`;
       if (entry.video_url?.trim()) reply += `\n\n🎬 衛教影片：\n${entry.video_url.trim()}`;
       if (entry.pdf_url?.trim()) reply += `\n\n📄 醫院衛教單張：\n${entry.pdf_url.trim()}`;
-      return NextResponse.json({ reply, kind: "kb_topic", quickReply });
+      // 看完一則之後留在同一分類，病人可以一路往下看；單層模式就直接給全部主題。
+      const quickReply = menu.grouped
+        ? kbTopicQuickReplies(kbEntries, kbCategoryOf(entry, t), true, t)
+        : menu.items;
+      return NextResponse.json({ reply: withKbMenuHint(reply, t), kind: "kb_topic", quickReply });
     }
   }
 
-  // ②-b 病人輸入「衛教」「選單」等關鍵字：只給選單，不呼叫 Gemini
-  if (isKbMenuRequest(text)) {
+  // ②-b 病人點了分類按鈕：列出該分類底下的主題（第二層）
+  const category = extractKbCategory(text);
+  if (category) {
+    const items = kbTopicQuickReplies(kbEntries, category, true, t);
+    // items 末尾那顆是返回鈕，長度 1 代表這個分類其實沒有主題（分類剛被改名等情況），
+    // 這時不要回一個空選單，往下當一般提問處理。
+    if (items.length > 1) {
+      return NextResponse.json({
+        reply: t.text("menu.prompt.category", { category }),
+        kind: "kb_category",
+        quickReply: items,
+      });
+    }
+  }
+
+  // ②-c 病人輸入「衛教」「選單」等關鍵字：只給選單，不呼叫 Gemini
+  if (isKbMenuRequest(text, t)) {
     return NextResponse.json({
       reply:
-        kbEntries.length > 0
-          ? "請點選您想了解的主題，或直接輸入問題："
-          : "目前尚無衛教內容，請洽詢診間人員。",
+        kbEntries.length === 0
+          ? t.text("menu.empty")
+          : t.text(menu.grouped ? "menu.prompt.grouped" : "menu.prompt.single"),
       kind: "kb_menu",
-      quickReply,
+      quickReply: menu.items,
     });
   }
 
-  // ②-c 自由提問
-  const result = await askGeminiWithKb(text, kbEntries);
-  return NextResponse.json({ reply: result.answer, kind: "kb", quickReply });
+  // ②-d 自由提問
+  const result = await askGeminiWithKb(text, kbEntries, t);
+  return NextResponse.json({ reply: withKbMenuHint(result.answer, t), kind: "kb", quickReply: menu.items });
 }

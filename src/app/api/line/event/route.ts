@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { supabaseServer } from "@/lib/supabase";
 import { logAudit } from "@/lib/audit";
+import { loadLineTemplates } from "@/lib/lineTemplates";
 import { assertRelaySecret } from "../_auth";
 
 // 加好友 / 封鎖等非訊息事件。
@@ -43,14 +44,8 @@ export async function POST(request: NextRequest) {
 
   if (type === "follow") {
     // 剛加好友還不知道是誰，給一段引導；綁定要等他送出綁定碼（或掃 QR 預填後送出）
-    return NextResponse.json({
-      reply: [
-        "您好，這裡是蟹足腫研究團隊的通知帳號。",
-        "",
-        "請輸入診間提供的綁定碼（或直接掃描診間給您的 QR code），完成後就會在這裡收到回診與治療提醒。",
-        "也可以直接輸入問題詢問傷口照顧的衛教內容。",
-      ].join("\n"),
-    });
+    const t = await loadLineTemplates(supabase);
+    return NextResponse.json({ reply: t.text("bind.welcome") });
   }
 
   return NextResponse.json({ ok: true, ignored: type });
