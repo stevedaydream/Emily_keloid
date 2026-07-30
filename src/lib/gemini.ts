@@ -1,4 +1,10 @@
 // Gemini API 免費層呼叫（決策 2026-07-26：僅能依後台衛教資料庫內容回答，不帶入病人個資）。
+import {
+  AI_SAFETY_RULES,
+  DEFAULT_LINE_TEMPLATES,
+  type LineTemplates,
+} from "./lineTemplates";
+
 const GEMINI_MODEL = "gemini-flash-latest";
 
 export type KbEntry = {
@@ -67,29 +73,32 @@ ${catalog}
   return entries[index - 1];
 }
 
-export async function askGeminiWithKb(question: string, kbEntries: KbEntry[]) {
+export async function askGeminiWithKb(
+  question: string,
+  kbEntries: KbEntry[],
+  t: LineTemplates = DEFAULT_LINE_TEMPLATES
+) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return { ok: false as const, answer: "尚未設定 Gemini API 金鑰（環境變數 GEMINI_API_KEY），請聯繫系統管理者設定。", entry: null };
+    return { ok: false as const, answer: t.text("ai.no_api_key"), entry: null };
   }
 
   const matched = await matchKbEntry(question, kbEntries, apiKey);
   if (!matched) {
     return {
       ok: true as const,
-      answer: "這個問題建議您洽詢診間人員，我們會盡快協助您。",
+      answer: t.text("ai.no_match"),
       entry: null,
     };
   }
 
   // 比對到之後才改寫語氣，而且只餵那一則——模型看不到其他主題，就不會把別則的內容混進來。
-  const systemInstruction = `你是蟹足腫衛教機器人。請用親切、簡短、口語的方式，把下面這則衛教內容說給病人聽。
+  // 語氣（ai.tone）後台可改，AI_SAFETY_RULES 一律接在後面且不開放修改——
+  // 「只依資料庫回答、不得更動數字、不得索取個資」是決策 2026-07-26 的 IRB 前提，
+  // 不能因為有人在後台改了語氣就一起被改掉。
+  const systemInstruction = `${t.text("ai.tone")}
 
-規則：
-- 只能根據這則內容回答，不可以加入任何資料庫以外的醫學知識或自行推論
-- 不要更動任何數字（天數、時數、劑量、溫度）
-- 不要要求或記錄病人的個人資料（姓名、病歷號、聯絡方式等）
-- 3-6 行以內，不要條列超過 5 點
+${AI_SAFETY_RULES}
 
 衛教主題：${matched.topic}
 衛教內容：
