@@ -14,6 +14,7 @@ import {
   withKbMenuHint,
 } from "@/lib/line";
 import { loadLineTemplates } from "@/lib/lineTemplates";
+import { logBotFailure } from "@/lib/botLog";
 import { assertRelaySecret } from "../_auth";
 
 // GAS 收到 LINE 的文字訊息後轉來這裡，平台判斷這是「綁定碼」還是「衛教提問」，
@@ -149,5 +150,11 @@ export async function POST(request: NextRequest) {
 
   // ②-d 自由提問
   const result = await askGeminiWithKb(text, kbEntries, t);
-  return NextResponse.json({ reply: withKbMenuHint(result.answer, t), kind: "kb", quickReply: menu.items });
+  // 失敗留痕，否則額度爆掉時只會看到每個提問都回同一句、查不出原因（後台「LINE 紀錄」頁看得到）
+  if (result.failure) await logBotFailure(supabase, result.failure, "line");
+  return NextResponse.json({
+    reply: withKbMenuHint(result.answer, t),
+    kind: result.failure?.stage === "gemini_match" ? "kb_error" : "kb",
+    quickReply: menu.items,
+  });
 }

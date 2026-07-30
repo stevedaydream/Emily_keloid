@@ -279,6 +279,17 @@ export const LINE_TEMPLATES: LineTemplateDef[] = [
     defaultValue: "這個問題建議您洽詢診間人員，我們會盡快協助您。",
   },
   {
+    key: "ai.error",
+    group: "ai",
+    label: "AI 暫時無法回應",
+    description:
+      "免費層額度用完、被限流、或連不上 Gemini 時用這則。刻意跟「查無相關內容」分開——" +
+      "兩者混用的話，額度爆掉時每個提問都會被推去診間，而且誰也看不出來是壞掉還是真的沒這題。" +
+      "發生時會寫進 LINE 紀錄頁的「機器人錯誤」。",
+    kind: "multiline",
+    defaultValue: "抱歉，衛教小幫手暫時無法回答，請稍後再試一次。\n若有急需，請直接洽詢診間人員。",
+  },
+  {
     key: "ai.tone",
     group: "ai",
     label: "AI 回應語氣",
