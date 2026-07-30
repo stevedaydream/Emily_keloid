@@ -180,7 +180,10 @@ export type PendingReminder = {
   /** 提前幾天送出這則。3＝提前提醒、0＝當天（含逾期補推）。同一個項目兩則各推一次。 */
   leadDays: number;
   lineUserId: string;
+  /** 完整訊息（含共用結尾）。單筆推播用。 */
   message: string;
+  /** 不含共用結尾的本文。合併同一人同一天的多則時用，避免結尾重複出現。 */
+  body: string;
 };
 
 /**
@@ -196,15 +199,33 @@ function withReminderFooter(body: string, t: LineTemplates): string {
   return footer ? `${body}\n\n${footer}` : body;
 }
 
+/** 本文（不含共用結尾）。提前那則要讓病人「來得及安排」，當天那則要讓他「今天別忘了」——目的不同，措辭也不同。 */
+export function visitReminderBody(
+  dueDate: string,
+  label: string,
+  leadDays: number,
+  t: LineTemplates = DEFAULT_LINE_TEMPLATES
+): string {
+  const key = leadDays > 0 ? "reminder.visit.lead" : "reminder.visit.today";
+  return t.text(key, { dueDate, label, leadDays });
+}
+
 export function visitReminderMessage(
   dueDate: string,
   label: string,
   leadDays: number,
   t: LineTemplates = DEFAULT_LINE_TEMPLATES
 ): string {
-  // 提前那則要讓病人「來得及安排」，當天那則要讓他「今天別忘了」——目的不同，措辭也不同。
-  const key = leadDays > 0 ? "reminder.visit.lead" : "reminder.visit.today";
-  return withReminderFooter(t.text(key, { dueDate, label, leadDays }), t);
+  return withReminderFooter(visitReminderBody(dueDate, label, leadDays, t), t);
+}
+
+export function radiotherapyReminderBody(
+  dueDate: string,
+  fractionNo: number,
+  totalFractions: number,
+  t: LineTemplates = DEFAULT_LINE_TEMPLATES
+): string {
+  return t.text("reminder.radiotherapy", { dueDate, fractionNo, totalFractions });
 }
 
 export function radiotherapyReminderMessage(
@@ -213,7 +234,57 @@ export function radiotherapyReminderMessage(
   totalFractions: number,
   t: LineTemplates = DEFAULT_LINE_TEMPLATES
 ): string {
-  return withReminderFooter(t.text("reminder.radiotherapy", { dueDate, fractionNo, totalFractions }), t);
+  return withReminderFooter(radiotherapyReminderBody(dueDate, fractionNo, totalFractions, t), t);
+}
+
+export type PendingPushItem = {
+  kind: ReminderKind;
+  caseId: string;
+  refId: string;
+  dueDate: string;
+  leadDays: number;
+};
+
+export type PendingPush = {
+  lineUserId: string;
+  /** 已合併好的訊息（多則本文之間空一行，共用結尾只出現一次）。 */
+  message: string;
+  /** 這一次推播涵蓋的提醒項目，GAS 回報時要逐筆寫進 line_reminder_log。 */
+  items: PendingPushItem[];
+};
+
+/**
+ * 把同一個病人同一天的多則提醒合併成**一次推播**。
+ *
+ * 為什麼要合併：LINE 的 push 會計入官方帳號的月額度，而 reply（病人主動傳訊時的回覆）不會。
+ * 提醒是系統主動發的、沒有 replyToken 可用，只能走 push，所以能省的只有「則數」。
+ * 同一人同一天同時有回診與放療時，原本吃 2 則額度，合併後只吃 1 則。
+ *
+ * 回報仍然是逐筆（items），這樣 line_reminder_log 的唯一索引（kind+ref_id+due_date+lead_days）
+ * 才擋得住重複推播——合併只影響「送幾次」，不影響「哪些項目算推過了」。
+ */
+export function groupRemindersForPush(
+  reminders: PendingReminder[],
+  t: LineTemplates = DEFAULT_LINE_TEMPLATES
+): PendingPush[] {
+  const byUser = new Map<string, PendingReminder[]>();
+  for (const r of reminders) {
+    const list = byUser.get(r.lineUserId);
+    if (list) list.push(r);
+    else byUser.set(r.lineUserId, [r]);
+  }
+
+  return [...byUser.entries()].map(([lineUserId, group]) => ({
+    lineUserId,
+    message: withReminderFooter(group.map((r) => r.body).join("\n\n"), t),
+    items: group.map((r) => ({
+      kind: r.kind,
+      caseId: r.caseId,
+      refId: r.refId,
+      dueDate: r.dueDate,
+      leadDays: r.leadDays,
+    })),
+  }));
 }
 
 /** date 加減天數，回傳 YYYY-MM-DD。用 UTC 避免跨時區時多跳一天。 */
@@ -293,6 +364,7 @@ export async function collectDueReminders(
         leadDays: stage,
         lineUserId: c.line_user_id,
         message: visitReminderMessage(item.due_date, item.label, stage, t),
+        body: visitReminderBody(item.due_date, item.label, stage, t),
       });
     }
   }
@@ -309,6 +381,7 @@ export async function collectDueReminders(
       leadDays: 0,
       lineUserId: c.line_user_id,
       message: radiotherapyReminderMessage(s.due_date, s.fraction_no, s.total_fractions, t),
+      body: radiotherapyReminderBody(s.due_date, s.fraction_no, s.total_fractions, t),
     });
   }
 

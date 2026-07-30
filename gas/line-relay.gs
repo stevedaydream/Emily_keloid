@@ -145,35 +145,51 @@ function handleEvent(event) {
   }
 }
 
-/** 每日排程：拿今天該推的提醒 → 逐筆推播 → 回報結果 */
+/**
+ * 每日排程：拿今天該推的提醒 → 依「人」推播 → 回報結果
+ *
+ * 平台回傳的 pushes 已經把同一個病人同一天的多則合併成一次推播。
+ * 為什麼要合併：push 會吃掉官方帳號的月訊息額度（reply 不會，但提醒沒有 replyToken 可用），
+ * 同一人同一天既有回診又有放療時，原本吃 2 則，合併後只吃 1 則。
+ *
+ * 回報仍然逐筆（一次推播對應 push.items 裡的每一筆），
+ * 因為平台是靠 line_reminder_log 的 kind+ref_id+due_date+lead_days 來擋重複推播的。
+ */
 function sendDailyReminders() {
   var today = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd');
   var data = callPlatform('/api/line/reminders?date=' + today, 'get');
-  var reminders = data.reminders || [];
-  console.log('今天要推 ' + reminders.length + ' 則提醒');
+  var pushes = data.pushes || [];
+  console.log('今天要推 ' + (data.count || 0) + ' 則提醒，合併成 ' + pushes.length + ' 次推播');
 
   var results = [];
-  for (var i = 0; i < reminders.length; i++) {
-    var r = reminders[i];
-    var item = {
-      kind: r.kind,
-      caseId: r.caseId,
-      refId: r.refId,
-      dueDate: r.dueDate,
-      // 提前提醒與當天提醒是兩則，回報時要帶著才不會被平台的唯一索引當成同一筆
-      leadDays: r.leadDays,
-      lineUserId: r.lineUserId,
-      message: r.message,
-    };
+  for (var i = 0; i < pushes.length; i++) {
+    var p = pushes[i];
+    var status = 'sent';
+    var error = null;
     try {
-      pushToLine(r.lineUserId, r.message);
-      item.status = 'sent';
+      pushToLine(p.lineUserId, p.message);
     } catch (err) {
-      item.status = 'failed';
-      item.error = String(err).slice(0, 300);
-      console.error('推播失敗（' + r.researchId + '）：' + err);
+      status = 'failed';
+      error = String(err).slice(0, 300);
+      console.error('推播失敗（' + p.lineUserId + '）：' + err);
     }
-    results.push(item);
+
+    // 一次推播涵蓋的每個項目各回報一筆，成敗共用同一個結果
+    var items = p.items || [];
+    for (var j = 0; j < items.length; j++) {
+      results.push({
+        kind: items[j].kind,
+        caseId: items[j].caseId,
+        refId: items[j].refId,
+        dueDate: items[j].dueDate,
+        // 提前提醒與當天提醒是兩則，回報時要帶著才不會被平台的唯一索引當成同一筆
+        leadDays: items[j].leadDays,
+        lineUserId: p.lineUserId,
+        message: p.message,
+        status: status,
+        error: error,
+      });
+    }
     Utilities.sleep(200); // 對 LINE API 客氣一點
   }
 
@@ -191,7 +207,12 @@ function testPlatformConnection() {
 
   var today = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd');
   var data = callPlatform('/api/line/reminders?date=' + today, 'get');
-  console.log('平台連線正常。今天待推提醒：' + data.count + ' 則');
+  console.log(
+    '平台連線正常。今天待推提醒：' + data.count + ' 則，合併後 ' + (data.pushCount || 0) + ' 次推播'
+  );
+  if (data.pushes === undefined) {
+    console.warn('平台沒有回傳 pushes（版本較舊？），這支 GAS 需要 pushes 才能運作');
+  }
 
   var echo = callPlatform('/api/line/message', 'post', {
     lineUserId: 'TEST_USER_DOES_NOT_EXIST',

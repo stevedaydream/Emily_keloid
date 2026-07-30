@@ -756,10 +756,73 @@ label 超過 20 字元截斷成 20（含 `…`）。
 
 **GAS 不需重新部署**：GAS 只把平台回傳的文字原封不動轉給 LINE。
 
-**Migration 要手動套用**：`supabase/migrations/20260730010000_line_message_templates.sql` 貼進 Supabase SQL Editor
-執行（本專案慣例，見上方「Migration 套用狀況」）。**未套用前 bot 仍正常運作（走預設值），但後台存檔不會生效。**
+**Migration 已套用**：`supabase/migrations/20260730010000_line_message_templates.sql` 已於 2026-07-30 透過
+Supabase MCP（`apply_migration`）直接套用到 `keloid-research-platform` 專案並驗證（4 欄位、RLS 已啟用、
+`anon full access` policy 涵蓋所有動作、anon 四項權限皆有、0 列＝正確，因為刻意不 seed）。
+註：上方「Migration 套用狀況」寫的「手動貼 SQL Editor」指的是 `supabase db push` 不能用（遠端沒有版本記錄表），
+但 **MCP 的 `apply_migration` 可以直接套**，不需要手動貼。
 
-實測（`line.ts`＋`lineTemplates.ts` 單獨編譯，49 項全過）：預設文案與改動前逐字元相同；覆寫後生效且未動到的仍是預設；
+實測（`line.ts`＋`lineTemplates.ts` 單獨編譯，全數通過）：預設文案與改動前逐字元相同；覆寫後生效且未動到的仍是預設；
 數字打成 `abc`／關鍵字清空皆回退預設；改關鍵字後舊關鍵字失效、新的生效（大小寫不敏感、需完全相同）；
 返回鈕文字可改但送出的仍是關鍵字第一個、超過 20 字元截斷；排程 T-3 推提前那則、中間日不推、當天推當天版、逾期補推、
 已推過不重推；**提前天數設 0 時當天只推一則**；設 7 時於 T-7 推且訊息帶入 7。
+
+---
+
+**2026-07-30：省 LINE 訊息額度 ＋ 機器人失效不再是靜默的**
+
+起因是「回診/放療提醒能不能也用 LINE 的免費方式」。**不能**——免費的不是訊息類型而是 `replyToken`，
+它只在病人主動傳訊時產生、只能用一次、約 1 分鐘失效。提醒是系統在排定時間主動發的，沒有 replyToken 可用，
+只能走 `message/push`，一定計入官方帳號月額度。（LINE Notify 已於 2025-03-31 終止服務，不是選項。）
+所以能做的只有「減少則數」與「壞掉時看得見」。
+
+### ① 提前提醒關閉（設定，非程式）
+
+`reminder.visit.lead_days` 已設為 `0`，一次回診從 2 則（T-3 ＋ 當天）降為 1 則。
+代價是病人少了「還有 3 天、不方便可先改期」那次緩衝。**要恢復只需在 `/admin/line-messages` 把它改回 3。**
+
+### ② 同一人同一天的多則合併成一次推播
+
+`groupRemindersForPush()`（`src/lib/line.ts`）依 `lineUserId` 分組，多則本文之間空一行、
+**共用結尾只出現一次**。同一人同一天既有回診又有放療時，原本吃 2 則額度，現在 1 則。
+
+- `PendingReminder` 新增 `body`（不含結尾），合併時用它組，避免結尾重複
+- `GET /api/line/reminders` 新增 `pushes`／`pushCount`，**同時保留舊的 `reminders` 逐筆格式**——
+  平台先上線、GAS 晚一步重新部署的空窗期，舊版 GAS 讀 `reminders` 照常運作（只是不合併）
+- 回報仍逐筆（`push.items` 每筆各一列），因為擋重複推播靠的是 `line_reminder_log`
+  的 `kind+ref_id+due_date+lead_days` 唯一索引。**合併只影響「送幾次」，不影響「哪些算推過了」**
+- **GAS 需要重新部署**（`sendDailyReminders` 改讀 `pushes`）——跟前面幾次改動不同，這次一定要更新
+
+### ③ Gemini 失敗不再偽裝成「資料庫沒這題」
+
+原本 `callGemini` 的 `fetch` 沒包 try/catch：429 會回 null 被當成「沒對到主題」，
+**網路錯誤更糟——直接往上拋成 500，GAS 吃掉例外後病人完全收不到任何回覆**。
+
+- `callGemini` 改回 `{ok:true,text} | {ok:false,reason}`，包 try/catch；回 200 但無內容
+  （被安全過濾擋下）也算失敗，不再誤判成「沒這題」
+- `matchKbEntry` 改回 `matched / none / error` 三態。模型回了看不懂的東西算 `none` 不算 `error`
+  （模型亂答不是服務故障）
+- 新增文案 **`ai.error`**（「衛教小幫手暫時無法回答…」），與 `ai.no_match`（「請洽詢診間人員」）
+  **刻意分開**：混用的話額度爆掉時每個提問都被推去診間，而且沒人查得出是壞了還是真的沒這題
+- 改寫階段失敗**不算服務不通**：內容已比對到，直接給後台審過的原文（資訊仍正確），但仍記一筆
+
+### ④ 失敗會留痕，後台看得見
+
+- 新表 `line_bot_error_log`（migration `20260730020000`）：`stage`／`reason`／`source`。
+  **刻意不存病人的問題內容**——病人在 LINE 可能自己打進姓名、病歷號、電話，存下來等於破壞決策 #1 的
+  去識別化前提。要知道病人都在問什麼，請走衛教內容規劃，不要靠這張表。
+- `logBotFailure()`（`src/lib/botLog.ts`）**寫入失敗一律吞掉**——log 寫不進去不能反過來害病人收不到回覆。
+- 新頁 `/admin/line-logs`「LINE 推播與錯誤紀錄」：三個統計卡（近 30 天成功推播數＝額度消耗、推播失敗數、
+  機器人無法回答數）＋ 推播紀錄表 ＋ 機器人錯誤表，失敗列以 amber 標示。
+  **在這頁出現之前 `line_reminder_log` 只有寫入、全專案沒有任何地方讀它**，推播失敗完全靜默。
+
+### 失效時各條路徑的行為（整理）
+
+| 狀況 | 病人看到 | 會自動恢復嗎 |
+|---|---|---|
+| Gemini 額度用完（429） | 自由提問收到 `ai.error`；**主題按鈕／選單／綁定完全正常**（不經過 AI） | 額度回補後自動 |
+| Gemini 連不上 | 同上（原本是完全沒有回覆） | 是 |
+| LINE 推播額度用完 | 提醒收不到；**衛教問答不受影響**（走 reply，不計額度） | 當天那則隔天自動重試；提前那則過了那天就永久漏（現已設 0，不適用） |
+
+Migration `20260730020000_line_bot_error_log.sql` 已透過 Supabase MCP 套用並驗證
+（check constraint 接受 `gemini_match`/`gemini_rewrite` × `line`/`kb_chat`，RLS 與 anon 權限正常）。

@@ -1,14 +1,19 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { supabaseServer } from "@/lib/supabase";
-import { collectDueReminders } from "@/lib/line";
+import { collectDueReminders, groupRemindersForPush } from "@/lib/line";
+import { loadLineTemplates } from "@/lib/lineTemplates";
 import { assertRelaySecret } from "../_auth";
 
 // GAS 的每日排程呼叫這裡拿「今天該推誰」，推完再用 POST 回報結果。
 // 平台不主動連 LINE，也不需要 Vercel Cron。
 //
-// GET  /api/line/reminders?date=YYYY-MM-DD  → { date, reminders: [...] }
+// GET  /api/line/reminders?date=YYYY-MM-DD  → { date, count, pushes: [...], reminders: [...] }
 // POST /api/line/reminders                  → 記錄推播結果（含失敗），寫進 line_reminder_log
+//
+// pushes 是**合併同一人同一天多則後**的推播清單（省 LINE 月額度），新版 GAS 走這個。
+// reminders 是逐筆的舊格式，保留是為了讓還沒更新的 GAS 不會壞掉——平台先上線、GAS 晚一步
+// 重新部署的那段空窗期，舊版讀 reminders 照樣運作（只是不會合併）。
 
 export async function GET(request: NextRequest) {
   const denied = assertRelaySecret(request);
@@ -22,10 +27,18 @@ export async function GET(request: NextRequest) {
 
   const supabase = supabaseServer();
   const reminders = await collectDueReminders(supabase, date);
+  const t = await loadLineTemplates(supabase);
+  const pushes = groupRemindersForPush(reminders, t);
 
   // 回傳給 GAS 的內容刻意只有 lineUserId 與訊息文字，不含研究編號以外的識別資訊；
   // researchId 保留是為了讓推播紀錄能對回個案（GAS 不會把它寫進訊息）。
-  return NextResponse.json({ date, count: reminders.length, reminders });
+  return NextResponse.json({
+    date,
+    count: reminders.length,
+    pushCount: pushes.length,
+    pushes,
+    reminders,
+  });
 }
 
 type AckItem = {
