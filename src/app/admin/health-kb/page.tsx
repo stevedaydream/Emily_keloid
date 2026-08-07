@@ -32,8 +32,8 @@ export default async function HealthKbAdminPage() {
             <EditableListItem
               hidden={{ id: e.id }}
               fields={[
-                { name: "topic", label: "主題", defaultValue: e.topic, className: "w-full" },
-                { name: "content", label: "衛教內容", defaultValue: e.content, type: "textarea", className: "w-full" },
+                { name: "topic", label: "主題", defaultValue: e.topic, className: "w-full", fullWidth: true },
+                { name: "content", label: "衛教內容", defaultValue: e.content, type: "textarea", className: "w-full", fullWidth: true },
               ]}
               updateAction={updateKbEntryAction}
               deleteAction={deleteKbEntryAction}
