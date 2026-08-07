@@ -21,7 +21,21 @@ const GROUPS = [
     label: "問卷與衛教",
     items: [
       { href: "/admin/questionnaires", title: "問卷產生器", desc: "自訂問卷與題目（量表、飲食運動習慣等）" },
-      { href: "/admin/health-kb", title: "衛教資料庫", desc: "Gemini 衛教機器人的回答內容來源" },
+    ],
+  },
+  {
+    label: "LINE 機器人",
+    items: [
+      {
+        href: "/admin/health-kb",
+        title: "LINE 衛教機器人內容",
+        desc: "病人在 LINE 問問題時的回答內容、主題選單順序與啟用狀態",
+      },
+      {
+        href: "/admin/line-messages",
+        title: "LINE 機器人回覆設定",
+        desc: "回診／放療提醒措辭、加好友與綁定回覆、選單提示語、AI 回應語氣",
+      },
     ],
   },
   {

@@ -17,21 +17,21 @@
 
 | 研究編號 | 部位原文 | RT 劑量推出的分類 | 文字推出的分類 |
 |---|---|---|---|
-| YAN-2023-007 | R't scapular area | 耳 | 胸/肩胛 |
-| YAN-2020-005 | left breast, chest and pubic area | 其他 | 胸/肩胛 |
-| YAN-2020-006 | Left below axillary | 胸/肩胛 | 其他 |
-| YAN-2021-004 | Abdomen keloid | 胸/肩胛 | 其他 |
-| YAN-2021-007 | right upper arm | 胸/肩胛 | 其他 |
-| YAN-2022-007 | postauricular region | 其他 | 耳 |
-| YAN-2023-022 | umbilical keloid | 胸/肩胛 | 其他 |
+| YEN-2023-007 | R't scapular area | 耳 | 胸/肩胛 |
+| YEN-2020-005 | left breast, chest and pubic area | 其他 | 胸/肩胛 |
+| YEN-2020-006 | Left below axillary | 胸/肩胛 | 其他 |
+| YEN-2021-004 | Abdomen keloid | 胸/肩胛 | 其他 |
+| YEN-2021-007 | right upper arm | 胸/肩胛 | 其他 |
+| YEN-2022-007 | postauricular region | 其他 | 耳 |
+| YEN-2023-022 | umbilical keloid | 胸/肩胛 | 其他 |
 
 **判不出來（3 筆）**：
 
 | 研究編號 | 部位原文 | 問題 |
 |---|---|---|
-| YAN-2020-002 | pubic area | ~~人形圖沒有恥骨/鼠蹊區塊~~ → 2026-07-28 已新增「恥骨上區」「左/右鼠蹊」，可直接指定 |
-| YAN-2024-009 | pubic keloid | 同上（RT 劑量是 1800cGy，推出胸/肩胛，但部位明顯不符 → 建議選恥骨上區） |
-| YAN-2023-005 | left posterior keloid | 只寫「後側」，不知道是哪個部位 |
+| YEN-2020-002 | pubic area | ~~人形圖沒有恥骨/鼠蹊區塊~~ → 2026-07-28 已新增「恥骨上區」「左/右鼠蹊」，可直接指定 |
+| YEN-2024-009 | pubic keloid | 同上（RT 劑量是 1800cGy，推出胸/肩胛，但部位明顯不符 → 建議選恥骨上區） |
+| YEN-2023-005 | left posterior keloid | 只寫「後側」，不知道是哪個部位 |
 
 → 恥骨兩筆的熱區已建好（分類為「其他部位」15Gy×2），仍需人工在個案頁指定。
 
@@ -41,14 +41,14 @@
 
 | 研究編號 | 目前套用 | 部位原文 |
 |---|---|---|
-| YAN-2019-001 | 左肩 | Bilateral shoulders, right back and anterior chest keloid |
-| YAN-2019-003 | 左耳 | ear helix |
-| YAN-2020-008 | 左耳 | bilateral ear lobe |
-| YAN-2020-009 | 左耳 | Bilateral earlobe |
-| YAN-2021-005 | 左肩胛 | bilateral scapular |
+| YEN-2019-001 | 左肩 | Bilateral shoulders, right back and anterior chest keloid |
+| YEN-2019-003 | 左耳 | ear helix |
+| YEN-2020-008 | 左耳 | bilateral ear lobe |
+| YEN-2020-009 | 左耳 | Bilateral earlobe |
+| YEN-2021-005 | 左肩胛 | bilateral scapular |
 | PU-2022-001 | 左耳 | ear lobe |
-| YAN-2022-010 | 左耳 | ear lobe |
-| YAN-2023-014 | 左耳 | ear helix |
+| YEN-2022-010 | 左耳 | ear lobe |
+| YEN-2023-014 | 左耳 | ear helix |
 | PU-2024-001 | 前胸 | upper chest wall, bilateral upper arm |
 
 ### A3. 舊資料復發欄位的判讀是否正確
@@ -136,8 +136,8 @@
 
 不是 bug，是「先做到能用」留下的缺口，決定要不要補：
 
-- **LINE 綁定沒有寫入路徑**：`cases.line_bound`／`line_bind_code`／`line_user_id` 三個欄位全站沒有任何地方會寫入（要等 Phase 1 接 LINE 官方帳號），所以收案一條龍的「LINE 綁定」燈號永遠不會亮、dashboard 的綁定率恆為 0%。若 Phase 1 前要讓畫面合理，可考慮暫時把這個階段從一條龍隱藏。
-- **時程動作「回診提醒」沒有任何行為**：後台時程範本可以勾，但沒有發送提醒的程式，個案頁也只渲染「填問卷／拍照」兩種動作，勾了不會有任何顯示。同屬 Phase 1（GAS 排程推播）。
+- ~~**LINE 綁定沒有寫入路徑**~~ → 2026-07-29 已做：個案頁「LINE 提醒綁定」可產生綁定碼與 QR code，病人在 LINE 送出後由 `/api/line/message` 寫入。一條龍的「LINE 綁定」燈號與 dashboard 綁定率現在會真的動。
+- ~~**時程動作「回診提醒」沒有任何行為**~~ → 2026-07-29 已做：GAS 每日排程呼叫 `/api/line/reminders` 取得當日名單並推播。**但要等你完成 LINE Messaging API 與 GAS 部署才會真的送出**（見 `gas/README.md`）。
 - **飲食運動習慣問卷**：DB 裡的名稱就是「飲食運動習慣問卷（示範，待補齊正式題目）」，5 題示範題（對應 A4 的待確認項目）。因此 2026-07-29 新增「正式上線需填寫」（`questionnaire_templates.required_for_intake`）時**刻意沒有勾它**——題目定稿後到 `/admin/questionnaires` 按「設為必填」即可列進每個個案的應填問卷清單。
 - **時程範本**：只有一份「標準術後追蹤（示範）」，5 個時間點。
 - **治療類型與套組**：後台要手打 JSON 定義欄位與套組內容；目前只有 1 個套組。決策 #6 的「選套組微調後另存新套組」在個案頁沒有實作。
@@ -180,11 +180,23 @@
 
 ### C3. 其他 Phase 1 項目
 
-- 正式 LINE 官方帳號 + GAS 串接（回診提醒推播、衛教機器人 webhook）
-- `GEMINI_API_KEY` 已設定，但衛教機器人尚未實際對話測試
+- **LINE 上線的剩餘步驟（2026-07-29 程式已完成，等你操作）**：① LINE Developers 建立 Messaging API channel 並連結既有官方帳號、發行 long-lived token；② 部署 GAS（`gas/line-relay.gs`）並填三個指令碼屬性；③ Vercel 設定 `LINE_RELAY_SECRET`（與 GAS 同一組）與 `LINE_OA_BASIC_ID`。完整步驟見 `gas/README.md`。
+- **衛教資料庫只有 4 則示範內容**：機器人只依資料庫回答，資料庫沒涵蓋就回「請洽診間」——實測問「傷口會癢怎麼辦」得到的正是這個回覆。上線前需在 `/admin/health-kb` 補齊常見問題，否則病人問什麼都得到同一句。
+- `GEMINI_API_KEY` 已設定，衛教問答的伺服器端路徑已實測會呼叫 Gemini 並回覆，但**尚未透過真實 LINE 對話測過**
 - 診間本機病歷號對照工具的正式部署流程（目前是瀏覽器 File System Access API，僅 Chrome/Edge 桌面版支援）
   - **2026-07-29 實測確認**：手機／平板完全掛不上對照表，包含 Android Chrome 與 iPad Safari/Chrome。這是瀏覽器沒有實作 File System Access API，**不是權限沒開**，裝置端沒有任何設定可以打開它。訊息已從「請改用 Chrome 或 Edge」改成明講「桌機版」，先前在 Android Chrome 上看到那句會非常困惑。
   - **刻意不做行動版替代方案**：`<input type="file">` 讀得到 CSV，但拿不到可持續的 handle，重整就沒了；要能用就得把「病歷號＋姓名」快取進該裝置的 IndexedDB——而平板正是要交到病人手上的那一台（見 C1b，Phase 0 沒有裝置隔離），等於在最不該留身分資料的裝置上留一份。
   - **開發用逃生口（2026-07-29）**：後台「操作者清單」可對個別操作者開啟**工程模式**（`operators.dev_mobile_mapping`，預設關閉，目前只開給「系統管理者」）。開啟後在手機／平板的 `/local-tools/mrn-mapping` 會多一個 `<input type="file">`，可**唯讀**掛載對照表讓姓名顯示出來，方便開發時對問題。**只讀進記憶體、不寫 IndexedDB／localStorage，重整或關分頁就沒**，也無法新增對應。header 的姓名開關會標「(暫)」提醒這是暫時的。⚠️ **正式收案前請到操作者清單把所有工程模式關掉。**
   - **對工作流程的影響**：`/intake` 收案頁的病歷號／姓名欄位在平板上不能用。**部長要建檔請用診間電腦**；平板／公務機的用途是拍照與交給病人填問卷，那兩件事都不需要對照表。若堅持要在平板建檔，就把病歷號與姓名留空，事後在電腦上用 `/local-tools/mrn-mapping` 補對照。
+  - **雲端加密保管庫（2026-07-29 新增，解決行動裝置查不到對照的問題）**：`/local-tools/mrn-mapping` 的「雲端加密保管庫」可把整份對照表**在瀏覽器端加密**（PBKDF2-SHA256 310k 次 + AES-GCM 256）後存進 `mrn_vault` 表，任何裝置輸入通行碼即可解密查詢。
+    - **決策 #1 的紅線沒有被跨過**：紅線是「病歷號不以明文離開診間」，不是「不准用雲端」。伺服器與資料庫自始至終只拿到 base64 密文，**通行碼不進網路請求、不進 log、不進資料庫**（`vaultActions.ts` 沒有任何解密邏輯）。Supabase anon key 外洩或整個資料庫被匯出，都拿不到任何一個病歷號。
+    - **已驗證**：加解密往返一致、密文內不含明文病歷號、錯誤通行碼被拒、密文遭竄改會被 AES-GCM 驗證標籤偵測。
+    - **不落地**：解密結果與通行碼都只放 React state，重整或關分頁就清除，交到病人手上的裝置不會殘留身分資料。
+    - **新增個案自動同步（2026-07-29）**：保管庫是單一 blob，沒有「只上傳一筆」，每次同步都是整包重新加密覆蓋（百來筆約 20KB）。在對照表頁解鎖時勾「記住到分頁關閉為止」，之後 `/intake`、`/cases/new` 每建一筆就會自動同步，手機端立刻查得到新病人。
+      - **存的是金鑰不是通行碼**：`deriveVaultKey` 產出的 CryptoKey 是 `extractable: false`，而 CryptoKey 可被 structured clone 進 IndexedDB。因此金鑰存得進、用得到，卻**匯不出原始材料**；通行碼導完金鑰就丟，從未以可讀形式落地。**已在真實瀏覽器實測**：取回後型別仍是 CryptoKey、`extractable` 仍為 false、可正常加密、`exportKey` 仍被拒。
+      - **生命週期**：IndexedDB 存金鑰 ＋ sessionStorage 存隨機標記，兩者對得上才承認。分頁關閉 → sessionStorage 清空 → 金鑰永久失效並於下次載入刪除。（單用 IndexedDB 活太久；單用 sessionStorage 只能存字串＝被迫存通行碼。）
+      - **salt 沿用、IV 每次更換**：金鑰綁著導出它的那組 salt，換 salt 就要重打通行碼。salt 的作用是擋 KDF 預先計算表，不需每次更換；AES-GCM 真正要求每次唯一的是 IV，已驗證三次連續同步的 IV 皆不同。
+      - **未解鎖不擋收案**：個案與本機 CSV 照常寫入，只在收案頁顯示「還沒同步到雲端，手機端查不到這位病人」與前往解鎖的連結。
+    - ⚠️ **通行碼遺失無法還原**（零知識設計，沒有「忘記密碼」）。本機 CSV 仍是正本，保管庫是行動裝置查詢用的副本。通行碼請與登入密碼分開保管。
+    - **評估中**：曾考慮 GAS + 私有 Google Sheet（使用者在脊椎追蹤系統用過），但那會是明文存雲端；若開在個人 Gmail 帳號更無資料處理協議可依循，故改採此零知識方案。若日後仍要走 GAS，需先送 IRB 修正案。
 - 請資訊室確認：公務機瀏覽器是否支援相機權限；院內網路是否允許連 Vercel/Supabase 網域

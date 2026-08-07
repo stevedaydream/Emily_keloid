@@ -1,4 +1,5 @@
 import { supabaseServer } from "@/lib/supabase";
+import IdentifiedExport from "./IdentifiedExport";
 
 export default async function ExportPage() {
   const supabase = supabaseServer();
@@ -40,6 +41,8 @@ export default async function ExportPage() {
           下載照片（zip）
         </a>
       </div>
+
+      <IdentifiedExport />
     </div>
   );
 }

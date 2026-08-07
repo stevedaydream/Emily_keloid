@@ -97,7 +97,8 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
 
   // 92 筆一次載入不分頁，所以表格自己的左右捲軸落在整頁最底部——要往右捲一格，
   // 得先把整頁滑到最下面。這裡另外放一條「代理捲軸」黏在螢幕最下方，跟表格雙向同步，
-  // 捲到哪一列都能直接拉。（表格本身仍可直接橫向捲動／觸控滑動，這條只是多一個入口。）
+  // 捲到哪一列都能直接拉。原生那條會同時被藏起來（見下方 scroller 的 className），
+  // 否則兩條外觀與功能都相同的拉桿並存，只是一條會跟著頁面跑，看起來像 bug。
   const scrollerRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
   const proxyRef = useRef<HTMLDivElement>(null);
@@ -316,7 +317,12 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
       <div
         ref={scrollerRef}
         onScroll={() => syncScroll("table")}
-        className="overflow-x-auto rounded-lg border border-brand-100 bg-white"
+        className={`overflow-x-auto rounded-lg border border-brand-100 bg-white ${
+          // 有代理捲軸時把原生那條藏起來，否則畫面上會有兩條長得一樣、功能也一樣的拉桿
+          // （一條在表格底部隨頁面捲動、一條黏在螢幕最下方），看起來像壞掉。
+          // 只是視覺隱藏，容器仍然可捲：觸控滑動、Shift+滾輪、鍵盤都照常。
+          overflowing ? "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden" : ""
+        }`}
       >
         <table ref={tableRef} className="w-full min-w-max text-sm">
           <thead className="border-b border-brand-100 bg-brand-50/60 text-left text-xs text-ink/60">
