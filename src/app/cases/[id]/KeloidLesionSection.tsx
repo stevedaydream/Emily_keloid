@@ -6,7 +6,12 @@ import BodyDiagram from "@/components/BodyDiagram";
 import SubmitButton from "@/components/ui/SubmitButton";
 import DeletePhotoButton from "./DeletePhotoButton";
 import { DOSE_CATEGORY_LABEL, BODY_VIEW_LABEL, type BodyView } from "@/lib/bodyZones";
-import { addKeloidLesionAction, deleteKeloidLesionAction, updateKeloidLesionZoneAction } from "./actions";
+import {
+  addKeloidLesionAction,
+  deleteKeloidLesionAction,
+  updateKeloidLesionAction,
+  updateKeloidLesionZoneAction,
+} from "./actions";
 
 type Zone = { id: string; zone_key: string; view: BodyView; display_name: string; dose_category: string };
 
@@ -88,6 +93,8 @@ export default function KeloidLesionSection({
   // 人形圖點選的部位：同時決定新病灶的名稱（可再改）與部位分類（決定放療劑量方案）
   const [pickedZone, setPickedZone] = useState<Zone | null>(null);
   const [siteName, setSiteName] = useState("");
+  // 目前正在就地編輯（名稱／尺寸／備註）的部位 id
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   function pickZone(z: Zone) {
     setPickedZone(z);
@@ -119,6 +126,13 @@ export default function KeloidLesionSection({
                 </span>
                 <span className="flex items-center gap-2 text-xs">
                   <span className="whitespace-nowrap text-ink/40">🖼 {(photosByLesion[l.id] ?? []).length} 張</span>
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(editingId === l.id ? null : l.id)}
+                    className="whitespace-nowrap rounded border border-brand-200 px-1.5 py-0.5 text-brand-700 hover:bg-brand-50"
+                  >
+                    {editingId === l.id ? "取消編輯" : "編輯"}
+                  </button>
                   <Link
                     href={`/patient/${caseId}/photo?lesion_id=${l.id}`}
                     className="whitespace-nowrap rounded border border-brand-200 px-1.5 py-0.5 text-brand-700 hover:bg-brand-50"
@@ -139,6 +153,51 @@ export default function KeloidLesionSection({
                   </form>
                 </span>
               </div>
+              {/* 就地編輯：只改名稱／尺寸／備註，照片關聯與放療排程都不受影響 */}
+              {editingId === l.id && (
+                <form
+                  action={async (fd) => {
+                    await updateKeloidLesionAction(fd);
+                    setEditingId(null);
+                  }}
+                  className="mt-1.5 flex flex-wrap items-end gap-2 rounded-md border border-brand-200 bg-brand-50/40 p-2"
+                >
+                  <input type="hidden" name="case_id" value={caseId} />
+                  <input type="hidden" name="lesion_id" value={l.id} />
+                  <div>
+                    <label className="block text-[11px] text-ink/50">部位名稱</label>
+                    <input
+                      name="body_site"
+                      required
+                      defaultValue={l.body_site}
+                      className="mt-0.5 w-32 rounded-md border border-brand-200 px-1.5 py-1 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-ink/50">長 cm</label>
+                    <input name="length_cm" type="number" step="0.1" defaultValue={l.length_cm ?? ""} className="mt-0.5 w-16 rounded-md border border-brand-200 px-1.5 py-1 text-xs" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-ink/50">寬 cm</label>
+                    <input name="width_cm" type="number" step="0.1" defaultValue={l.width_cm ?? ""} className="mt-0.5 w-16 rounded-md border border-brand-200 px-1.5 py-1 text-xs" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-ink/50">高 cm</label>
+                    <input name="height_cm" type="number" step="0.1" defaultValue={l.height_cm ?? ""} className="mt-0.5 w-16 rounded-md border border-brand-200 px-1.5 py-1 text-xs" />
+                  </div>
+                  <div className="min-w-[100px] flex-1">
+                    <label className="block text-[11px] text-ink/50">備註</label>
+                    <input name="note" defaultValue={l.note ?? ""} className="mt-0.5 w-full rounded-md border border-brand-200 px-1.5 py-1 text-xs" />
+                  </div>
+                  <SubmitButton size="sm" pendingText="儲存中…">
+                    儲存變更
+                  </SubmitButton>
+                  <p className="w-full text-[11px] text-ink/40">
+                    部位編號不開放修改（照片標籤已寫入「部位{l.site_no}」，改號會對不上舊照片）。
+                  </p>
+                </form>
+              )}
+
               <form action={updateKeloidLesionZoneAction} className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
                 <input type="hidden" name="case_id" value={caseId} />
                 <input type="hidden" name="lesion_id" value={l.id} />

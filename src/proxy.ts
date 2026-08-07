@@ -18,7 +18,10 @@ export function proxy(request: NextRequest) {
   if (
     PUBLIC_PATHS.some((p) => pathname.startsWith(p)) ||
     pathname.startsWith("/_next") ||
-    pathname.startsWith("/api/public")
+    pathname.startsWith("/api/public") ||
+    // GAS 轉接層呼叫的端點：它不是瀏覽器、沒有共用帳號的 session cookie，
+    // 改用 x-line-relay-secret header 驗證（見 src/app/api/line/_auth.ts）。
+    pathname.startsWith("/api/line")
   ) {
     return passThrough(request, pathname);
   }

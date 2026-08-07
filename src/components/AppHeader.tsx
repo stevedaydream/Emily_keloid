@@ -28,11 +28,13 @@ const NAV_LINKS: Record<LandingMode, { href: string; label: string }[]> = {
     { href: "/batch-edit", label: "批次編輯" },
     { href: "/admin", label: "後台管理" },
     { href: "/export", label: "資料匯出" },
+    { href: "/about", label: "導覽" },
   ],
   intake: [
     { href: "/intake", label: "收案" },
     { href: "/cases", label: "個案列表" },
     { href: "/export", label: "資料匯出" },
+    { href: "/about", label: "導覽" },
     { href: "/", label: "完整功能" },
   ],
 };

@@ -5,6 +5,7 @@ import { supabaseServer } from "@/lib/supabase";
 import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
 import { withTermGroup } from "@/lib/terms";
+import { generateBindCode, BIND_CODE_TTL_HOURS } from "@/lib/line";
 
 async function operatorOrThrow() {
   const op = await getCurrentOperator();
@@ -734,6 +735,47 @@ export async function addKeloidLesionAction(formData: FormData) {
 }
 
 // 指定/更換某個病灶的部位分類（決定該部位自己的放療劑量方案）。
+// 就地編輯部位的名稱／尺寸／備註。刻意跟「刪除後重建」區隔：重建會讓已綁定的照片
+// 掉成「未對應部位」（photos.lesion_id 是 on delete set null）、該部位的放療排程被刪、
+// 而且 site_no 會拿新號碼造成跳號。改用 update 就完全不動這三者。
+// site_no 不開放修改：照片的 body_site 當初就寫死「部位N ○○」的文字，改編號會讓舊照片的標籤對不上。
+export async function updateKeloidLesionAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const lesionId = formData.get("lesion_id") as string;
+  const bodySite = (formData.get("body_site") as string)?.trim();
+  const lengthRaw = (formData.get("length_cm") as string)?.trim();
+  const widthRaw = (formData.get("width_cm") as string)?.trim();
+  const heightRaw = (formData.get("height_cm") as string)?.trim();
+  const note = (formData.get("note") as string)?.trim() || null;
+  if (!bodySite) return;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  await supabase
+    .from("case_keloid_lesions")
+    .update({
+      body_site: bodySite,
+      length_cm: lengthRaw ? Number(lengthRaw) : null,
+      width_cm: widthRaw ? Number(widthRaw) : null,
+      height_cm: heightRaw ? Number(heightRaw) : null,
+      note,
+    })
+    .eq("id", lesionId);
+
+  // cases.body_site 是病灶清單的去正規化摘要，改名後要跟著更新
+  await syncCaseBodySite(supabase, caseId);
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "update_keloid_lesion",
+    entity: "case_keloid_lesions",
+    entityId: lesionId,
+    detail: { bodySite },
+  });
+  revalidatePath(`/cases/${caseId}`);
+}
+
 export async function updateKeloidLesionZoneAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
   const lesionId = formData.get("lesion_id") as string;
@@ -758,4 +800,112 @@ export async function deleteKeloidLesionAction(formData: FormData) {
   await syncCaseBodySite(supabase, caseId);
   await logAudit({ caseId, operatorName: operator, action: "delete_keloid_lesion", entity: "case_keloid_lesions", entityId: lesionId });
   revalidatePath(`/cases/${caseId}`);
+}
+
+// ── LINE 綁定（2026-07-29）─────────────────────────────────────────────
+// 平台只負責產生／清除綁定碼與顯示狀態；真正把 line_user_id 寫進來的是
+// GAS 轉接層呼叫的 /api/line/message（病人在 LINE 送出綁定碼時）。
+
+export async function generateLineBindCodeAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  // 綁定碼有唯一索引，理論上會撞（機率極低），撞到就重抽
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateBindCode();
+    const expiresAt = new Date(Date.now() + BIND_CODE_TTL_HOURS * 3600_000).toISOString();
+    const { error } = await supabase
+      .from("cases")
+      .update({ line_bind_code: code, line_bind_code_expires_at: expiresAt })
+      .eq("id", caseId);
+    if (!error) {
+      await logAudit({ caseId, operatorName: operator, action: "generate_line_bind_code", entity: "cases", entityId: caseId });
+      revalidatePath(`/cases/${caseId}`);
+      return;
+    }
+    if (!String(error.message).includes("duplicate")) throw error;
+  }
+  throw new Error("產生綁定碼失敗，請再試一次");
+}
+
+/** 解除綁定：病人換手機、或綁錯人時使用。line_user_id 一併清掉，那支 LINE 才能重新綁。 */
+export async function unbindLineAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  await supabase
+    .from("cases")
+    .update({ line_bound: false, line_user_id: null, line_bound_at: null, line_bind_code: null, line_bind_code_expires_at: null })
+    .eq("id", caseId);
+
+  await logAudit({ caseId, operatorName: operator, action: "line_unbind_by_staff", entity: "cases", entityId: caseId });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+// ── 追蹤時程的日期與提醒（2026-07-29）─────────────────────────────
+// 時程項目的 due_date 原本是「建檔日 + 範本天數」算出來的，但真正的回診日由掛號決定，
+// 兩者常差好幾天。沒有這支 action 的話，推出去的回診提醒日子會是錯的。
+
+export async function updateScheduleItemDateAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const itemId = formData.get("item_id") as string;
+  const dueDate = ((formData.get("due_date") as string) ?? "").trim();
+  const remind = formData.get("remind") === "on";
+  const operator = await operatorOrThrow();
+  if (!caseId || !itemId || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return;
+
+  const supabase = supabaseServer();
+  const { data: item } = await supabase
+    .from("case_schedule_items")
+    .select("actions, due_date")
+    .eq("id", itemId)
+    .single();
+
+  // 提醒與否跟日期在同一個表單，所以一起寫；actions 其餘動作（問卷／拍照）保持不動。
+  const actions: string[] = (item?.actions ?? []).filter((a: string) => a !== "visit_reminder");
+  if (remind) actions.push("visit_reminder");
+
+  await supabase.from("case_schedule_items").update({ due_date: dueDate, actions }).eq("id", itemId);
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "update_schedule_item_date",
+    entity: "case_schedule_items",
+    entityId: itemId,
+    detail: { from: item?.due_date ?? null, to: dueDate, remind },
+  });
+  revalidatePath(`/cases/${caseId}`);
+  revalidatePath("/clinic-today");
+}
+
+/** 範本外的臨時回診（例：「兩週後回來看傷口」）。追蹤時程實務上很難完全照範本走。 */
+export async function addScheduleItemAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const label = ((formData.get("label") as string) ?? "").trim() || "臨時回診";
+  const dueDate = ((formData.get("due_date") as string) ?? "").trim();
+  const remind = formData.get("remind") === "on";
+  const operator = await operatorOrThrow();
+  if (!caseId || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return;
+
+  const supabase = supabaseServer();
+  await supabase.from("case_schedule_items").insert({
+    case_id: caseId,
+    label,
+    due_date: dueDate,
+    status: "pending",
+    actions: remind ? ["visit_reminder"] : [],
+  });
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "add_schedule_item",
+    entity: "case_schedule_items",
+    detail: { label, dueDate, remind },
+  });
+  revalidatePath(`/cases/${caseId}`);
+  revalidatePath("/clinic-today");
 }

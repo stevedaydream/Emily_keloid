@@ -7,6 +7,7 @@ import Button from "@/components/ui/Button";
 import PatientName from "@/components/LocalNameProvider";
 import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
 import { getClinicCaseAction, saveClinicCardAction, type ClinicCaseData } from "./actions";
+import { updateScheduleItemDateAction } from "@/app/cases/[id]/actions";
 
 // 一位病人一張卡片：基本資料 ＋ 當次治療／追蹤紀錄 ＋ 標記時程完成，一次送出。
 // 問卷和拍照只放連結——拍照要用手機相機、問卷是完整量表（JSS 12 題、SF-36 36 題），塞進卡片會讓卡片變成一頁長。
@@ -26,6 +27,28 @@ export default function ClinicCard({
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+  // 改期是獨立於卡片主表單的小動作：病人離開前拿到回診單就順手改，不必等整張卡片送出
+  const [dateEdits, setDateEdits] = useState<Record<string, string>>({});
+  const [savingDate, setSavingDate] = useState<string | null>(null);
+
+  async function saveDate(itemId: string) {
+    const value = dateEdits[itemId];
+    if (!value) return;
+    setSavingDate(itemId);
+    try {
+      const fd = new FormData();
+      fd.set("case_id", caseId);
+      fd.set("item_id", itemId);
+      fd.set("due_date", value);
+      // 在門診改期＝這次回診是約好的，預設要提醒
+      fd.set("remind", "on");
+      await updateScheduleItemDateAction(fd);
+      await load();
+      router.refresh();
+    } finally {
+      setSavingDate(null);
+    }
+  }
 
   const load = useCallback(async () => {
     setData(await getClinicCaseAction(caseId));
@@ -214,6 +237,27 @@ export default function ClinicCard({
                   拍照
                 </Link>
               )}
+              {/* 改期：病人離開前拿到回診單，那個日期才是真的。改了 LINE 提醒才會在對的日子送。
+                  這是獨立的小表單，跟卡片主表單分開送出——改期通常是「順手」而不是整張卡片一起。 */}
+              <span className="ml-auto flex items-center gap-1">
+                <input
+                  type="date"
+                  defaultValue={item.due_date ?? ""}
+                  onChange={(e) => setDateEdits((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                  className="rounded border border-brand-200 px-1 py-0.5 text-xs"
+                  aria-label="實際回診日"
+                />
+                {dateEdits[item.id] && dateEdits[item.id] !== item.due_date && (
+                  <button
+                    type="button"
+                    onClick={() => void saveDate(item.id)}
+                    disabled={savingDate === item.id}
+                    className="rounded border border-accent-300 bg-accent-50 px-1.5 py-0.5 text-xs text-accent-800 disabled:opacity-50"
+                  >
+                    {savingDate === item.id ? "儲存中…" : "改期"}
+                  </button>
+                )}
+              </span>
             </li>
           ))}
           {data.scheduleItems.length === 0 && <li className="text-xs text-ink/40">沒有待辦時程項目</li>}
