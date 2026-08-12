@@ -144,8 +144,10 @@ async function commitCase(supabase: SupabaseClient, d: DecodedCase, operator: st
   const surgeryTypeId = typeId("手術切除");
   if (d.surgery.date && surgeryTypeId) {
     // 手術部位對到病灶：以 zone 相同者優先，找不到就不掛 lesion_id
-    for (const zoneId of d.surgery.zone_ids.length ? d.surgery.zone_ids : [null]) {
+    const zoneList = d.surgery.zone_ids.length ? d.surgery.zone_ids : [null];
+    for (const [i, zoneId] of zoneList.entries()) {
       const lesion = d.lesions.find((l) => l.body_part_zone_id && l.body_part_zone_id === zoneId);
+      const procedure = d.surgery.procedures?.[i] ?? null;
       await supabase.from("treatment_records").insert({
         case_id: caseId,
         treatment_type_id: surgeryTypeId,
@@ -153,7 +155,7 @@ async function commitCase(supabase: SupabaseClient, d: DecodedCase, operator: st
         lesion_id: lesion ? lesionIdBySiteNo.get(lesion.site_no) ?? null : null,
         body_site: lesion?.body_site ?? null,
         recorded_by: operator,
-        field_values: {},
+        field_values: procedure ? { method: procedure } : {},
       });
     }
   }
@@ -172,6 +174,7 @@ async function commitCase(supabase: SupabaseClient, d: DecodedCase, operator: st
         body_site: lesion?.body_site ?? null,
         recorded_by: operator,
         field_values: {
+          ...(rt.doctor ? { rt_doctor: rt.doctor } : {}),
           ...(rt.fractions !== null ? { fractions: String(rt.fractions) } : {}),
           ...(rt.bolus ? { bolus: rt.bolus } : {}),
           ...(rt.electron_beam ? { electron_beam: rt.electron_beam } : {}),

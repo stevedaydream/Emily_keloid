@@ -90,6 +90,7 @@ type RtSession = {
   due_date: string | null;
   planned_dose_cgy: number | null;
   actual_dose_cgy: number | null;
+  rt_doctor: string | null;
 };
 
 /** cases 一列（只列出匯出實際用到的欄位；select("*") 仍會帶回全部） */
@@ -104,7 +105,12 @@ type CaseRow = {
   phone_number: string | null;
   age_at_enrollment: number | null;
   keloid_onset_date: string | null;
+  birth_date: string | null;
   jsw_score: string | null;
+  height_cm: number | null;
+  weight_kg: number | null;
+  disease_history: string | null;
+  family_history: string | null;
   doctors: { export_code?: number } | { export_code?: number }[] | null;
 };
 
@@ -154,6 +160,7 @@ export async function GET(request: Request) {
     { data: labResults },
     { data: doctors },
     { data: icdCodes },
+    { data: treatmentTypeDefs },
   ] = await Promise.all([
     supabase.from("cases").select("*, doctors(id, code, name, export_code)"),
     supabase.from("body_part_zones").select("id, zone_key, display_name, export_label, export_code, dose_category, view, active"),
@@ -168,10 +175,10 @@ export async function GET(request: Request) {
         "id, case_id, lesion_id, body_site, treatment_date, field_values, free_text, recurrence_observed, recurrence_description, blood_drawn, blood_drawn_note, symptom_change_option_id, treatment_types(name, field_schema)"
       )
       .order("treatment_date"),
-    supabase.from("radiotherapy_sessions").select("case_id, lesion_id, dose_category, fraction_no, status, due_date, planned_dose_cgy, actual_dose_cgy"),
+    supabase.from("radiotherapy_sessions").select("case_id, lesion_id, dose_category, fraction_no, status, due_date, planned_dose_cgy, actual_dose_cgy, rt_doctor"),
     supabase.from("photos").select("case_id"),
-    supabase.from("questionnaire_responses").select("id, case_id, submitted_at, questionnaire_templates(name, category)"),
-    supabase.from("questionnaire_answers").select("response_id, answer_value, questionnaire_questions(order_no)"),
+    supabase.from("questionnaire_responses").select("id, case_id, submitted_at, submitted_via, questionnaire_templates(name, category)"),
+    supabase.from("questionnaire_answers").select("response_id, answer_value, questionnaire_questions(order_no, question_text, options)"),
     supabase
       .from("case_intake_option_records")
       .select("case_id, category, case_intake_option_record_items(option_id)"),
@@ -182,6 +189,7 @@ export async function GET(request: Request) {
     supabase.from("lab_results").select("case_id, marker_id, sample_date, value, value_text, note, recorded_by"),
     supabase.from("doctors").select("id, code, name, export_code").order("code"),
     supabase.from("icd_codes").select("code, description_full, export_code").order("code"),
+    supabase.from("treatment_types").select("name, field_schema"),
   ]);
 
   const zones = (zonesRaw ?? []) as Zone[];
@@ -212,13 +220,29 @@ export async function GET(request: Request) {
   for (const p of photos ?? []) photoCount.set(p.case_id, (photoCount.get(p.case_id) ?? 0) + 1);
 
   // ---- 問卷分數 ----
-  const answersByResponse = new Map<string, { order_no: number; value: unknown }[]>();
+  type AnswerRow = { order_no: number; value: unknown; text: string; options: { value?: string; label?: string }[] };
+  const answersByResponse = new Map<string, AnswerRow[]>();
   for (const a of answers ?? []) {
-    const q = first(a.questionnaire_questions) as { order_no?: number } | undefined;
+    const q = first(a.questionnaire_questions) as
+      | { order_no?: number; question_text?: string; options?: unknown }
+      | undefined;
     const arr = answersByResponse.get(a.response_id) ?? [];
-    arr.push({ order_no: q?.order_no ?? 0, value: a.answer_value });
+    arr.push({
+      order_no: q?.order_no ?? 0,
+      value: a.answer_value,
+      text: q?.question_text ?? "",
+      options: (q?.options ?? []) as { value?: string; label?: string }[],
+    });
     answersByResponse.set(a.response_id, arr);
   }
+
+  /** 選項題存的是 value（例如 "3"），逐題附表要顯示人看得懂的 label。 */
+  const answerLabel = (row: AnswerRow): string => {
+    const toLabel = (v: unknown) => row.options.find((o) => String(o.value) === String(v))?.label ?? String(v ?? "");
+    return Array.isArray(row.value) ? row.value.map(toLabel).join("、") : toLabel(row.value);
+  };
+  const answerRaw = (row: AnswerRow): string =>
+    Array.isArray(row.value) ? row.value.map((v) => String(v)).join(", ") : String(row.value ?? "");
   const vssByCase = new Map<string, Record<number, number>>();
   const sf36ByCase = new Map<string, Record<number, unknown>>();
   const psqiByCase = new Map<string, Record<number, unknown>>();
@@ -236,6 +260,7 @@ export async function GET(request: Request) {
       sf36ByCase.set(r.case_id, byOrder);
     } else if (q?.name === "匹茲堡睡眠品質量表（PSQI）") {
       psqiByCase.set(r.case_id, byOrder);
+      // （逐題 raw data 在下方統一累積，不分問卷種類）
     } else if (q?.name === "JSS 疤痕診斷分類表") {
       const total = computeJSSClassification(byOrder)?.total;
       if (total !== undefined) {
@@ -263,6 +288,57 @@ export async function GET(request: Request) {
 
   // 「未能對應清單」逐筆累積（部位無法對到 22 碼、或籠統耳部無法分辨 helix/earlobe 的情形）
   const unmapped: (string | number)[][] = [];
+
+  // 家族史／自身病史欄位存的是文字，但那串文字是「勾選常見疾病」時用選項 label 以頓號串起來的
+  // （見 FamilyHistoryPicker），所以反推代碼是**確定的對照**、不是關鍵字猜測。
+  // 舊資料匯入的自由文字對不到清單時會落到「其他」，這也是誠實的結果。
+  const optionsOfCategory = (category: string) =>
+    (optionLists ?? []).filter((o) => o.category === category && o.export_code !== null);
+
+  const codesFromText = (text: string | null | undefined, category: string): string => {
+    const raw = String(text ?? "").trim();
+    if (!raw) return "";
+    const opts = optionsOfCategory(category);
+    const other = opts.find((o) => o.label === "其他");
+    const parts = raw.split(/[、,，;；]/).map((x) => x.trim()).filter(Boolean);
+    const matched = new Set<number>();
+    let unmatched = 0;
+    for (const part of parts) {
+      const hit = opts.find((o) => o.label !== "其他" && o.label === part);
+      if (hit?.export_code != null) matched.add(hit.export_code);
+      else unmatched++;
+    }
+    // **完全對不到任何選項就回空白，不要硬塞「其他」。**
+    // 舊表的「Family」欄位語意其實是「哪些家人也有蟹足腫」（實際值是 NA／sister／mother, anut
+    // ／3 young sister and elder brother 這類），不是家族疾病史。把它們一律當成「其他」，
+    // 會讓下游的 Keloid_family_history 推出「無家族史」——而那些人恰恰是有的。
+    if (matched.size === 0) return "";
+    if (unmatched > 0 && other?.export_code != null) matched.add(other.export_code);
+    return [...matched].sort((x, y) => x - y).join(", ");
+  };
+
+  /** 逐次放療待辦記的是醫師姓名，匯出要的是碼——對照「放射治療」的 field_schema 翻回去。 */
+  const rtDoctorCodeByName = (() => {
+    const m = new Map<string, number>();
+    const schema = ((treatmentTypeDefs ?? []).find((t) => t.name === "放射治療")?.field_schema ?? []) as FieldDef[];
+    for (const o of schema.find((f) => f.key === "rt_doctor")?.options ?? []) {
+      if (o.export_code !== undefined && o.value) m.set(String(o.value).trim(), o.export_code);
+    }
+    return m;
+  })();
+
+  /** 把某筆治療紀錄的某個 select 欄位值，對照 field_schema 翻成 export_code。 */
+  const selectCode = (t: TreatmentRow | undefined, key: string): number | "" => {
+    const raw = t?.field_values?.[key];
+    if (!raw) return "";
+    const schema = (first(t?.treatment_types)?.field_schema ?? []) as FieldDef[];
+    // 不分大小寫比對：舊資料的術式有 Excision / excision / scar revision / Scar revision 混用，
+    // 區分大小寫的話一半會對不到。但**不做模糊比對**——「Excision and multiple Z plasty」
+    // 同時是兩種術式，硬選一個等於捏造，留空讓它進人工判讀。
+    const norm = (v: string) => v.trim().toLowerCase();
+    const opt = (schema.find((f) => f.key === key)?.options ?? []).find((o) => norm(String(o.value)) === norm(String(raw)));
+    return opt?.export_code ?? "";
+  };
 
   // KSI：該病灶的類固醇劑量碼（取最近一次病灶內注射的 steroid_dose，對照 field_schema 的 export_code）
   const steroidCodeOfLesion = (caseId: string, lesionId: string): number => {
@@ -395,6 +471,12 @@ export async function GET(request: Request) {
   const lesionMeasureRows: (string | number)[][] = [];
   const visitRows: (string | number)[][] = [];
   const scoreRows: (string | number)[][] = [];
+  // 部長 4 張主表沒有位置、但平台有收的選項類資料（此次就診原因、得知看診資訊）。
+  // 主表不能加欄（欄位順序必須與他的檔一致），所以獨立成附表——否則這些資料匯出時會整個消失。
+  const optionRows: (string | number)[][] = [];
+  // 問卷逐題作答（docx 項次 9：「目前 JSS raw data 是給總分、SF-36 是給 8 項指標，附上 raw data 呈現結果」）。
+  // 主表與「問卷分數」附表只有計分結果，這裡逐題列出病人實際點了什麼。
+  const answerDetailRows: (string | number)[][] = [];
   const overflowNotes: string[] = [];
 
   // ============ 逐個案填資料 ============
@@ -460,14 +542,29 @@ export async function GET(request: Request) {
 
     wsBasic.addRow([
       rid, "", "", sexCode, c.phone_number ?? "",
-      "", // birthday：系統尚無此欄位
+      c.birth_date ?? "", // birthday（2026-08-13 加入，見 project.md 安全性備忘）
       c.age_at_enrollment ?? "",
-      NO_RECORD, NO_RECORD, NO_RECORD, // height / weight / BMI：系統尚無此欄位，用部長定義的「無紀錄」哨兵
+      // 身高體重沒填時用部長定義的「無紀錄」哨兵；BMI 由兩者算出，不另存欄位以免不同步
+      c.height_cm ?? NO_RECORD,
+      c.weight_kg ?? NO_RECORD,
+      c.height_cm && c.weight_kg ? Number((c.weight_kg / (c.height_cm / 100) ** 2).toFixed(1)) : NO_RECORD,
       doctor?.export_code ?? "",
       primaryIcd?.export_code ?? "",
-      "", // Medical_history_self：目前是自由文字，無法可靠編碼
-      "", // Fmaily_history：同上
-      NO_RECORD, // Keloid_family_history：自由文字推不出有/無，用部長定義的「不清楚」
+      codesFromText(c.disease_history, "self_disease"),
+      codesFromText(c.family_history, "family_disease"),
+      // 有(1)／無(0)／不清楚(9999)。只在「文字確實對得到選項清單」時才敢下 0 或 1：
+      //   · 對到「蟹足腫或肥厚性疤痕」→ 1
+      //   · 對到其他疾病但沒有它 → 0（表示有勾選過、只是沒勾這項）
+      //   · 明確寫「無」→ 0
+      //   · 其餘（空白、NA、以及舊表那種列出家人的自由文字）→ 9999 不清楚
+      (() => {
+        const raw = String(c.family_history ?? "").trim();
+        if (/^(無|沒有|none|no)$/i.test(raw)) return 0;
+        const codes = codesFromText(c.family_history, "family_disease");
+        if (!codes) return NO_RECORD;
+        const keloidCode = optionsOfCategory("family_disease").find((o) => o.label === "蟹足腫或肥厚性疤痕")?.export_code;
+        return keloidCode != null && codes.split(", ").includes(String(keloidCode)) ? 1 : 0;
+      })(),
       monthsBetween(c.keloid_onset_date, String(c.created_at).slice(0, 10)) ?? "",
       ...lesionCells,
       vssTotal,
@@ -488,7 +585,7 @@ export async function GET(request: Request) {
     for (let i = 0; i < MAX_OP_SITES; i++) {
       const s = surgeries[i];
       const l = s?.lesion_id ? allLesions.find((x) => x.id === s.lesion_id) : undefined;
-      opCells.push(l ? zoneCodeOfLesion(l) : "", ""); // 術式編碼：系統尚無此欄位
+      opCells.push(l ? zoneCodeOfLesion(l) : "", selectCode(s, "method"));
     }
     if (surgeries.length > MAX_OP_SITES) {
       overflowNotes.push(`${rid}：${surgeries.length} 筆手術紀錄，Operation 表只放前 ${MAX_OP_SITES} 筆`);
@@ -536,7 +633,11 @@ export async function GET(request: Request) {
     wsOp.addRow([
       rid, "", "", sexCode, opDate ?? "",
       ...opCells,
-      rtDate, "", // RT_Doctor：系統尚無放射科醫師清單
+      rtDate,
+      // 醫師有兩個來源：「放射治療」治療紀錄，以及手術後自動產生的逐次待辦。
+      // 實際執行時走的是後者（每次做完在個案頁標記完成），所以治療紀錄沒填時要退回去找。
+      selectCode(rtRecord, "rt_doctor") ||
+        (rtDoctorCodeByName.get(String(sessions.find((x) => x.rt_doctor)?.rt_doctor ?? "").trim()) ?? ""),
       sessions.length || rtRecord?.field_values?.fractions || "",
       rtRecord?.field_values?.bolus ?? "",
       rtRecord?.field_values?.electron_beam ?? "",
@@ -576,6 +677,25 @@ export async function GET(request: Request) {
       ]);
     }
 
+    // ---- 主表沒有欄位的選項類紀錄 ----
+    for (const [category, label] of [
+      ["visit_reason", "此次就診主要原因"],
+      ["referral_source", "如何得知看診資訊"],
+    ] as const) {
+      for (const rec of (intakeByCase.get(c.id) ?? []).filter((r) => r.category === category)) {
+        const items = (rec.case_intake_option_record_items ?? [])
+          .map((it) => optionById.get(it.option_id))
+          .filter(Boolean) as { label: string; export_code: number | null }[];
+        if (!items.length) continue;
+        optionRows.push([
+          rid,
+          label,
+          items.map((o) => o.export_code ?? "").filter((v) => v !== "").join(", "),
+          items.map((o) => o.label).join("、"),
+        ]);
+      }
+    }
+
     // ---- 問卷分數附表 ----
     if (vss || sf36 || psqi || jss) {
       scoreRows.push([
@@ -608,6 +728,8 @@ export async function GET(request: Request) {
 
   addSheet("追蹤逐筆", ["Subject_ID", "第幾次回診", "回診日期", "距手術日天數", "復發(0/1)", "症狀變化碼", "歸屬"], visitRows);
 
+  addSheet("收案選項紀錄", ["Subject_ID", "類別", "代碼", "選項"], optionRows, 26);
+
   addSheet("問卷分數", [
     "Subject_ID", "VSS總分", "VSS-血管分布", "VSS-色素沉澱", "VSS-柔軟度", "VSS-高度",
     ...SF36_SCALES.map((s) => `SF36-${s.label}`),
@@ -633,6 +755,57 @@ export async function GET(request: Request) {
     ]);
   addSheet("Lab 生物標記逐筆", ["Subject_ID", "標記", "單位", "採檢日期", "數值", "原始字串", "備註", "記錄者"], labRows);
 
+  // ---- 問卷逐題作答（docx 項次 9）----
+  // 「目前 JSS raw data 是給總分、SF-36 是給各項 8 項指標的各項總分，附上 raw data 呈現結果」
+  // ＝ 主表與「問卷分數」附表只有計分結果，這裡逐題列出病人實際點了哪個選項。
+  // 一列＝一個案的一份問卷的一題。同時給「作答代碼」（原始值，供統計）與「作答文字」（選項 label，供人看）。
+  // 「第幾次填寫」：同一個案的同一份問卷可能填過很多次（重複施測，或像實測資料那樣相隔幾秒送了三次）。
+  // 只給時間戳分不開（到分鐘還是一樣），給序號才能在分析時把不同次的作答分開比較。
+  const seqCounter = new Map<string, number>();
+  const responseSeq = new Map<string, number>();
+  for (const r of [...(responses ?? [])].sort((a, x) => String(a.submitted_at).localeCompare(String(x.submitted_at)))) {
+    const tmplName = (first(r.questionnaire_templates) as { name?: string } | undefined)?.name ?? "";
+    const key = `${r.case_id}__${tmplName}`;
+    const n = (seqCounter.get(key) ?? 0) + 1;
+    seqCounter.set(key, n);
+    responseSeq.set(r.id, n);
+  }
+
+  for (const r of responses ?? []) {
+    const rid = researchIdById.get(r.case_id);
+    if (!rid) continue; // 被篩選條件排除的個案不出現
+    const tmpl = first(r.questionnaire_templates) as { name?: string } | undefined;
+    const rows = [...(answersByResponse.get(r.id) ?? [])].sort((a, x) => a.order_no - x.order_no);
+    for (const row of rows) {
+      answerDetailRows.push([
+        rid,
+        tmpl?.name ?? "",
+        responseSeq.get(r.id) ?? 1,
+        // 只到「日」會分不出同一天送出的多筆回覆（實測有同一份問卷相隔幾秒送出三次的資料），
+        // 所以帶到分鐘——分析時才能把不同次的作答分開。
+        String(r.submitted_at).replace("T", " ").slice(0, 16),
+        (r as { submitted_via?: string }).submitted_via === "patient" ? "病人自填" : "診間人員",
+        row.order_no,
+        row.text,
+        answerRaw(row),
+        answerLabel(row),
+      ]);
+    }
+  }
+  answerDetailRows.sort(
+    (a, x) =>
+      String(a[0]).localeCompare(String(x[0])) ||
+      String(a[1]).localeCompare(String(x[1])) ||
+      Number(a[2]) - Number(x[2]) ||
+      Number(a[5]) - Number(x[5])
+  );
+  addSheet(
+    "問卷逐題作答",
+    ["Subject_ID", "問卷", "第幾次填寫", "填寫時間", "填寫人", "題號", "題目", "作答代碼", "作答文字"],
+    answerDetailRows,
+    18
+  );
+
   // ---- 編碼對照表（全部由資料庫產生，後台改選項這裡就跟著變）----
   addSheet(
     "編碼對照表",
@@ -652,15 +825,10 @@ export async function GET(request: Request) {
 
   // ---- 欄位缺口清單 ----
   const gaps: string[][] = [
-    ["Basic Info.", "birthday", "系統尚無此欄位", "cases 需新增出生日期欄位與收案表單輸入"],
-    ["Basic Info.", "height / weight / BMI", "系統尚無此欄位（目前輸出 9999＝無紀錄）", "cases 需新增身高/體重欄位，BMI 可自動計算"],
-    ["Basic Info.", "Medical_history_self", "目前是自由文字（disease_history），無法可靠編碼", "改為 1-8 勾選存檔（比照發生原因的可維護清單）"],
-    ["Basic Info.", "Fmaily_history", "目前是自由文字（family_history），無法可靠編碼", "同上"],
-    ["Basic Info.", "Keloid_family_history", "自由文字推不出有/無（目前輸出 9999＝不清楚）", "隨上一項一併改為勾選後即可自動推出"],
+    ["Basic Info.", "height / weight / BMI", "已可填寫（個案頁「病人基本資料」）；未填時輸出 9999", "舊資料沒有這兩項，需人員回頭補"],
+    ["Basic Info.", "Medical_history_self / Fmaily_history", "已可編碼：勾選常見疾病後自動對到 1-8", "舊資料的自由文字對不到清單的片段會落到「其他」(8)"],
     ["Basic Info.", "KC_1..5（發生原因）", "系統只有個案層級的發生原因，拆不到每個病灶", "待助理確認舊病歷能否拆到病灶層級（pending.md D5）"],
     ["Basic Info.", "KOST_1..5（藥膏/貼片）", "系統尚無藥膏/貼片的 1-12 清單", "新增可維護清單並在治療紀錄可複選"],
-    ["Operation", "surgical procedure_1..4（術式）", "系統尚無術式 1-4 編碼欄位", "手術切除的 field_schema 加 select（比照本次類固醇劑量做法）"],
-    ["Operation", "RT_Doctor", "系統只有整形外科醫師清單，沒有放射科", "另建放射科醫師可維護清單（pending.md D9）"],
     ["全部主表", "Name / Chart No.", "去識別化：伺服器永遠留空", "於 /export 頁用「含姓名的匯出」按鈕在瀏覽器端回填"],
   ];
   const gapRows = gaps.map((g) => [...g]);

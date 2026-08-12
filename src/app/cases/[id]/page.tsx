@@ -93,6 +93,9 @@ const FOLLOWUP_REASON_LABEL: Record<string, string> = {
 // 飲食衛教／運動禁忌衛教已於 2026-07-27 移除（決策：衛教內容不屬於研究要收的結構化資料，
 // 改由後台「衛教資料庫」health_education_kb 維護，只供 LINE 衛教機器人回答時參考）。
 const INTAKE_CATEGORIES = [
+  // 2026-08-12 docx 項次 2：病人自填流程的「您的蟹足腫是怎麼來的？」已換成這題；
+  // 診間人員也能在這裡補記（病人沒填或答得不清楚時）。
+  { key: "visit_reason", label: "此次就診主要原因" },
   { key: "onset_cause", label: "發生原因" },
   { key: "referral_source", label: "如何得知看診資訊" },
   // 2026-08-12 新增（docx）：對應部長新版 Excel 的 Keloid_symptom 碼 1-9
@@ -125,6 +128,7 @@ export default async function CaseDetailPage({
     { data: responses },
     { data: photos },
     { data: completeness },
+    { data: doseProtocols },
     { data: pipeline },
     { data: bodyZones },
     { data: radiotherapySessions },
@@ -168,12 +172,13 @@ export default async function CaseDetailPage({
     supabase
       .from("questionnaire_responses")
       .select(
-        "id, submitted_at, submitted_via, questionnaire_templates(id, name), questionnaire_answers(answer_value, questionnaire_questions(order_no))"
+        "id, submitted_at, submitted_via, questionnaire_templates(id, name), questionnaire_answers(answer_value, questionnaire_questions(order_no, question_text, question_type, options))"
       )
       .eq("case_id", id)
       .order("submitted_at", { ascending: false }),
     supabase.from("photos").select("id, taken_at, body_site, lesion_id, file_path, thumbnail_path").eq("case_id", id).order("taken_at", { ascending: false }),
     supabase.from("case_data_completeness").select("*").eq("case_id", id),
+    supabase.from("radiotherapy_dose_protocols").select("dose_category, fraction_count, per_fraction_dose_cgy"),
     supabase.from("v_case_pipeline_progress").select("*").eq("case_id", id).single(),
     supabase.from("body_part_zones").select("id, zone_key, view, display_name, dose_category").eq("active", true).order("sort_order"),
     supabase
@@ -233,6 +238,12 @@ export default async function CaseDetailPage({
       doseCategoryLabel: zone?.dose_category ? DOSE_CATEGORY_LABEL[zone.dose_category] : null,
     };
   });
+  // 各劑量分類的預設療程（胸/肩胛 1800cGy×3、耳 800cGy×1、其他 1500cGy×2）。
+  // 帶到治療表單當預設值，讓使用者在勾部位時就看到「會排幾次、每次多少」並可當場改。
+  const protocolByCategory = new Map(
+    (doseProtocols ?? []).map((p) => [p.dose_category as string, { fractions: p.fraction_count as number, doseCgy: p.per_fraction_dose_cgy as number }])
+  );
+
   const lesionLabel = (lesionId: string | null | undefined) => {
     const l = lesionList.find((x) => x.id === lesionId);
     return l ? `部位${l.site_no} ${l.body_site}` : null;
@@ -260,6 +271,35 @@ export default async function CaseDetailPage({
     return answers;
   }
 
+  /**
+   * 把一筆問卷回覆攤成「題號／題目／作答（已翻成選項文字）」，供逐題檢視用。
+   * 選項題存的是 value，直接顯示會是一串代碼（例如 "3"），所以要對回 options 的 label。
+   */
+  function answerRows(r: {
+    questionnaire_answers?: {
+      answer_value: unknown;
+      questionnaire_questions:
+        | { order_no?: number; question_text?: string; question_type?: string; options?: unknown }
+        | { order_no?: number; question_text?: string; question_type?: string; options?: unknown }[]
+        | null;
+    }[];
+  }) {
+    const rows: { orderNo: number; text: string; answer: string }[] = [];
+    for (const a of r.questionnaire_answers ?? []) {
+      const q = Array.isArray(a.questionnaire_questions) ? a.questionnaire_questions[0] : a.questionnaire_questions;
+      if (!q || q.order_no === undefined) continue;
+      const opts = (q.options ?? []) as { value?: string; label?: string }[];
+      const toLabel = (v: unknown) => {
+        const hit = opts.find((o) => String(o.value) === String(v));
+        return hit?.label ? `${hit.label}` : String(v ?? "");
+      };
+      const raw = a.answer_value;
+      const answer = Array.isArray(raw) ? raw.map(toLabel).join("、") : toLabel(raw);
+      rows.push({ orderNo: q.order_no, text: q.question_text ?? "", answer });
+    }
+    return rows.sort((x, y) => x.orderNo - y.orderNo);
+  }
+
   // wound-photos 是私有 bucket，圖片一律透過 /api/photos/<id> 取得（該路由在瀏覽器實際載入圖片的
   // 當下才即時簽一張短效期網址並轉址），所以這裡的網址永不過期，頁面停留再久都不會壞圖。
   // grid 用 ?variant=thumb 縮圖（流量小），點開大圖才載原圖；舊照片沒有縮圖時路由端 fallback 用原圖。
@@ -271,6 +311,18 @@ export default async function CaseDetailPage({
 
   // 放療療程分組：一個部位的一次手術＝一組療程（同一部位再次手術會是另一組），
   // 以「病灶 + 觸發的手術紀錄」當分組鍵。舊資料沒有 lesion_id 時歸到「未指定部位」那組。
+  // 放射科醫師名單沿用「放射治療」治療類型的 field_schema（後台可維護），
+  // 逐次放療待辦標記完成時可以選——那是實際執行時真正會用到的路徑。
+  const rtDoctorOptions = (() => {
+    const schema = ((treatmentTypes ?? []).find((t) => t.name === "放射治療")?.field_schema ?? []) as {
+      key?: string;
+      options?: { value?: string }[];
+    }[];
+    return (schema.find((f) => f.key === "rt_doctor")?.options ?? []).map((o) => String(o.value ?? "")).filter(Boolean);
+  })();
+  // 同一個案先前已填過的醫師，當作下一次的預設值（同一療程通常是同一位）
+  const lastRtDoctor = (radiotherapySessions ?? []).map((s) => (s as { rt_doctor?: string }).rt_doctor).filter(Boolean).pop() ?? "";
+
   type RtSession = {
     id: string;
     lesion_id: string | null;
@@ -280,6 +332,7 @@ export default async function CaseDetailPage({
     total_fractions: number;
     planned_dose_cgy: number;
     actual_dose_cgy: number | null;
+    rt_doctor: string | null;
     due_date: string;
     completed_date: string | null;
     status: string;
@@ -573,6 +626,39 @@ export default async function CaseDetailPage({
             />
           </div>
           <div>
+            <label className="block text-xs font-medium text-ink/70">出生日期</label>
+            <input
+              type="date"
+              name="birth_date"
+              defaultValue={caseRow.birth_date ?? ""}
+              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            />
+          </div>
+          {/* 身高體重（2026-08-13）：新格式 Basic Info. 有 height/weight/BMI 三欄，
+              BMI 由匯出時自動計算，不在這裡另存欄位以免與身高體重不同步。 */}
+          <div>
+            <label className="block text-xs font-medium text-ink/70">身高（cm）</label>
+            <input
+              name="height_cm"
+              type="number"
+              step="0.1"
+              inputMode="decimal"
+              defaultValue={caseRow.height_cm ?? ""}
+              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink/70">體重（kg）</label>
+            <input
+              name="weight_kg"
+              type="number"
+              step="0.1"
+              inputMode="decimal"
+              defaultValue={caseRow.weight_kg ?? ""}
+              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
             <label className="block text-xs font-medium text-ink/70">手機號碼</label>
             <input
               name="phone_number"
@@ -705,8 +791,8 @@ export default async function CaseDetailPage({
       {/* 發生原因 / 得知看診資訊 / 飲食運動衛教（後台可維護選單，決策 2026-07-27） */}
       <section id="section-intake" data-nav-section data-nav-label="發生原因與看診來源" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
-          發生原因 / 得知看診資訊 / 目前症狀
-          <InfoTooltip text="三類選單皆為後台可維護清單（非單純勾選），可複選並保留歷次紀錄。「目前不適症狀」的『無明顯不適』與其他選項互斥。衛教內容不在此記錄，改由後台「衛教資料庫」維護供 LINE 衛教機器人參考。" />
+          就診原因 / 發生原因 / 得知看診資訊 / 目前症狀
+          <InfoTooltip text="四類選單皆為後台可維護清單（非單純勾選），可複選並保留歷次紀錄。「目前不適症狀」的『無明顯不適』與其他選項互斥。衛教內容不在此記錄，改由後台「衛教資料庫」維護供 LINE 衛教機器人參考。" />
         </h2>
         {INTAKE_CATEGORIES.map((cat) => {
           const options = (intakeOptions ?? []).filter((o) => o.category === cat.key);
@@ -777,6 +863,7 @@ export default async function CaseDetailPage({
               site_no: l.site_no,
               body_site: l.body_site,
               doseCategoryLabel: l.doseCategoryLabel,
+              rtPlan: l.doseCategory ? protocolByCategory.get(l.doseCategory) ?? null : null,
             }))}
             symptomChangeOptions={(intakeOptions ?? [])
               .filter((o) => o.category === "symptom_change")
@@ -837,7 +924,9 @@ export default async function CaseDetailPage({
                       <span className="whitespace-nowrap">
                         第 {s.fraction_no}/{s.total_fractions} 次 ・ 預定 {s.planned_dose_cgy / 100}Gy ・ 到期 {s.due_date}
                         {s.status === "done" && s.actual_dose_cgy != null && (
-                          <span className="ml-2 whitespace-nowrap text-xs text-emerald-600">實際 {s.actual_dose_cgy / 100}Gy（{s.completed_date}）</span>
+                          <span className="ml-2 whitespace-nowrap text-xs text-emerald-600">
+                            實際 {s.actual_dose_cgy / 100}Gy（{s.completed_date}）{s.rt_doctor ? `・${s.rt_doctor}` : ""}
+                          </span>
                         )}
                       </span>
                       <span className="flex flex-wrap items-center gap-2">
@@ -857,6 +946,14 @@ export default async function CaseDetailPage({
                             <input type="hidden" name="case_id" value={id} />
                             <input type="hidden" name="session_id" value={s.id} />
                             <input type="hidden" name="status" value="done" />
+                            {/* 實際治療日期（docx 項次 10）：預設帶排定日，補登時可改成真正做的那天 */}
+                            <input
+                              type="date"
+                              name="completed_date"
+                              defaultValue={s.due_date ?? undefined}
+                              title="實際治療日期"
+                              className="rounded border border-brand-200 px-1 py-0.5 text-xs"
+                            />
                             <input
                               type="number"
                               name="actual_dose_cgy"
@@ -864,6 +961,21 @@ export default async function CaseDetailPage({
                               defaultValue={s.planned_dose_cgy}
                               className="w-20 rounded border border-brand-200 px-1 py-0.5 text-xs"
                             />
+                            {rtDoctorOptions.length > 0 && (
+                              <select
+                                name="rt_doctor"
+                                defaultValue={s.rt_doctor ?? lastRtDoctor}
+                                title="放射科醫師"
+                                className="rounded border border-brand-200 px-1 py-0.5 text-xs"
+                              >
+                                <option value="">放射科醫師</option>
+                                {rtDoctorOptions.map((d) => (
+                                  <option key={d} value={d}>
+                                    {d}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
                             <SubmitButton variant="ghost" size="sm" className="!px-1.5 !py-0.5 text-ink/40 underline" pendingText="處理中…">
                               標記完成
                             </SubmitButton>
@@ -1279,6 +1391,30 @@ export default async function CaseDetailPage({
                       </div>
                     );
                   })()}
+
+                {/* 逐題作答明細（docx 項次 9，2026-08-12）：先前只看得到計分結果，
+                    看不到病患實際點了哪個選項。預設收合，需要時展開。 */}
+                {(() => {
+                  const rows = answerRows(r);
+                  if (rows.length === 0) return null;
+                  return (
+                    <details className="mt-1.5">
+                      <summary className="cursor-pointer text-xs text-brand-700 hover:underline">
+                        查看逐題作答（{rows.length} 題）
+                      </summary>
+                      <ol className="mt-1 space-y-0.5 border-l-2 border-brand-100 pl-3">
+                        {rows.map((row) => (
+                          <li key={row.orderNo} className="break-words text-xs text-ink/60">
+                            <span className="text-ink/40">{row.orderNo}.</span> {row.text}
+                            <span className="ml-1 font-medium text-ink/80">
+                              → {row.answer || <span className="font-normal text-ink/30">（未作答）</span>}
+                            </span>
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
+                  );
+                })()}
               </li>
             );
           })}

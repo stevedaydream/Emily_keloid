@@ -10,7 +10,7 @@ export default async function PatientIntakePage({ params }: { params: Promise<{ 
   const supabase = supabaseServer();
 
   const [{ data: caseRow }, { data: options }, { data: progress }, { data: templates }] = await Promise.all([
-    supabase.from("cases").select("id, research_id").eq("id", caseId).single(),
+    supabase.from("cases").select("id, research_id, sex, age_at_enrollment, phone_number, keloid_onset_date").eq("id", caseId).single(),
     supabase.from("case_intake_option_lists").select("id, category, label").eq("active", true).order("sort_order"),
     supabase.from("case_patient_intake_progress").select("segment_key").eq("case_id", caseId),
     supabase
@@ -53,9 +53,17 @@ export default async function PatientIntakePage({ params }: { params: Promise<{ 
     <PatientIntakeFlow
       caseId={caseId}
       researchId={caseRow.research_id}
+      // 建檔時診間已經填過的資料先帶進來，病人不用重複回答（2026-08-12 使用者要求）。
+      // 出生年由 age_at_enrollment 反推——存檔時 savePatientBasicAction 也是用同一個換算，來回一致。
+      prefill={{
+        sex: caseRow.sex ?? "",
+        birthYear: caseRow.age_at_enrollment ? String(new Date().getFullYear() - caseRow.age_at_enrollment) : "",
+        phone: caseRow.phone_number ?? "",
+        onsetYear: caseRow.keloid_onset_date ? String(new Date(caseRow.keloid_onset_date).getFullYear()) : "",
+      }}
       completedSegments={(progress ?? []).map((p) => p.segment_key)}
       familyDiseaseOptions={optionsOf("family_disease")}
-      keloidHistoryOptions={optionsOf("keloid_history_type")}
+      visitReasonOptions={optionsOf("visit_reason")}
       onsetCauseOptions={optionsOf("onset_cause")}
       referralOptions={optionsOf("referral_source")}
       sf36={sf36 ? { id: sf36.id, name: sf36.name, questions: questionsFor(sf36.id) } : null}

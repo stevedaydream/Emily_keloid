@@ -11,7 +11,14 @@ type FieldOption = { value: string; export_code?: number };
 type FieldSchema = { key: string; label: string; type: string; options?: FieldOption[] };
 type TreatmentType = { id: string; name: string; field_schema: FieldSchema[] };
 type Preset = { id: string; treatment_type_id: string; name: string; field_values: Record<string, string> };
-export type LesionOption = { id: string; site_no: number | null; body_site: string; doseCategoryLabel: string | null };
+export type LesionOption = {
+  id: string;
+  site_no: number | null;
+  body_site: string;
+  doseCategoryLabel: string | null;
+  /** 該部位劑量分類的預設療程；沒指定部位分類時為 null（不會自動排放療） */
+  rtPlan: { fractions: number; doseCgy: number } | null;
+};
 export type SymptomChangeOption = { id: string; label: string };
 
 function TypeBlock({ type, presets }: { type: TreatmentType; presets: Preset[] }) {
@@ -135,6 +142,10 @@ function TreatmentFields({
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedLesionIds, setSelectedLesionIds] = useState<string[]>([]);
+  // 逐部位的放療方案（勾選當下用該分類的預設值初始化，之後可改）
+  type RtPlan = { on: boolean; fractions: number; doseCgy: number };
+  const [rtPlans, setRtPlans] = useState<Record<string, RtPlan>>({});
+  const setRtPlan = (lesionId: string, plan: RtPlan) => setRtPlans((prev) => ({ ...prev, [lesionId]: plan }));
 
   function toggle(id: string) {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -142,6 +153,12 @@ function TreatmentFields({
 
   function toggleLesion(id: string) {
     setSelectedLesionIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    // 第一次勾到某部位時，用該部位分類的標準療程當預設值
+    setRtPlans((prev) => {
+      if (prev[id]) return prev;
+      const plan = lesions.find((l) => l.id === id)?.rtPlan;
+      return plan ? { ...prev, [id]: { on: true, fractions: plan.fractions, doseCgy: plan.doseCgy } } : prev;
+    });
   }
 
   const surgerySelected = selectedIds.some((id) => treatmentTypes.find((t) => t.id === id)?.name === "手術切除");
@@ -230,10 +247,74 @@ function TreatmentFields({
             className="mt-0.5 w-48 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           />
         </div>
-        {surgerySelected && (
-          <p className="mt-1.5 text-[11px] text-amber-700">
-            已勾「手術切除」：送出後會為每個「已指定分類」的部位各產生一組放療排程（自由輸入的部位無分類，不會自動排程）。
-          </p>
+        {/* 放療排程確認（2026-08-13）：原本勾了部位就直接照劑量方案排，人沒有確認或修改的機會。
+            改為展開逐部位的方案，預帶該分類的預設次數與劑量，可當場改、也可整個不排。 */}
+        {surgerySelected && selectedLesionIds.length > 0 && (
+          <div className="mt-2 rounded-md border border-sky-200 bg-sky-50/60 p-3">
+            <p className="mb-2 text-xs font-semibold text-sky-800">放療排程確認</p>
+            <div className="space-y-2">
+              {selectedLesionIds.map((lid) => {
+                const l = lesions.find((x) => x.id === lid);
+                if (!l) return null;
+                if (!l.rtPlan) {
+                  return (
+                    <p key={lid} className="text-[11px] text-amber-700">
+                      部位{l.site_no} {l.body_site}：尚未指定部位分類，<b>不會排放療</b>。
+                      請先到上方「現存病灶大小測量」指定分類。
+                    </p>
+                  );
+                }
+                const plan = rtPlans[lid] ?? { on: true, fractions: l.rtPlan.fractions, doseCgy: l.rtPlan.doseCgy };
+                const totalGy = ((plan.fractions || 0) * (plan.doseCgy || 0)) / 100;
+                return (
+                  <div key={lid} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-700">
+                    <label className="flex items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        name={`rtplan__${lid}__on`}
+                        checked={plan.on}
+                        onChange={(e) => setRtPlan(lid, { ...plan, on: e.target.checked })}
+                      />
+                      <span className="whitespace-nowrap">
+                        部位{l.site_no} {l.body_site}
+                        <span className="text-slate-400">（{l.doseCategoryLabel}）</span>
+                      </span>
+                    </label>
+                    <span className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        name={`rtplan__${lid}__fractions`}
+                        min={1}
+                        max={20}
+                        value={plan.fractions}
+                        disabled={!plan.on}
+                        onChange={(e) => setRtPlan(lid, { ...plan, fractions: Number(e.target.value) })}
+                        className="w-14 rounded border border-slate-300 px-1 py-0.5 text-xs disabled:opacity-40"
+                      />
+                      次 ×
+                      <input
+                        type="number"
+                        name={`rtplan__${lid}__dose`}
+                        min={0}
+                        step={50}
+                        value={plan.doseCgy}
+                        disabled={!plan.on}
+                        onChange={(e) => setRtPlan(lid, { ...plan, doseCgy: Number(e.target.value) })}
+                        className="w-20 rounded border border-slate-300 px-1 py-0.5 text-xs disabled:opacity-40"
+                      />
+                      cGy
+                    </span>
+                    <span className={plan.on ? "font-medium text-sky-800" : "text-slate-400"}>
+                      {plan.on ? `＝ 共 ${totalGy}Gy，自手術隔天起連續每日一次` : "不排放療"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[11px] text-slate-500">
+              預設值來自該部位分類的標準療程，可直接修改。自由輸入的部位沒有分類，不會排放療。
+            </p>
+          </div>
         )}
       </div>
 

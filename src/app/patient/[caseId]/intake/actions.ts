@@ -95,7 +95,7 @@ export async function savePatientHistoryAction(
   payload: {
     familyHistory: string[];
     familyHistoryUnknown: boolean;
-    keloidHistoryOptionIds: string[];
+    visitReasonOptionIds: string[];
     onsetYear: string | null;
     priors: Record<string, Prior>;
     /** 這一段在本次填寫中先前建立的紀錄；病人按「上一步」回頭改後重存時用來取代，避免長出第二筆 */
@@ -112,24 +112,26 @@ export async function savePatientHistoryAction(
   for (const [key, value] of Object.entries(payload.priors)) update[key] = PRIOR_TEXT[value];
   await supabase.from("cases").update(update).eq("id", caseId);
 
-  // keloid 病史類型走 case_intake_option_records（逐筆累加，不會蓋掉人員填的）。
+  // 此次就診主要原因走 case_intake_option_records（逐筆累加，不會蓋掉人員填的）。
+  // 2026-08-12 docx 項次 2：原本這題問的是 keloid_history_type（「您的蟹足腫是怎麼來的？」），
+  // 已整組換成 visit_reason（「您此次至本院就診的主要原因為何？」7 選項）。
   // 本次填寫如果已經建過一筆（病人按「上一步」回頭改），先刪掉那一筆再重建，
   // 否則同一次收案會留下兩筆互相矛盾的紀錄。items 有 on delete cascade。
   if (payload.replaceRecordId) {
     await supabase.from("case_intake_option_records").delete().eq("id", payload.replaceRecordId);
   }
   let recordId: string | null = null;
-  if (payload.keloidHistoryOptionIds.length > 0) {
+  if (payload.visitReasonOptionIds.length > 0) {
     const { data: record } = await supabase
       .from("case_intake_option_records")
-      .insert({ case_id: caseId, category: "keloid_history_type", recorded_by: `${operator}（病人自填）`, notes: null })
+      .insert({ case_id: caseId, category: "visit_reason", recorded_by: `${operator}（病人自填）`, notes: null })
       .select("id")
       .single();
     if (record) {
       recordId = record.id;
       await supabase
         .from("case_intake_option_record_items")
-        .insert(payload.keloidHistoryOptionIds.map((optionId) => ({ record_id: record.id, option_id: optionId })));
+        .insert(payload.visitReasonOptionIds.map((optionId) => ({ record_id: record.id, option_id: optionId })));
     }
   }
 
@@ -155,16 +157,9 @@ export async function savePatientHistoryAction(
     ...(payload.onsetYear
       ? []
       : [{ fieldKey: "keloid_onset_date", fieldLabel: "蟹足腫初次發生時間", reason: "unknown" as const, patientAnswer: "不記得" }]),
-    ...(payload.keloidHistoryOptionIds.length > 0
-      ? [
-          {
-            fieldKey: "keloid_history_detail",
-            fieldLabel: "蟹足腫病史細節（部位／時間／治療方式）",
-            reason: "no_detail" as const,
-            patientAnswer: `已勾選 ${payload.keloidHistoryOptionIds.length} 項`,
-          },
-        ]
-      : []),
+    // 原本這裡會依「病人勾了蟹足腫病史類型」推出一筆待補（提醒人員補部位/時間/治療方式）。
+    // 2026-08-12 docx 項次 2 把那題換成「此次就診主要原因」後，這個推導不再成立，故移除。
+    // 蟹足腫病史類型仍可由診間人員在個案頁記錄（category='keloid_history_type'），不受影響。
   ]);
 
   await markSegmentDone(caseId, "history");
