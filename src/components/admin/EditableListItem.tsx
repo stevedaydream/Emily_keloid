@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import SubmitButton from "@/components/ui/SubmitButton";
 
 type Field = {
@@ -10,7 +10,26 @@ type Field = {
   type?: "text" | "textarea" | "select";
   options?: { value: string; label: string }[];
   className?: string;
+  // 佔滿整列（等於自己獨佔一行），長文欄位用；預設是跟其他欄位擠同一行。
+  fullWidth?: boolean;
 };
+
+// 高度跟著內容長短自動長／縮的 textarea：預設高度 rows 只是下限，
+// 上限用 max-h 擋住（超過就內部捲動），使用者也還是可以自己拉大（resize-y）。
+function AutoGrowTextarea({ className, ...props }: React.ComponentProps<"textarea">) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  const resize = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  };
+
+  useLayoutEffect(resize, []);
+
+  return <textarea ref={ref} onInput={resize} className={className} {...props} />;
+}
 
 // 通用的「檢視／編輯／刪除」清單項目：後台各種可維護清單（醫師、ICD碼、術語、操作者等）共用，
 // 統一「編輯」在原地展開成表單、「刪除」跳確認對話框；若刪除對象已被個案資料引用（外鍵限制），
@@ -45,7 +64,7 @@ export default function EditableListItem({
           <input key={k} type="hidden" name={k} value={v} />
         ))}
         {fields.map((f) => (
-          <div key={f.name}>
+          <div key={f.name} className={f.fullWidth ? "basis-full" : ""}>
             <label className="block text-xs font-medium text-ink/60">{f.label}</label>
             {f.type === "select" ? (
               <select
@@ -60,11 +79,11 @@ export default function EditableListItem({
                 ))}
               </select>
             ) : f.type === "textarea" ? (
-              <textarea
+              <AutoGrowTextarea
                 name={f.name}
                 defaultValue={f.defaultValue}
-                rows={2}
-                className={`mt-1 rounded-md border border-brand-200 px-2 py-1 text-sm ${f.className ?? "w-56"}`}
+                rows={3}
+                className={`mt-1 max-h-[60vh] min-h-24 resize-y overflow-auto rounded-md border border-brand-200 px-2 py-1 text-sm leading-relaxed sm:min-h-32 ${f.className ?? "w-56"}`}
               />
             ) : (
               <input

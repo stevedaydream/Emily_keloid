@@ -66,12 +66,12 @@ export default async function HealthKbAdminPage() {
       <EditableListItem
         hidden={{ id: e.id }}
         fields={[
-          { name: "topic", label: "主題", defaultValue: e.topic, className: "w-full" },
-          { name: "category", label: "分類（選填）", defaultValue: e.category ?? "", className: "w-full" },
+          { name: "topic", label: "主題", defaultValue: e.topic, className: "w-full", fullWidth: true },
+          { name: "category", label: "分類（選填）", defaultValue: e.category ?? "", className: "w-44" },
           { name: "sort_order", label: "排序（小的排前面）", defaultValue: String(e.sort_order), className: "w-28" },
-          { name: "content", label: "衛教內容", defaultValue: e.content, type: "textarea", className: "w-full" },
-          { name: "pdf_url", label: "醫院衛教單張連結（選填）", defaultValue: e.pdf_url ?? "", className: "w-full" },
-          { name: "video_url", label: "衛教影片連結（選填）", defaultValue: e.video_url ?? "", className: "w-full" },
+          { name: "content", label: "衛教內容", defaultValue: e.content, type: "textarea", className: "w-full", fullWidth: true },
+          { name: "pdf_url", label: "醫院衛教單張連結（選填）", defaultValue: e.pdf_url ?? "", className: "w-full", fullWidth: true },
+          { name: "video_url", label: "衛教影片連結（選填）", defaultValue: e.video_url ?? "", className: "w-full", fullWidth: true },
         ]}
         updateAction={updateKbEntryAction}
         deleteAction={deleteKbEntryAction}

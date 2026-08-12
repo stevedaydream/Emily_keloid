@@ -1,0 +1,107 @@
+[
+  {
+    "topic": "傷口/疤痕會癢怎麼辦",
+    "active": true,
+    "sort_order": 1,
+    "category": "疤痕護理",
+    "pdf_url": "https://sijhih.cgh.org.tw/rwd102/store/F1/3.%E6%83%B1%E4%BA%BA%E7%9A%84%E3%80%8C%E8%9F%B9%E3%80%8D%E8%B6%B3%E8%85%AB%E7%9C%9F%E7%9A%84%E5%8F%AF%E4%BB%A5%E6%A0%B9%E6%B2%BB%EF%BC%9F.pdf"
+  },
+  {
+    "topic": "壓力衣/矽膠片要戴多久",
+    "active": true,
+    "sort_order": 2,
+    "category": "疤痕護理",
+    "pdf_url": "https://sijhih.cgh.org.tw/rwd102/store/F1/3.%E6%83%B1%E4%BA%BA%E7%9A%84%E3%80%8C%E8%9F%B9%E3%80%8D%E8%B6%B3%E8%85%AB%E7%9C%9F%E7%9A%84%E5%8F%AF%E4%BB%A5%E6%A0%B9%E6%B2%BB%EF%BC%9F.pdf"
+  },
+  {
+    "topic": "傷口照顧與飲食注意事項",
+    "active": true,
+    "sort_order": 3,
+    "category": "傷口照護",
+    "pdf_url": "https://www.cgh.org.tw/ec99/rwd1320/allphoto/5000/259.pdf"
+  },
+  {
+    "topic": "蟹足腫治療術後注意事項",
+    "active": true,
+    "sort_order": 10,
+    "category": "傷口照護",
+    "pdf_url": "https://www.cgh.org.tw/ec99/rwd1320/allphoto/5000/324.pdf"
+  },
+  {
+    "topic": "放射治療會不會痛？",
+    "active": false,
+    "sort_order": 20,
+    "category": "放射治療",
+    "pdf_url": "https://www.cgh.org.tw/ec99/rwd1320/allphoto/5000/490.pdf"
+  },
+  {
+    "topic": "放射治療為什麼要連續做？可以改天嗎？",
+    "active": false,
+    "sort_order": 21,
+    "category": "放射治療",
+    "pdf_url": "https://www.cgh.org.tw/ec99/rwd1320/allphoto/5000/490.pdf"
+  },
+  {
+    "topic": "手術後傷口多久可以碰水、洗澡？",
+    "active": false,
+    "sort_order": 22,
+    "category": "傷口照護",
+    "pdf_url": "https://www.cgh.org.tw/ec99/rwd1320/allphoto/5000/259.pdf"
+  },
+  {
+    "topic": "疤痕要多久才會變淡、變平？",
+    "active": false,
+    "sort_order": 23,
+    "category": "疤痕護理",
+    "pdf_url": "https://sijhih.cgh.org.tw/rwd102/store/F1/3.%E6%83%B1%E4%BA%BA%E7%9A%84%E3%80%8C%E8%9F%B9%E3%80%8D%E8%B6%B3%E8%85%AB%E7%9C%9F%E7%9A%84%E5%8F%AF%E4%BB%A5%E6%A0%B9%E6%B2%BB%EF%BC%9F.pdf"
+  },
+  {
+    "topic": "疤痕可以曬太陽嗎？需要防曬嗎？",
+    "active": false,
+    "sort_order": 24,
+    "category": "疤痕護理",
+    "pdf_url": null
+  },
+  {
+    "topic": "類固醇注射會不會痛？要打幾次？",
+    "active": false,
+    "sort_order": 25,
+    "category": "治療方式",
+    "pdf_url": null
+  },
+  {
+    "topic": "蟹足腫會遺傳嗎？",
+    "active": false,
+    "sort_order": 26,
+    "category": "認識蟹足腫",
+    "pdf_url": "https://sijhih.cgh.org.tw/rwd102/store/F1/3.%E6%83%B1%E4%BA%BA%E7%9A%84%E3%80%8C%E8%9F%B9%E3%80%8D%E8%B6%B3%E8%85%AB%E7%9C%9F%E7%9A%84%E5%8F%AF%E4%BB%A5%E6%A0%B9%E6%B2%BB%EF%BC%9F.pdf"
+  },
+  {
+    "topic": "什麼情況要提前回診？",
+    "active": false,
+    "sort_order": 27,
+    "category": "回診與追蹤",
+    "pdf_url": null
+  },
+  {
+    "topic": "什麼時候可以恢復運動？",
+    "active": true,
+    "sort_order": 28,
+    "category": "日常生活",
+    "pdf_url": null
+  },
+  {
+    "topic": "矽膠片使用了會癢、悶熱怎麼辦？",
+    "active": false,
+    "sort_order": 29,
+    "category": "疤痕護理",
+    "pdf_url": null
+  },
+  {
+    "topic": "放射治療後照射部位的皮膚要怎麼照顧？",
+    "active": false,
+    "sort_order": 30,
+    "category": "放射治療",
+    "pdf_url": "https://www.cgh.org.tw/ec99/rwd1320/allphoto/5000/490.pdf"
+  }
+]
