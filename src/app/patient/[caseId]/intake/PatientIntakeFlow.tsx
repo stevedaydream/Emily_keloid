@@ -54,12 +54,16 @@ type Screen = {
   autoAdvance?: boolean;
 };
 
+/** 建檔時診間已填過的欄位，用來當作病人流程的初始值 */
+export type IntakePrefill = { sex: string; birthYear: string; phone: string; onsetYear: string };
+
 export default function PatientIntakeFlow({
   caseId,
   researchId,
   completedSegments,
+  prefill,
   familyDiseaseOptions,
-  keloidHistoryOptions,
+  visitReasonOptions,
   onsetCauseOptions,
   referralOptions,
   sf36,
@@ -68,21 +72,24 @@ export default function PatientIntakeFlow({
   caseId: string;
   researchId: string;
   completedSegments: string[];
+  prefill: IntakePrefill;
   familyDiseaseOptions: Option[];
-  keloidHistoryOptions: Option[];
+  visitReasonOptions: Option[];
   onsetCauseOptions: Option[];
   referralOptions: Option[];
   sf36: Questionnaire | null;
   psqi: Questionnaire | null;
 }) {
   // ── 各段的作答狀態 ────────────────────────────────────────────
-  const [sex, setSex] = useState("");
-  const [birthYear, setBirthYear] = useState("");
-  const [phone, setPhone] = useState("");
+  // 初始值＝建檔時診間已填的資料（2026-08-12）。病人看到的是已經選好/填好的畫面，
+  // 確認無誤直接按下一步即可；要改也照樣能改，送出時以病人這次的答案為準。
+  const [sex, setSex] = useState(prefill.sex);
+  const [birthYear, setBirthYear] = useState(prefill.birthYear);
+  const [phone, setPhone] = useState(prefill.phone);
 
   const [family, setFamily] = useState<string[]>([]);
-  const [keloidHistory, setKeloidHistory] = useState<string[]>([]);
-  const [onsetYear, setOnsetYear] = useState("");
+  const [visitReason, setVisitReason] = useState<string[]>([]);
+  const [onsetYear, setOnsetYear] = useState(prefill.onsetYear);
   const [priors, setPriors] = useState<Record<string, Prior>>({});
 
   const [onsetCause, setOnsetCause] = useState<string[]>([]);
@@ -121,10 +128,16 @@ export default function PatientIntakeFlow({
   const screens = useMemo<Screen[]>(() => {
     const list: Screen[] = [];
 
+    // 有帶入值的畫面加一句提示，讓病人知道那是診間先填的、可以直接確認或修改。
+    // （沒帶入值的畫面不要出現這句，否則空白畫面配「已由診間填寫」會很奇怪。）
+    const prefilledHint = (filled: boolean, base?: string) =>
+      filled ? ["已由診間填寫，確認無誤請按「下一步」；不對可以直接改", base].filter(Boolean).join("。") : base;
+
     list.push({
       segment: "basic",
       title: "您的性別是？",
-      autoAdvance: true,
+      hint: prefilledHint(!!prefill.sex),
+      autoAdvance: !prefill.sex,
       body: (
         <BigChoice
           value={sex}
@@ -140,13 +153,13 @@ export default function PatientIntakeFlow({
     list.push({
       segment: "basic",
       title: "您是哪一年出生的？",
-      hint: "上下滑動選擇年份",
+      hint: prefilledHint(!!prefill.birthYear, "上下滑動選擇年份"),
       body: <YearWheel value={birthYear} onChange={setBirthYear} />,
     });
     list.push({
       segment: "basic",
       title: "您的手機號碼？",
-      hint: "用於回診提醒。沒有手機可以直接按「下一步」跳過",
+      hint: prefilledHint(!!prefill.phone, "用於回診提醒。沒有手機可以直接按「下一步」跳過"),
       body: <BigNumpad value={phone} onChange={setPhone} />,
     });
 
@@ -167,13 +180,15 @@ export default function PatientIntakeFlow({
     });
     list.push({
       segment: "history",
-      title: "您的蟹足腫是怎麼來的？",
+      // docx 項次 2（2026-08-12）：原本問「您的蟹足腫是怎麼來的？」（keloid_history_type），
+      // 整組換成此題。發生原因（onset_cause，部長 Excel 的 KC 碼來源）是另一題，不受影響。
+      title: "您此次至本院就診的主要原因為何？",
       hint: "可以複選",
       body: (
         <BigMultiChoice
-          values={keloidHistory}
-          onChange={(v) => setKeloidHistory(toggleExclusive(v, keloidHistory))}
-          options={multiOptions(keloidHistoryOptions, [{ value: UNKNOWN, label: "我不知道" }])}
+          values={visitReason}
+          onChange={(v) => setVisitReason(toggleExclusive(v, visitReason))}
+          options={multiOptions(visitReasonOptions, [{ value: UNKNOWN, label: "我不知道" }])}
         />
       ),
     });
@@ -259,9 +274,10 @@ export default function PatientIntakeFlow({
 
     return list;
   }, [
-    sex, birthYear, phone, family, keloidHistory, onsetYear, priors,
+    sex, birthYear, phone, family, visitReason, onsetYear, priors,
     onsetCause, referral, answers,
-    familyDiseaseOptions, keloidHistoryOptions, onsetCauseOptions, referralOptions, sf36, psqi,
+    prefill.sex, prefill.birthYear, prefill.phone,
+    familyDiseaseOptions, visitReasonOptions, onsetCauseOptions, referralOptions, sf36, psqi,
   ]);
 
   // 續填：從第一個「還沒完成的段落」的第一個畫面開始
@@ -280,7 +296,7 @@ export default function PatientIntakeFlow({
       const { recordId } = await savePatientHistoryAction(caseId, {
         familyHistory: familyDiseaseOptions.filter((o) => family.includes(o.id)).map((o) => o.label),
         familyHistoryUnknown: family.includes(UNKNOWN),
-        keloidHistoryOptionIds: keloidHistory.filter((v) => v !== NONE && v !== UNKNOWN),
+        visitReasonOptionIds: visitReason.filter((v) => v !== NONE && v !== UNKNOWN),
         onsetYear: onsetYear || null,
         priors,
         replaceRecordId: savedIds.history,

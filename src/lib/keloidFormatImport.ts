@@ -23,6 +23,10 @@ export type ImportLookups = {
   icdIdByCode: Map<number, string>;
   /** category → 碼 → case_intake_option_lists.id */
   optionIdByCategoryCode: Map<string, Map<number, string>>;
+  /** 放射科醫師碼（1-7）→ 姓名。碼表在 treatment_types('放射治療').field_schema 裡 */
+  rtDoctorByCode: Map<number, string>;
+  /** 術式碼（1-4）→ 名稱。碼表在 treatment_types('手術切除').field_schema 裡 */
+  procedureByCode: Map<number, string>;
 };
 
 export type DecodedLesion = {
@@ -52,6 +56,9 @@ export type DecodedCase = {
   doctor_id: string;
   fields: {
     sex: string | null;
+    birth_date: string | null;
+    height_cm: number | null;
+    weight_kg: number | null;
     age_at_enrollment: number | null;
     phone_number: string | null;
     jsw_score: string | null;
@@ -61,9 +68,11 @@ export type DecodedCase = {
   onset_cause_option_ids: string[];
   keloid_symptom_option_ids: string[];
   lesions: DecodedLesion[];
-  surgery: { date: string | null; zone_ids: (string | null)[] };
+  surgery: { date: string | null; zone_ids: (string | null)[]; procedures: (string | null)[] };
   radiotherapy: {
     date: string | null;
+    /** 放射科醫師姓名（由 RT_Doctor 碼翻回） */
+    doctor: string | null;
     /** Keloid Lo_R1..3：各療程的部位 zone id（對不到就是 null） */
     zone_ids: (string | null)[];
     fractions: number | null;
@@ -176,8 +185,12 @@ export function decodeCase(
   const sex = genderCode === null ? null : Object.entries(SEX_CODE).find(([, v]) => v === genderCode)?.[0] ?? null;
   if (genderCode !== null && !sex) warnings.push(`gender 代碼 ${genderCode} 不是 1（男）或 0（女），已留空`);
 
-  const ageRaw = num(basic["Age"]);
-  const age = ageRaw === NO_RECORD ? null : ageRaw;
+  // 9999 是部長碼表的「無紀錄」哨兵，讀進來要當成沒填，不能存成數值 9999
+  const notSentinel = (v: number | null) => (v === NO_RECORD ? null : v);
+  const age = notSentinel(num(basic["Age"]));
+  const heightCm = notSentinel(num(basic["height"]));
+  const weightKg = notSentinel(num(basic["weight"]));
+  // BMI 不讀：匯出時由身高體重自動計算，讀進來反而可能與兩者不一致
   const jsw = num(basic["JSW score"]);
 
   // ---- 診斷 ----
@@ -243,14 +256,20 @@ export function decodeCase(
   // ---- 手術 ----
   const surgeryDate = dateStr(op["Operation date"]);
   const surgeryZoneIds: (string | null)[] = [];
+  const surgeryProcedures: (string | null)[] = [];
   for (let i = 1; i <= MAX_OP_SITES; i++) {
     const code = num(op[`Keloid Lo_O${i}`]);
     if (code === null) continue;
     const zone = lookups.zoneIdByCode.get(code);
     if (!zone) warnings.push(`Keloid Lo_O${i} 代碼 ${code} 不在部位碼表內，已略過`);
     surgeryZoneIds.push(zone?.id ?? null);
-    if (str(op[`surgical procedure_${i}`])) {
-      warnings.push(`surgical procedure_${i} 有填但不會匯入：系統目前沒有術式編碼欄位（見匯出檔的「欄位缺口清單」）`);
+    const procCode = num(op[`surgical procedure_${i}`]);
+    if (procCode !== null) {
+      const proc = lookups.procedureByCode.get(procCode);
+      if (!proc) warnings.push(`surgical procedure_${i} 代碼 ${procCode} 不在 1-4 的碼表內，已略過`);
+      surgeryProcedures.push(proc ?? null);
+    } else {
+      surgeryProcedures.push(null);
     }
   }
   // 放療部位（Keloid Lo_R1..3）：不讀的話放療紀錄掛不到病灶上，匯出時 KOR 會永遠是 0
@@ -263,8 +282,13 @@ export function decodeCase(
     rtZoneIds.push(zone?.id ?? null);
   }
 
-  if (str(op["RT_Doctor"])) {
-    warnings.push("RT_Doctor 有填但不會匯入：系統目前沒有放射科醫師清單（見匯出檔的「欄位缺口清單」）");
+  // 放射科醫師（RT_Doctor 碼 1-7）→ 治療紀錄 field_values.rt_doctor 的選項值。
+  // 碼表存在 treatment_types.field_schema 裡（後台可維護），由呼叫端查好傳進來。
+  const rtDoctorCode = num(op["RT_Doctor"]);
+  let rtDoctor: string | null = null;
+  if (rtDoctorCode !== null) {
+    rtDoctor = lookups.rtDoctorByCode.get(rtDoctorCode) ?? null;
+    if (!rtDoctor) warnings.push(`RT_Doctor 代碼 ${rtDoctorCode} 不在 1-7 的碼表內，已略過`);
   }
 
   // ---- 追蹤回診（Year 1 + Year 2）----
@@ -314,6 +338,9 @@ export function decodeCase(
     doctor_id: doctorId,
     fields: {
       sex,
+      birth_date: dateStr(basic["birthday"]),
+      height_cm: heightCm,
+      weight_kg: weightKg,
       age_at_enrollment: age,
       phone_number: str(basic["mobile"]) || null,
       jsw_score: jsw === null ? null : String(jsw),
@@ -322,9 +349,10 @@ export function decodeCase(
     onset_cause_option_ids: onsetIds,
     keloid_symptom_option_ids: symptomIds,
     lesions,
-    surgery: { date: surgeryDate, zone_ids: surgeryZoneIds },
+    surgery: { date: surgeryDate, zone_ids: surgeryZoneIds, procedures: surgeryProcedures },
     radiotherapy: {
       date: dateStr(op["Radiation date"]),
+      doctor: rtDoctor,
       zone_ids: rtZoneIds,
       fractions: num(op["Fractions"]),
       bolus: str(op["bolus"]) || null,

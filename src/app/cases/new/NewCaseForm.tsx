@@ -426,6 +426,14 @@ function PatientBasicFields({
         />
       </div>
       <div>
+        <label className="block text-sm font-medium text-ink/80">出生日期</label>
+        <input
+          type="date"
+          name="birth_date"
+          className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
+        />
+      </div>
+      <div>
         <label className="block text-sm font-medium text-ink/80">手機號碼</label>
         <input
           name="phone_number"

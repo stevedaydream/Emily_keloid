@@ -19,6 +19,9 @@ export async function createCaseAction(formData: FormData): Promise<{ caseId: st
   const sex = (formData.get("sex") as string) || null;
   const ageRaw = formData.get("age_at_enrollment") as string;
   const ageAtEnrollment = ageRaw ? Number(ageRaw) : null;
+  // 出生日期（2026-08-13 使用者決定加入）。⚠️ 與性別/部位組合具再識別風險，
+  // 是決策 #1「雲端只存年齡」的例外，見 project.md 安全性備忘。
+  const birthDate = ((formData.get("birth_date") as string) ?? "").trim() || null;
 
   const { data: doctor } = await supabase
     .from("doctors")
@@ -44,6 +47,7 @@ export async function createCaseAction(formData: FormData): Promise<{ caseId: st
       sequence_no: sequenceNo,
       sex,
       age_at_enrollment: ageAtEnrollment,
+      birth_date: birthDate,
       phone_number: phoneNumber || null,
       schedule_template_id: scheduleTemplateId || null,
       consent_signed_at: consentSignedAt || null,

@@ -214,10 +214,18 @@ export async function addTreatmentRecordAction(formData: FormData): Promise<numb
     detail: { typeIds: treatmentTypeIds, siteCount: targets.length, count: createdRecordIds.length },
   });
 
-  // 登打「手術切除」時，依該筆對應部位的劑量分類自動產生放療待辦（決策 2026-07-26，
-  // 2026-07-27 改為每個手術部位各一組療程）
+  // 登打「手術切除」時，依該筆對應部位產生放療待辦（決策 2026-07-26，
+  // 2026-07-27 改為每個手術部位各一組療程，2026-08-13 改為由表單逐部位確認次數與劑量）。
+  //
+  // 表單會為每個勾選到的部位送出 rtplan__<lesionId>__on / __fractions / __dose。
+  // 沒有 __on＝使用者取消了那個部位的放療（checkbox 未勾選不會送出），整組不排。
   for (const surgeryRecord of createdRecordIds.filter((r) => r.typeName === "手術切除")) {
-    await generateRadiotherapySessions(supabase, caseId, treatmentDate, surgeryRecord.id, surgeryRecord.lesionId);
+    const lid = surgeryRecord.lesionId;
+    if (!lid) continue; // 自由輸入的部位沒有分類，無從排程
+    if (formData.get(`rtplan__${lid}__on`) !== "on") continue; // 使用者明確不排
+    const fractions = Number(formData.get(`rtplan__${lid}__fractions`)) || null;
+    const doseCgy = Number(formData.get(`rtplan__${lid}__dose`)) || null;
+    await generateRadiotherapySessions(supabase, caseId, treatmentDate, surgeryRecord.id, lid, fractions, doseCgy);
   }
 
   revalidatePath(`/cases/${caseId}`);
@@ -305,12 +313,17 @@ export async function deleteTreatmentRecordAction(formData: FormData) {
 }
 
 // 一個手術部位＝一組放療療程。劑量分類取自該病灶自己的 body_part_zone（決策 2026-07-27 多部位整合）。
+//
+// fractionsOverride / doseOverride 是治療表單上「放療排程確認」逐部位填的值（2026-08-13）：
+// 預設帶該分類的標準療程，使用者可當場改。沒帶就退回標準療程。
 async function generateRadiotherapySessions(
   supabase: ReturnType<typeof supabaseServer>,
   caseId: string,
   surgeryDate: string,
   treatmentRecordId: string,
-  lesionId: string | null
+  lesionId: string | null,
+  fractionsOverride?: number | null,
+  doseOverride?: number | null
 ) {
   if (!lesionId) return; // 未指定部位（自由文字或留空）就無從判斷劑量分類，不自動排程
 
@@ -333,7 +346,10 @@ async function generateRadiotherapySessions(
     .single();
   if (!protocol) return;
 
-  const rows = Array.from({ length: protocol.fraction_count }, (_, i) => {
+  const fractionCount = fractionsOverride && fractionsOverride > 0 ? fractionsOverride : protocol.fraction_count;
+  const perFractionDose = doseOverride && doseOverride > 0 ? doseOverride : protocol.per_fraction_dose_cgy;
+
+  const rows = Array.from({ length: fractionCount }, (_, i) => {
     const due = new Date(surgeryDate);
     due.setDate(due.getDate() + i + 1); // 首次為手術隔天（24小時內），之後連續每日一次
     return {
@@ -341,8 +357,8 @@ async function generateRadiotherapySessions(
       lesion_id: lesionId,
       dose_category: zone.dose_category,
       fraction_no: i + 1,
-      total_fractions: protocol.fraction_count,
-      planned_dose_cgy: protocol.per_fraction_dose_cgy,
+      total_fractions: fractionCount,
+      planned_dose_cgy: perFractionDose,
       due_date: due.toISOString().slice(0, 10),
       triggered_by_treatment_record_id: treatmentRecordId,
     };
@@ -355,6 +371,11 @@ export async function markRadiotherapySessionAction(formData: FormData) {
   const sessionId = formData.get("session_id") as string;
   const status = formData.get("status") as string;
   const actualDoseCgy = formData.get("actual_dose_cgy") as string;
+  // 完成日期由人指定（docx 項次 10）：原本寫死成 new Date()，
+  // 導致 8/10 做的治療若 8/12 才進系統標記，就被記成 8/12。
+  // 表單預設帶排定日期（due_date），實際不同時可當場改；沒給值才退回今天。
+  const completedDate = ((formData.get("completed_date") as string) || "").trim();
+  const rtDoctor = ((formData.get("rt_doctor") as string) || "").trim() || null;
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
 
@@ -362,12 +383,13 @@ export async function markRadiotherapySessionAction(formData: FormData) {
     .from("radiotherapy_sessions")
     .update({
       status,
-      completed_date: status === "done" ? new Date().toISOString().slice(0, 10) : null,
+      completed_date: status === "done" ? completedDate || new Date().toISOString().slice(0, 10) : null,
       actual_dose_cgy: actualDoseCgy ? Number(actualDoseCgy) : null,
+      rt_doctor: rtDoctor,
     })
     .eq("id", sessionId);
 
-  await logAudit({ caseId, operatorName: operator, action: "update_radiotherapy_session", entity: "radiotherapy_sessions", entityId: sessionId, detail: { status } });
+  await logAudit({ caseId, operatorName: operator, action: "update_radiotherapy_session", entity: "radiotherapy_sessions", entityId: sessionId, detail: { status, completedDate } });
   revalidatePath(`/cases/${caseId}`);
 }
 
@@ -491,6 +513,10 @@ export async function updateDemographicsAction(formData: FormData) {
   const jswScore = (formData.get("jsw_score") as string) || null;
   // 手機號碼原本只有建檔頁能填，個案頁沒有欄位可補（完整度清單卻會列「手機」待補），2026-07-28 補上。
   const phoneNumber = ((formData.get("phone_number") as string) ?? "").trim() || null;
+  // 身高體重（2026-08-13）：新格式 Basic Info. 需要，BMI 由匯出自動算，這裡不存
+  const birthDate = ((formData.get("birth_date") as string) ?? "").trim() || null;
+  const heightRaw = ((formData.get("height_cm") as string) ?? "").trim();
+  const weightRaw = ((formData.get("weight_kg") as string) ?? "").trim();
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
 
@@ -502,6 +528,9 @@ export async function updateDemographicsAction(formData: FormData) {
       family_history: familyHistory,
       jsw_score: jswScore,
       phone_number: phoneNumber,
+      birth_date: birthDate,
+      height_cm: heightRaw ? Number(heightRaw) : null,
+      weight_kg: weightRaw ? Number(weightRaw) : null,
     })
     .eq("id", caseId);
 

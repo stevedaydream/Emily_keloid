@@ -118,33 +118,50 @@ export async function POST(request: NextRequest) {
 
   // ---- 查碼表 ----
   const supabase = supabaseServer();
-  const [{ data: zones }, { data: doctors }, { data: icds }, { data: options }] = await Promise.all([
+  const [{ data: zones }, { data: doctors }, { data: icds }, { data: options }, { data: txTypes }] = await Promise.all([
     supabase.from("body_part_zones").select("id, zone_key, display_name, export_code").eq("active", true),
     supabase.from("doctors").select("id, code, export_code").eq("active", true),
     supabase.from("icd_codes").select("id, export_code").eq("active", true),
     supabase.from("case_intake_option_lists").select("id, category, export_code").eq("active", true),
+    supabase.from("treatment_types").select("name, field_schema").in("name", ["放射治療", "手術切除"]),
   ]);
 
+  type FieldDefRow = { key?: string; options?: { value?: string; export_code?: number }[] };
+  const selectCodeMap = (typeName: string, fieldKey: string) => {
+    const m = new Map<number, string>();
+    const schema = ((txTypes ?? []).find((t) => t.name === typeName)?.field_schema ?? []) as FieldDefRow[];
+    for (const o of schema.find((f) => f.key === fieldKey)?.options ?? []) {
+      if (o.export_code !== undefined && o.value) m.set(o.export_code, o.value);
+    }
+    return m;
+  };
+
   const lookups: ImportLookups = {
-    // 碼 22 有多個熱區共用（k22_22_other 以及左/右耳後，後兩者 export_code 也是 22），
-    // 匯入時一律落到「其他部位」那個。不能只靠排序後餵給 new Map()——重複 key 時
-    // Map 保留的是**最後**一筆，方向很容易寫反（實測就踩到，22 解出了「右耳後」）。
+    // 一個碼可能對到多個熱區，匯入只能挑一個，規則必須是**確定的**：
+    //   ① 碼 22：一律用 k22_22_other（「其他部位」），不要用左/右耳後那兩個同碼熱區
+    //   ② 其他碼：優先用 k22_* 那組（它們是照部長碼表一碼一區建的正規來源）。
+    //      2026-08-12 恢復細分熱區後，像碼 9「上臂」正面(k22_09)與背面(back_upperarm_l)都存在，
+    //      若只靠資料庫回傳順序決定會變成不確定行為——同一份檔案匯兩次可能得到不同部位。
     zoneIdByCode: (() => {
-      const m = new Map<number, { id: string; display_name: string }>();
+      const m = new Map<number, { id: string; display_name: string; key: string }>();
+      const rank = (key: string) => (key === OTHER_ZONE_KEY ? 0 : key.startsWith("k22_") ? 1 : 2);
       for (const z of zones ?? []) {
         if (z.export_code === null) continue;
-        const existing = m.get(z.export_code);
-        // 已經放了 k22_22_other 就不要被其他同碼熱區覆蓋
-        if (existing && z.zone_key !== OTHER_ZONE_KEY) continue;
-        m.set(z.export_code, { id: z.id, display_name: z.display_name });
+        const cur = m.get(z.export_code);
+        // 同分時取 zone_key 字典序較小者，確保完全確定
+        if (cur && (rank(cur.key) < rank(z.zone_key) || (rank(cur.key) === rank(z.zone_key) && cur.key <= z.zone_key))) continue;
+        m.set(z.export_code, { id: z.id, display_name: z.display_name, key: z.zone_key });
       }
-      return m;
+      return new Map([...m].map(([code, v]) => [code, { id: v.id, display_name: v.display_name }]));
     })(),
     doctorByCode: new Map(
       (doctors ?? []).filter((d) => d.export_code !== null).map((d) => [d.export_code as number, { id: d.id, code: d.code }])
     ),
     doctorIdByLetterCode: new Map((doctors ?? []).map((d) => [d.code.toUpperCase(), d.id])),
     icdIdByCode: new Map((icds ?? []).filter((i) => i.export_code !== null).map((i) => [i.export_code as number, i.id])),
+    // 兩個 select 碼表都在 treatment_types.field_schema 裡（後台可維護）
+    rtDoctorByCode: selectCodeMap("放射治療", "rt_doctor"),
+    procedureByCode: selectCodeMap("手術切除", "method"),
     optionIdByCategoryCode: (() => {
       const m = new Map<string, Map<number, string>>();
       for (const o of options ?? []) {
