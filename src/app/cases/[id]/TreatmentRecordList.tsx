@@ -3,7 +3,9 @@
 import SubmitButton from "@/components/ui/SubmitButton";
 import { updateTreatmentRecordAction, deleteTreatmentRecordAction } from "./actions";
 
-type FieldSchema = { key: string; label: string; type: string };
+type FieldOption = { value: string; export_code?: number };
+type FieldSchema = { key: string; label: string; type: string; options?: FieldOption[] };
+type SymptomChangeOption = { id: string; label: string };
 
 export type TreatmentRecordRow = {
   id: string;
@@ -19,6 +21,7 @@ export type TreatmentRecordRow = {
   recurrence_description: string | null;
   blood_drawn: boolean | null;
   blood_drawn_note: string | null;
+  symptom_change_option_id: string | null;
 };
 
 // 治療紀錄先前只能新增、無法回頭修正（日期打錯、欄位漏填、當下沒勾到復發/抽血都得重建一筆）。
@@ -28,11 +31,14 @@ export default function TreatmentRecordList({
   caseId,
   records,
   fieldSchemas,
+  symptomChangeOptions,
 }: {
   caseId: string;
   records: TreatmentRecordRow[];
   /** key = treatment_type_id，用來畫出該類型自己的結構化欄位 */
   fieldSchemas: Record<string, FieldSchema[]>;
+  /** 症狀變化選項（case_intake_option_lists，category='symptom_change'），供顯示與編輯 */
+  symptomChangeOptions: SymptomChangeOption[];
 }) {
   if (records.length === 0) {
     return <p className="text-sm text-ink/40">尚無治療紀錄</p>;
@@ -63,6 +69,12 @@ export default function TreatmentRecordList({
               {r.blood_drawn && (
                 <span className="rounded bg-sky-100 px-1.5 py-0.5 text-xs text-sky-700">
                   抽血{r.blood_drawn_note ? `：${r.blood_drawn_note}` : ""}
+                </span>
+              )}
+              {r.symptom_change_option_id && (
+                <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-700">
+                  症狀變化：
+                  {symptomChangeOptions.find((o) => o.id === r.symptom_change_option_id)?.label ?? "（選項已移除）"}
                 </span>
               )}
             </div>
@@ -101,12 +113,27 @@ export default function TreatmentRecordList({
                     {schema.map((f) => (
                       <div key={f.key}>
                         <label className="block text-[11px] text-ink/50">{f.label}</label>
-                        <input
-                          type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
-                          name={`field__${f.key}`}
-                          defaultValue={values[f.key] ?? ""}
-                          className="mt-0.5 w-full rounded border border-brand-200 px-1.5 py-1 text-xs"
-                        />
+                        {f.type === "select" ? (
+                          <select
+                            name={`field__${f.key}`}
+                            defaultValue={values[f.key] ?? ""}
+                            className="mt-0.5 w-full rounded border border-brand-200 px-1.5 py-1 text-xs"
+                          >
+                            <option value="">（未選）</option>
+                            {(f.options ?? []).map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.value}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
+                            name={`field__${f.key}`}
+                            defaultValue={values[f.key] ?? ""}
+                            className="mt-0.5 w-full rounded border border-brand-200 px-1.5 py-1 text-xs"
+                          />
+                        )}
                       </div>
                     ))}
                   </div>
@@ -123,6 +150,23 @@ export default function TreatmentRecordList({
                 )}
 
                 <div className="rounded-md border border-amber-100 bg-amber-50 p-2">
+                  {symptomChangeOptions.length > 0 && (
+                    <div className="mb-2">
+                      <label className="block text-[11px] text-ink/60">與治療前相比的症狀變化</label>
+                      <select
+                        name="symptom_change_option_id"
+                        defaultValue={r.symptom_change_option_id ?? ""}
+                        className="mt-0.5 w-full rounded border border-brand-200 px-1.5 py-1 text-xs"
+                      >
+                        <option value="">（未評估）</option>
+                        {symptomChangeOptions.map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <label className="mb-1 flex items-center gap-2 text-[11px] text-ink/60">
                     <input type="checkbox" name="recurrence_observed" defaultChecked={r.recurrence_observed === true} />
                     觀察到復發

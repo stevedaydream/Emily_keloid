@@ -137,6 +137,8 @@ export async function addTreatmentRecordAction(formData: FormData): Promise<numb
   const recurrenceDescription = (formData.get("recurrence_description") as string) || null;
   const bloodDrawn = formData.get("blood_drawn") === "on";
   const bloodDrawnNote = (formData.get("blood_drawn_note") as string) || null;
+  // 症狀變化（docx 2026-08-12）：對應部長新版 Excel Year 1 的 FW_k_symptom 碼 1-6
+  const symptomChangeOptionId = ((formData.get("symptom_change_option_id") as string) || "").trim() || null;
 
   // 部位（決策 2026-07-27 多部位整合）：可勾選多個已登記病灶，另可自由輸入一個未登記的部位。
   // 每個部位 × 每種治療方式各建一筆紀錄，這樣「手術切除」才能依各部位自己的劑量分類各跑一組放療。
@@ -190,6 +192,7 @@ export async function addTreatmentRecordAction(formData: FormData): Promise<numb
           recurrence_description: recurrenceDescription,
           blood_drawn: bloodDrawn,
           blood_drawn_note: bloodDrawnNote,
+          symptom_change_option_id: symptomChangeOptionId,
         })
         .select("id")
         .single();
@@ -266,6 +269,7 @@ export async function updateTreatmentRecordAction(formData: FormData) {
       recurrence_description: (formData.get("recurrence_description") as string) || null,
       blood_drawn: formData.get("blood_drawn") === "on",
       blood_drawn_note: (formData.get("blood_drawn_note") as string) || null,
+      symptom_change_option_id: ((formData.get("symptom_change_option_id") as string) || "").trim() || null,
     })
     .eq("id", recordId);
 
@@ -587,6 +591,20 @@ export async function addIntakeOptionRecordAction(formData: FormData) {
   const notes = (formData.get("notes") as string) || null;
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
+
+  // 互斥檢查（docx 2026-08-12：目前不適症狀的「無明顯不適」不可與其他症狀同時勾選）。
+  // 前端已擋一次，這裡再擋一次——前端狀態可被繞過，而這條規則會直接影響匯出的 Keloid_symptom 值。
+  if (optionIds.length > 1) {
+    const { data: exclusive } = await supabase
+      .from("case_intake_option_lists")
+      .select("id")
+      .eq("category", category)
+      .eq("label", "無明顯不適")
+      .maybeSingle();
+    if (exclusive && optionIds.includes(exclusive.id)) {
+      throw new Error("「無明顯不適」不能與其他症狀同時勾選");
+    }
+  }
 
   const { data: record, error } = await supabase
     .from("case_intake_option_records")

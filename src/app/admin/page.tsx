@@ -53,7 +53,12 @@ const GROUPS = [
   {
     label: "資料與系統工具",
     items: [
-      { href: "/admin/import", title: "舊資料匯入", desc: "Excel/CSV 匯入、欄位對應與檢視" },
+      {
+        href: "/admin/import-keloid",
+        title: "舊資料匯入（部長格式）",
+        desc: "下載空白範本→填寫→上傳，尺寸自動拆成長寬高",
+      },
+      { href: "/admin/import", title: "舊資料匯入（自訂欄位對應）", desc: "任意格式 Excel/CSV，需手動對應欄位" },
       {
         href: "/local-tools/mrn-mapping",
         title: "病歷號對照設定",

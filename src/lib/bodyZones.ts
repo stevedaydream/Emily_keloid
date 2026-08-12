@@ -95,6 +95,43 @@ const BODY_ZONE_SHAPES_MALE: Record<string, ZoneShape> = {
   back_knee_r: { kind: "circle", cx: 529, cy: 890, r: 26 },
   back_ankle_l: { kind: "circle", cx: 405, cy: 1040, r: 18 },
   back_ankle_r: { kind: "circle", cx: 520, cy: 1040, r: 18 },
+
+  // ===== 2026-08-12：部長 22 碼熱區（男性）=====
+  // 左右側改採「解剖慣例」：正面／頭頸特寫是面對病人，所以病人的左（L't）畫在畫面右側；
+  // 背面是背對病人，病人的左就在畫面左側（與舊座標同向，不需鏡射）。
+  // 舊的 front_* 熱區是鏡像畫法（左畫在畫面左），已於本次一併停用，不再沿用其左右配置。
+  //
+  // 座標全部依 front.png / back.png 的逐列 alpha 掃描實測而來（每 40px 取一列量出人形的
+  // x 區段），不是從舊座標推算。四肢刻意用「窄而貼合肢體中心」的矩形而非包住整條腿的寬矩形——
+  // 寬矩形會把兩腿之間的空隙也算進熱區，點空白處會誤觸。
+  // 頭頸特寫（沿用正面圖，viewBox 裁到頭部放大）。頭部實測：y=62 約 481-575、y=88 約 479-579、y=112 約 489-568。
+  k22_02_helix_r: { kind: "circle", cx: 491, cy: 70, r: 12 },
+  k22_01_helix_l: { kind: "circle", cx: 565, cy: 70, r: 12 },
+  k22_ear_post_r: { kind: "circle", cx: 487, cy: 90, r: 10 },
+  k22_ear_post_l: { kind: "circle", cx: 571, cy: 90, r: 10 },
+  k22_04_earlobe_r: { kind: "circle", cx: 497, cy: 110, r: 12 },
+  k22_03_earlobe_l: { kind: "circle", cx: 559, cy: 110, r: 12 },
+  // 正面（輪廓中心 cx=528）。軀幹實測 y=400 為 447-610，胸部橫向切三等分：
+  //   08 右胸(畫面左) / 06 前胸正中 / 07 左胸(畫面右)，互不重疊。
+  k22_05_jaw_neck: { kind: "rect", x: 500, y: 120, w: 58, h: 82, rx: 16 },
+  k22_08_chest_r: { kind: "rect", x: 448, y: 250, w: 52, h: 170, rx: 16 },
+  k22_06_ant_chest: { kind: "rect", x: 502, y: 250, w: 52, h: 170, rx: 16 },
+  k22_07_chest_l: { kind: "rect", x: 556, y: 250, w: 52, h: 170, rx: 16 },
+  k22_10_upperarm_r: { kind: "rect", x: 372, y: 255, w: 44, h: 165, rx: 18 },
+  k22_09_upperarm_l: { kind: "rect", x: 640, y: 255, w: 44, h: 165, rx: 18 },
+  k22_16_abdomen: { kind: "rect", x: 445, y: 425, w: 170, h: 102, rx: 20 },
+  k22_17_suprapubic: { kind: "circle", cx: 528, cy: 552, r: 25 },
+  k22_19_thigh_r: { kind: "rect", x: 432, y: 620, w: 62, h: 200, rx: 20 },
+  k22_18_thigh_l: { kind: "rect", x: 566, y: 620, w: 62, h: 200, rx: 20 },
+  k22_21_lowerleg_r: { kind: "rect", x: 436, y: 900, w: 36, h: 130, rx: 14 },
+  k22_20_lowerleg_l: { kind: "rect", x: 586, y: 900, w: 36, h: 130, rx: 14 },
+  // 背面（輪廓中心 cx=466）。11 是脊椎正中帶，12/13 是中下背左右半，14/15 是兩側肩胛。
+  k22_11_upper_back: { kind: "rect", x: 444, y: 262, w: 44, h: 170, rx: 14 },
+  k22_12_back_l: { kind: "rect", x: 380, y: 436, w: 84, h: 104, rx: 18 },
+  k22_13_back_r: { kind: "rect", x: 468, y: 436, w: 84, h: 104, rx: 18 },
+  k22_14_scapular_l: { kind: "rect", x: 364, y: 270, w: 78, h: 160, rx: 18 },
+  k22_15_scapular_r: { kind: "rect", x: 490, y: 270, w: 78, h: 160, rx: 18 },
+  // k22_22_other 刻意沒有座標：它不是圖上的熱區，收案介面以「其他部位」按鈕呈現並要求填自由文字。
 };
 
 const BODY_ZONE_SHAPES_FEMALE: Record<string, ZoneShape> = {
@@ -171,6 +208,51 @@ const BODY_ZONE_SHAPES_FEMALE: Record<string, ZoneShape> = {
   back_knee_r: { kind: "circle", cx: 549, cy: 890, r: 24 },
   back_ankle_l: { kind: "circle", cx: 461, cy: 1045, r: 16 },
   back_ankle_r: { kind: "circle", cx: 539, cy: 1045, r: 16 },
+
+  // ===== 2026-08-12：部長 22 碼熱區（女性）=====
+  // 左右慣例同男性版本：正面／頭頸特寫 L't 在畫面右側，背面 L't 在畫面左側。
+  // 同樣依 front-female.png / back-female.png 逐列 alpha 掃描實測。
+  // ⚠️ 實測時發現舊的 front_upperarm_l/r 座標本身就是錯的（寫 x=310-370，實際手臂在 353-412，
+  //    整整偏 40px），所以這裡沒有沿用舊值，全部重新量。
+  // 頭頸特寫（女性頭部實測：y=74 約 450-534、y=92 約 450-534、y=110 約 452-533）
+  k22_02_helix_r: { kind: "circle", cx: 460, cy: 74, r: 12 },
+  k22_01_helix_l: { kind: "circle", cx: 524, cy: 74, r: 12 },
+  k22_ear_post_r: { kind: "circle", cx: 458, cy: 92, r: 10 },
+  k22_ear_post_l: { kind: "circle", cx: 526, cy: 92, r: 10 },
+  k22_04_earlobe_r: { kind: "circle", cx: 464, cy: 110, r: 12 },
+  k22_03_earlobe_l: { kind: "circle", cx: 521, cy: 110, r: 12 },
+  // 正面（輪廓中心 cx=492）。軀幹最窄處實測 y=400 為 430-554，胸部橫向切三等分。
+  k22_05_jaw_neck: { kind: "rect", x: 462, y: 120, w: 60, h: 78, rx: 16 },
+  k22_08_chest_r: { kind: "rect", x: 431, y: 258, w: 40, h: 148, rx: 14 },
+  k22_06_ant_chest: { kind: "rect", x: 472, y: 258, w: 40, h: 148, rx: 14 },
+  k22_07_chest_l: { kind: "rect", x: 513, y: 258, w: 40, h: 148, rx: 14 },
+  k22_10_upperarm_r: { kind: "rect", x: 363, y: 265, w: 36, h: 150, rx: 16 },
+  k22_09_upperarm_l: { kind: "rect", x: 585, y: 265, w: 36, h: 150, rx: 16 },
+  k22_16_abdomen: { kind: "rect", x: 418, y: 412, w: 148, h: 85, rx: 22 },
+  k22_17_suprapubic: { kind: "circle", cx: 492, cy: 522, r: 25 },
+  k22_19_thigh_r: { kind: "rect", x: 420, y: 618, w: 48, h: 195, rx: 18 },
+  k22_18_thigh_l: { kind: "rect", x: 516, y: 618, w: 48, h: 195, rx: 18 },
+  k22_21_lowerleg_r: { kind: "rect", x: 437, y: 900, w: 28, h: 125, rx: 12 },
+  k22_20_lowerleg_l: { kind: "rect", x: 520, y: 900, w: 28, h: 125, rx: 12 },
+  // 背面（女性輪廓中心 cx=500）。軀幹最窄處實測 y=400 為 429-571。
+  k22_14_scapular_l: { kind: "rect", x: 431, y: 285, w: 47, h: 145, rx: 16 },
+  k22_11_upper_back: { kind: "rect", x: 480, y: 280, w: 40, h: 155, rx: 14 },
+  k22_15_scapular_r: { kind: "rect", x: 522, y: 285, w: 47, h: 145, rx: 16 },
+  k22_12_back_l: { kind: "rect", x: 438, y: 436, w: 60, h: 108, rx: 18 },
+  k22_13_back_r: { kind: "rect", x: 502, y: 436, w: 60, h: 108, rx: 18 },
+};
+
+/** 「其他部位」的 zone_key。它不是人形圖上的熱區，UI 以按鈕呈現並要求填自由文字部位說明。 */
+export const OTHER_ZONE_KEY = "k22_22_other";
+
+/**
+ * 該檢視的左右標示文字（2026-08-12 加註）。
+ * 正面／頭頸特寫是面對病人，畫面左側其實是病人的右側，不加註很容易點錯邊。
+ */
+export const VIEW_LATERALITY_HINT: Record<BodyView, string> = {
+  front: "面對病人視角：畫面左＝病人右側，畫面右＝病人左側",
+  head: "面對病人視角：畫面左＝病人右耳，畫面右＝病人左耳",
+  back: "背對病人視角：畫面左＝病人左側，畫面右＝病人右側",
 };
 
 export function bodyZoneShapesFor(sex?: string | null): Record<string, ZoneShape> {

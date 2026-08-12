@@ -23,7 +23,7 @@ import { loadVaultAction } from "@/app/local-tools/mrn-mapping/vaultActions";
 type Phase = "idle" | "reading" | "downloading" | "filling" | "done" | "error";
 type Source = "local" | "vault";
 
-export default function IdentifiedExport() {
+export default function IdentifiedExport({ query = "" }: { query?: string }) {
   const [linked, setLinked] = useState(false);
   const [vaultRows, setVaultRows] = useState<number | null>(null);
   const [source, setSource] = useState<Source>("local");
@@ -70,7 +70,7 @@ export default function IdentifiedExport() {
       const byResearchId = new Map(rows.map((r) => [r.research_id.trim(), r]));
 
       setPhase("downloading");
-      const res = await fetch("/api/export/structured-data");
+      const res = await fetch(`/api/export/structured-data${query ? `?${query}` : ""}`);
       if (!res.ok) throw new Error(`取得匯出檔失敗（${res.status}）`);
       const buffer = await res.arrayBuffer();
 
@@ -79,33 +79,44 @@ export default function IdentifiedExport() {
       const ExcelJS = (await import("exceljs")).default;
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(buffer);
-      const ws = wb.worksheets[0];
 
-      // 表頭在第 2 列（第 1 列是群組標題）
-      const header = (ws.getRow(2).values as unknown[]).map((v) => String(v ?? "").trim());
-      const colOf = (name: string) => header.indexOf(name); // 0-based，含前置空元素所以剛好等於欄號
-      const idCol = colOf("編號");
-      const nameCol = colOf("受試者");
-      const mrnCol = colOf("病歷號");
-      if (idCol < 0 || nameCol < 0) throw new Error("匯出檔的欄位格式與預期不符（找不到「編號」或「受試者」欄）");
-
+      // 2026-08-12 起匯出是部長編碼簿的 4 張主表，每張都有自己的 Subject_ID / Name / Chart No.，
+      // 所以要逐張填（只填第一張的話另外三張仍然沒有姓名）。附表沒有姓名欄，跳過。
+      const MAIN_SHEETS = ["Basic Info.", "Operation", "Year 1 follow-up", "Year 2 follow-up"];
       let filled = 0;
-      let missing = 0;
-      for (let r = 3; r <= ws.rowCount; r++) {
-        const row = ws.getRow(r);
-        const researchId = String(row.getCell(idCol).value ?? "").trim();
-        if (!researchId) continue;
-        const hit = byResearchId.get(researchId);
-        if (!hit) {
-          missing++;
-          continue;
+      const missingIds = new Set<string>();
+      let sheetsDone = 0;
+
+      for (const sheetName of MAIN_SHEETS) {
+        const ws = wb.getWorksheet(sheetName);
+        if (!ws) continue;
+        // 第 1 列是編碼說明、第 2 列是欄名、第 3 列起才是資料
+        const header = (ws.getRow(2).values as unknown[]).map((v) => String(v ?? "").trim());
+        const colOf = (name: string) => header.indexOf(name); // 0-based，含前置空元素所以剛好等於欄號
+        const idCol = colOf("Subject_ID");
+        const nameCol = colOf("Name");
+        const mrnCol = colOf("Chart No.");
+        if (idCol < 0 || nameCol < 0) continue;
+        sheetsDone++;
+
+        for (let r = 3; r <= ws.rowCount; r++) {
+          const row = ws.getRow(r);
+          const researchId = String(row.getCell(idCol).value ?? "").trim();
+          if (!researchId) continue;
+          const hit = byResearchId.get(researchId);
+          if (!hit) {
+            missingIds.add(researchId);
+            continue;
+          }
+          if (hit.name) {
+            row.getCell(nameCol).value = hit.name;
+            filled++;
+          }
+          if (withMrn && mrnCol > 0 && hit.mrn) row.getCell(mrnCol).value = hit.mrn;
         }
-        if (hit.name) {
-          row.getCell(nameCol).value = hit.name;
-          filled++;
-        }
-        if (withMrn && mrnCol > 0 && hit.mrn) row.getCell(mrnCol).value = hit.mrn;
       }
+      if (sheetsDone === 0) throw new Error("匯出檔的欄位格式與預期不符（找不到 Subject_ID / Name 欄）");
+      const missing = missingIds.size;
 
       const out = await wb.xlsx.writeBuffer();
       const blob = new Blob([out], {
@@ -120,7 +131,9 @@ export default function IdentifiedExport() {
 
       setPhase("done");
       setMessage(
-        `已補上 ${filled} 筆姓名${missing > 0 ? `，${missing} 筆在對照表中查無資料（該列維持空白）` : ""}。`
+        `已在 ${sheetsDone} 張工作表補上 ${filled} 格姓名${
+          missing > 0 ? `；${missing} 個研究編號在對照表中查無資料（那些列維持空白）` : ""
+        }。`
       );
     } catch (err) {
       setPhase("error");
@@ -134,11 +147,12 @@ export default function IdentifiedExport() {
   const ready = source === "local" ? linked : vaultRows !== null && passphrase.length > 0;
 
   return (
-    <div className="rounded-lg border border-accent-300 bg-accent-50/40 p-4">
-      <h2 className="text-sm font-semibold text-accent-800">③ 補上姓名的版本（本機產生）</h2>
+    <div className="mt-4 rounded-lg border border-accent-300 bg-accent-50/40 p-4">
+      <h2 className="text-sm font-semibold text-accent-800">補上姓名的版本（本機產生）</h2>
       <p className="mt-1 text-xs text-ink/60">
-        上面那份匯出檔的「受試者」與「病歷號」是空的。這裡會在<b>你的瀏覽器裡</b>用對照表把姓名填回去，
-        再重新產生一個檔案——姓名與病歷號不會送到伺服器，保管庫的通行碼也不會。
+        匯出檔 4 張主表的 <code>Name</code> 與 <code>Chart No.</code> 都是空的。這裡會在<b>你的瀏覽器裡</b>
+        用對照表逐張填回去，再重新產生一個檔案——姓名與病歷號不會送到伺服器，保管庫的通行碼也不會。
+        會沿用上方設定的篩選條件。
       </p>
 
       {!linked && vaultRows === null ? (
