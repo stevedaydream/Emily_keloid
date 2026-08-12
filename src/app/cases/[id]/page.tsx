@@ -95,7 +95,14 @@ const FOLLOWUP_REASON_LABEL: Record<string, string> = {
 const INTAKE_CATEGORIES = [
   { key: "onset_cause", label: "發生原因" },
   { key: "referral_source", label: "如何得知看診資訊" },
+  // 2026-08-12 新增（docx）：對應部長新版 Excel 的 Keloid_symptom 碼 1-9
+  { key: "keloid_symptom", label: "目前不適症狀" },
 ] as const;
+
+// 與同類其他選項互斥的選項（docx 2026-08-12：「無明顯不適」不可與其他症狀同時勾選）
+const EXCLUSIVE_OPTION_BY_CATEGORY: Record<string, string> = {
+  keloid_symptom: "無明顯不適",
+};
 
 export default async function CaseDetailPage({
   params,
@@ -153,7 +160,7 @@ export default async function CaseDetailPage({
     supabase
       .from("treatment_records")
       .select(
-        "id, treatment_type_id, treatment_date, body_site, lesion_id, field_values, free_text, recorded_by, recurrence_observed, recurrence_description, blood_drawn, blood_drawn_note, treatment_types(name)"
+        "id, treatment_type_id, treatment_date, body_site, lesion_id, field_values, free_text, recorded_by, recurrence_observed, recurrence_description, blood_drawn, blood_drawn_note, symptom_change_option_id, treatment_types(name)"
       )
       .eq("case_id", id)
       .order("treatment_date", { ascending: false }),
@@ -698,8 +705,8 @@ export default async function CaseDetailPage({
       {/* 發生原因 / 得知看診資訊 / 飲食運動衛教（後台可維護選單，決策 2026-07-27） */}
       <section id="section-intake" data-nav-section data-nav-label="發生原因與看診來源" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
-          發生原因 / 得知看診資訊
-          <InfoTooltip text="兩類選單皆為後台可維護清單（非單純勾選），可複選並保留歷次紀錄。衛教內容不在此記錄，改由後台「衛教資料庫」維護供 LINE 衛教機器人參考。" />
+          發生原因 / 得知看診資訊 / 目前症狀
+          <InfoTooltip text="三類選單皆為後台可維護清單（非單純勾選），可複選並保留歷次紀錄。「目前不適症狀」的『無明顯不適』與其他選項互斥。衛教內容不在此記錄，改由後台「衛教資料庫」維護供 LINE 衛教機器人參考。" />
         </h2>
         {INTAKE_CATEGORIES.map((cat) => {
           const options = (intakeOptions ?? []).filter((o) => o.category === cat.key);
@@ -707,7 +714,12 @@ export default async function CaseDetailPage({
           return (
             <div key={cat.key} className="mb-4 last:mb-0">
               <h3 className="mb-1 text-xs font-semibold text-ink/50">{cat.label}</h3>
-              <IntakeOptionForm caseId={id} category={cat.key} options={options} />
+              <IntakeOptionForm
+                caseId={id}
+                category={cat.key}
+                options={options}
+                exclusiveLabel={EXCLUSIVE_OPTION_BY_CATEGORY[cat.key]}
+              />
               <ul className="space-y-1">
                 {records.map((r) => (
                   <li key={r.id} className="break-words text-xs text-ink/50">
@@ -766,6 +778,9 @@ export default async function CaseDetailPage({
               body_site: l.body_site,
               doseCategoryLabel: l.doseCategoryLabel,
             }))}
+            symptomChangeOptions={(intakeOptions ?? [])
+              .filter((o) => o.category === "symptom_change")
+              .map((o) => ({ id: o.id, label: o.label }))}
           />
         </div>
         <TreatmentRecordList
@@ -786,9 +801,13 @@ export default async function CaseDetailPage({
               recurrence_description: r.recurrence_description,
               blood_drawn: r.blood_drawn,
               blood_drawn_note: r.blood_drawn_note,
+              symptom_change_option_id: r.symptom_change_option_id,
             };
           })}
           fieldSchemas={Object.fromEntries((treatmentTypes ?? []).map((t) => [t.id, t.field_schema ?? []]))}
+          symptomChangeOptions={(intakeOptions ?? [])
+            .filter((o) => o.category === "symptom_change")
+            .map((o) => ({ id: o.id, label: o.label }))}
         />
       </section>
 

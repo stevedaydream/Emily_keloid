@@ -12,15 +12,33 @@ export default function IntakeOptionForm({
   options,
   alwaysShowNotes = false,
   notesPlaceholder = "請輸入「其他」的詳細原因/說明",
+  exclusiveLabel,
 }: {
   caseId: string;
   category: string;
   options: Option[];
   alwaysShowNotes?: boolean;
   notesPlaceholder?: string;
+  /** 與其他選項互斥的選項標籤（例如目前不適症狀的「無明顯不適」，docx 2026-08-12 明訂）。 */
+  exclusiveLabel?: string;
 }) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  const exclusiveId = exclusiveLabel ? options.find((o) => o.label === exclusiveLabel)?.id : undefined;
   const showDetail = alwaysShowNotes || options.some((o) => o.label.startsWith("其他") && checked.has(o.id));
+
+  // 勾互斥項 → 清掉其他全部；勾其他任一項 → 取消互斥項。伺服器端另有一道相同的檢查。
+  const toggle = (id: string, on: boolean) =>
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (!on) {
+        next.delete(id);
+        return next;
+      }
+      if (exclusiveId && id === exclusiveId) return new Set([id]);
+      if (exclusiveId) next.delete(exclusiveId);
+      next.add(id);
+      return next;
+    });
 
   return (
     <form action={addIntakeOptionRecordAction} className="mb-2 space-y-2 rounded-md border border-brand-100 p-3">
@@ -34,14 +52,7 @@ export default function IntakeOptionForm({
               name="option_ids"
               value={o.id}
               checked={checked.has(o.id)}
-              onChange={(e) =>
-                setChecked((prev) => {
-                  const next = new Set(prev);
-                  if (e.target.checked) next.add(o.id);
-                  else next.delete(o.id);
-                  return next;
-                })
-              }
+              onChange={(e) => toggle(o.id, e.target.checked)}
             />
             {o.label}
           </label>

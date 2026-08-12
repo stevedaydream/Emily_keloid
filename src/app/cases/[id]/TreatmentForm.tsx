@@ -4,10 +4,15 @@ import { useActionState, useState } from "react";
 import SubmitButton from "@/components/ui/SubmitButton";
 import { submitTreatmentRecordAction, type TreatmentFormState } from "./actions";
 
-type FieldSchema = { key: string; label: string; type: string };
+// type='select' 是 2026-08-12 新增的欄位型別（第一個用途：病灶內注射的類固醇 40mg/10mg，
+// 對應部長新版 Excel 的 KSI 碼）。options 各自帶 export_code，碼表存在資料庫的
+// treatment_types.field_schema 裡，後台改選項不需動程式。
+type FieldOption = { value: string; export_code?: number };
+type FieldSchema = { key: string; label: string; type: string; options?: FieldOption[] };
 type TreatmentType = { id: string; name: string; field_schema: FieldSchema[] };
 type Preset = { id: string; treatment_type_id: string; name: string; field_values: Record<string, string> };
 export type LesionOption = { id: string; site_no: number | null; body_site: string; doseCategoryLabel: string | null };
+export type SymptomChangeOption = { id: string; label: string };
 
 function TypeBlock({ type, presets }: { type: TreatmentType; presets: Preset[] }) {
   const [presetId, setPresetId] = useState("");
@@ -51,13 +56,29 @@ function TypeBlock({ type, presets }: { type: TreatmentType; presets: Preset[] }
           {type.field_schema.map((f) => (
             <div key={f.key}>
               <label className="block text-xs text-slate-500">{f.label}</label>
-              <input
-                type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
-                name={`field__${type.id}__${f.key}`}
-                value={values[f.key] ?? ""}
-                onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-              />
+              {f.type === "select" ? (
+                <select
+                  name={`field__${type.id}__${f.key}`}
+                  value={values[f.key] ?? ""}
+                  onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                >
+                  <option value="">（未選）</option>
+                  {(f.options ?? []).map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.value}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
+                  name={`field__${type.id}__${f.key}`}
+                  value={values[f.key] ?? ""}
+                  onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                />
+              )}
             </div>
           ))}
         </div>
@@ -71,11 +92,13 @@ export default function TreatmentForm({
   treatmentTypes,
   presets,
   lesions,
+  symptomChangeOptions,
 }: {
   caseId: string;
   treatmentTypes: TreatmentType[];
   presets: Preset[];
   lesions: LesionOption[];
+  symptomChangeOptions: SymptomChangeOption[];
 }) {
   const [state, formAction] = useActionState(submitTreatmentRecordAction, null);
 
@@ -90,6 +113,7 @@ export default function TreatmentForm({
         treatmentTypes={treatmentTypes}
         presets={presets}
         lesions={lesions}
+        symptomChangeOptions={symptomChangeOptions}
         state={state}
       />
     </form>
@@ -100,11 +124,13 @@ function TreatmentFields({
   treatmentTypes,
   presets,
   lesions,
+  symptomChangeOptions,
   state,
 }: {
   treatmentTypes: TreatmentType[];
   presets: Preset[];
   lesions: LesionOption[];
+  symptomChangeOptions: SymptomChangeOption[];
   state: TreatmentFormState;
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -213,6 +239,25 @@ function TreatmentFields({
 
       <div className="rounded-md border border-amber-100 bg-amber-50 p-3">
         <p className="mb-2 text-xs font-semibold text-amber-700">當次追蹤觀察</p>
+        {/* 症狀變化（docx 2026-08-12）：對應部長新版 Excel Year 1 工作表的 FW_k_symptom 碼 1-6。
+            他那欄一人只有一格，匯出時取「手術後 365 天內最後一筆」，這裡每次回診都記，資訊比他要的多不會少。 */}
+        {symptomChangeOptions.length > 0 && (
+          <div className="mb-2">
+            <label className="block text-xs text-slate-600">與治療前相比，目前不適症狀的變化</label>
+            <select
+              name="symptom_change_option_id"
+              defaultValue=""
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            >
+              <option value="">（未評估）</option>
+              {symptomChangeOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <label className="mb-1 flex items-center gap-2 text-xs text-slate-600">
           <input type="checkbox" name="recurrence_observed" /> 觀察到復發
         </label>

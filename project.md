@@ -826,3 +826,128 @@ Supabase MCP（`apply_migration`）直接套用到 `keloid-research-platform` �
 
 Migration `20260730020000_line_bot_error_log.sql` 已透過 Supabase MCP 套用並驗證
 （check constraint 接受 `gemini_match`/`gemini_rewrite` × `line`/`kb_chat`，RLS 與 anon 權限正常）。
+
+---
+
+## 2026-08-12：對齊部長新版 Excel 編碼簿（進行中）
+
+部長提供新版收案格式 `docs/Keloid Operation treat.xlsx`——一份**編碼簿**（4 張工作表，每張只有
+第 1 列編碼說明＋第 2 列欄名，無資料列），要求「部位數字化、可分析化、多部位拆成不同欄位」。
+同批還有 `docs/收案資料平台修改_20260812.docx` 的修改清單。
+
+**兩個新前提（改變了下游判斷）**
+1. **上線時清空資料庫從零收案**，舊病人由助理手動補齊 → 現有 100 筆是過渡資料，不再投入回填工程；
+   力氣改放「輸入端結構化」與「匯入工具」。
+2. **系統跑在部長自己的筆電**（非醫院電腦）→ File System Access API 可用，無院內防火牆/USB 白名單問題。
+
+### 已完成
+
+**① 編碼層**（`20260812010000_export_codes_and_22_zone_codebook.sql`）
+- `body_part_zones`／`case_intake_option_lists`／`doctors`／`icd_codes`／`treatment_types` 各加
+  `export_code`；zones 另加 `export_label`（存部長碼表的英文原文，供匯出的「編碼對照表」附表用）
+- 醫師 YEN=1／PU=2；ICD `L730`/`L910`/`L905`=1/2/3，ICD-9 對照碼 `7061`/`7014`/`7092` 沿用同碼
+- 發生原因補上「耳洞穿刺」「自發」，湊足部長碼表的 8 項
+
+**② 人形圖改為部長的 22 碼**（決策：不保留 64 個細分再壓縮，因為收案端產生什麼匯出就永遠是什麼）
+- 新增 24 個熱區＝22 碼 ＋ 左/右耳後。**耳後在 22 碼裡沒有對應碼**，但它的放療劑量必須是耳
+  （8Gy×1）而非其他（15Gy×2），所以 `dose_category='ear'` 但 `export_code=22`
+- 背部三碼（11/12/13）＝18Gy 胸肩胛；helix＋earlobe 四碼＝耳 8Gy；`22 other` 固定 15Gy×2，
+  以圖下方按鈕呈現（非熱區）並要求填自由文字部位
+- 舊 64 熱區 `active=false` 停用不刪、逐一回填 export_code，既有 90 筆病灶仍匯得出數字碼
+- **保留頭頸特寫視圖**當點選介面（不新增碼），否則耳朵那 4 碼在手機上按不到（2026-07-28 部長反映過）
+- **正面圖左右態改為解剖慣例**：舊 `front_*` 熱區是鏡像畫法（左畫在畫面左），面對病人時那其實是
+  病人的右側。部長的碼是 `L't`/`R't`，22 碼裡有 9 組左右成對，錯一次就是永久錯，故新熱區一律
+  「正面/頭頸特寫的 L't 畫在畫面右側」，背面維持原向（背對時左就是左）。`BodyDiagram` 加了
+  逐檢視的左右提示條（`VIEW_LATERALITY_HINT`）
+
+**座標驗證方式**：用 Pillow 對 `public/body-diagram/*.png` 逐列 alpha 掃描量出人形真實 x 區段後
+重新推導，並反過來計算每個熱區「落在人形內」的像素比例。46 個熱區全部 ≥88.9%、0 個偏出。
+- **順帶抓到既有 bug**：女性 `front_upperarm_l/r` 座標本身就錯（寫 `x=310-370`，實測手臂在
+  `353-412`，偏 40px），熱區一直浮在體外。因此新座標**全部重量，未沿用任何舊值**。
+- 另一個教訓：包住整條腿的寬矩形會把兩腿之間的空隙也算成熱區（點空白處會誤觸），
+  四肢改用「窄而貼合肢體中心」的矩形，覆蓋率從 ~40% 拉到 ~96%。
+
+**③ docx 連動三項**（`20260812020000_symptom_lists_and_steroid_dose.sql`）
+- **目前不適症狀**（新 category `keloid_symptom`，碼 1-9）：個案頁勾選區，
+  **「無明顯不適」與其他選項互斥**（`IntakeOptionForm` 的 `exclusiveLabel` prop 擋前端、
+  `addIntakeOptionRecordAction` 再擋一次後端——前端狀態可繞過，而這條規則直接影響匯出值）
+- **症狀變化**（新 category `symptom_change`，碼 1-6）：加在**每筆** `treatment_records` 上
+  （`symptom_change_option_id` FK），匯出 Year 1 的 `FW_k_symptom` 取「手術後 365 天內最後一筆」
+- **類固醇 40mg/10mg**（KSI 碼 1/2）：`treatment_types.field_schema` 新增 **`type='select'`** 欄位型別
+  （選項各自帶 `export_code`，碼表存資料庫、後台改選項不需動程式），`TreatmentForm` 與
+  `TreatmentRecordList` 兩處的欄位渲染器都補上 select 支援
+- 兩張表的 category CHECK 已**同步**放寬（`case_intake_option_lists` 與 `case_intake_option_records`，
+  2026-07-27 曾漏掉後者，見同日「更正」段）
+
+**④ 匯出重寫**（`/api/export/structured-data` 整份改寫，碼表常數在 `src/lib/exportCodebook.ts`）
+- **4 張主表**與部長原檔逐欄比對通過：Basic Info. 56 欄／Operation 26 欄／Year 1 follow-up 42 欄／
+  Year 2 follow-up 41 欄，欄名主名稱 0 處不一致。儲存格只放數字碼。
+  - 唯二差異是**部長原檔自己的筆誤**：Year 2 的 `F20_time`（漏 W）與 `Recurrence20`（漏底線），
+    其他 23 組都是 `FW{n}_time`／`Recurrence_{n}`。目前輸出修正後的名稱，待確認是否要照抄筆誤。
+  - 刻意偏離一處：欄名去掉原檔的排版空白與冗長括號（原檔是 `Keloid Lo_1                     (Keloid Location)`），
+    完整英文語意改放「編碼對照表」附表。
+- **7 張附表**：病灶測量（long format，含最大徑/面積/體積）、追蹤逐筆、問卷分數、Lab 生物標記逐筆、
+  編碼對照表（由資料庫產生，後台改選項會跟著變）、未能對應清單、欄位缺口清單
+- **篩選/排序**（docx 第 7 點）：收案年份區間、主治醫師、是否已手術、資料來源；
+  排序預設「收案建檔順序」，可改研究編號或手術日期。篩選條件同時套用到含姓名的匯出
+  - ⚠️ 收案年份比對 `enrollment_year` 而**非** `created_at`——舊資料回溯建檔的 `created_at`
+    是匯入當天（2026-07），拿它篩「2026 年以後」會把 2019 年的舊病人全撈進來（實測踩到過）
+- **姓名回填**：`IdentifiedExport` 改為逐一處理 4 張主表（原本只填第一張，另外三張會沒有姓名），
+  欄名改對 `Subject_ID`／`Name`／`Chart No.`，並沿用篩選條件
+
+實測（對 100 筆真實資料打 API）發現並修掉的三個 bug：
+1. **`KOR` 全部是 0**：只查 `radiotherapy_sessions`，但那張表只有 1 個個案有資料——舊資料的放療記在
+   `放射治療` 型別的 `treatment_records`（見 `docs/legacy-alignment.md`）。兩種來源都要算，修正後
+   80 筆有／4 筆無。另外 12 筆手術紀錄沒有 `lesion_id`，只在「該個案僅一個病灶」時才歸屬，多病灶寧可少算。
+2. **`FW1` 落在手術當天、`days=0`**：手術日是基準點（已在 Operation date 欄），把它算成第 1 次回診會
+   把真正的第一次追蹤擠到 FW2。改為只取手術日之後的回診。
+3. **「未能對應清單」重複三倍**：`zoneCodeOfLesion` 在 Basic Info／手術部位／放療部位三處各被呼叫一次，
+   每次都寫一筆。改成純函式，清單另跑一趟收集。修正後 30 列無重複，其中「無法對到 22 碼」正好 10 筆，
+   與 `pending.md` A1 記載的 10 筆吻合。
+
+**⑤ 匯入工具（已完成）**
+- **尺寸解析器**（`src/lib/sizeParser.ts`）：自由文字 → 長/寬/高（cm）＋信心度。
+  拿資料庫裡真實的 54 種寫法當測試集，結果：`exact` 22／`partial` 12／`ambiguous` 16／`none` 4，
+  即 **63% 可直接用、30% 標記待人工確認**。設計原則是「寧可標成需確認，也不要猜錯」。
+  - 處理到的實際狀況：`8.0 x 5.5 x 2.0mm` 自動換算成公分、`2*3`（無單位）、`4-5cm`（範圍值取中間並標記）、
+    `6.0X2.0X3.0;5.0X2.0X3.0`／`5.6 x 2.1 x 1.5cm,6.6 x 2.9 x 1.1cm`（一格多處病灶）
+  - 刻意不誤判：`9 keloidd at pubic are` 的 9 是數量不是尺寸（單一數值必須帶單位才採用）；
+    `疼痛`／`紅腫`（症狀被誤填進尺寸欄）判為無尺寸
+- **空白範本下載**（`/api/export/import-template`）：與匯出**共用同一份表頭定義**
+  （`MAIN_SHEETS`，在 `src/lib/exportCodebook.ts`），已驗證兩邊表頭逐欄相同——
+  這是最容易「改了匯出、忘了改範本」而讓助理填好的檔案匯不進去的地方，故刻意同源。
+  另附「填寫說明」與「編碼對照表」兩張參考表（後者由資料庫產生）。
+
+- **上傳／解析／staging／預覽／寫入**（`/admin/import-keloid`、`/api/admin/import-keloid/upload`、
+  `src/lib/keloidFormatImport.ts`）：上傳 → 解析 4 張表並依 `Subject_ID` 合併成一個案 →
+  數字碼反查回資料庫 id → 寫 `legacy_import_batches`／`legacy_import_rows` staging →
+  預覽頁分「可直接寫入／需人工確認／有錯誤擋住」三組 → 正式寫入
+- **上傳前的去識別化是雙層的**：`UploadForm` 在**瀏覽器端**先把 `Name`／`Chart No.` 拆下來寫進
+  本機對照表、清空那兩欄才送出；伺服器端再檢查一次，有值就整份擋掉不寫入任何資料。
+  若檔案有填姓名但這台電腦沒掛對照表，會直接擋下並要求先掛——否則那些資料會在上傳時無聲消失。
+- **重複匯入**：個案欄位覆蓋（空值不覆蓋）、子資料整組取代。若同編號個案是「正常收案」建立的則
+  直接擋下（整組取代會刪掉診間實際登打的治療紀錄）。
+
+**端到端實測**（產填好的範本 → 上傳 → 寫入 → 再匯出比對），過程中修掉 4 個 bug：
+1. **去識別化把關**：故意填姓名/病歷號的檔案被正確擋下並列出是哪張表哪一欄
+2. **部位碼 22 解成「右耳後」**：`new Map(array)` 重複 key 保留的是**最後**一筆，我的排序方向寫反了。
+   改成顯式迴圈並用 `zone_key` 比對（不是 display_name）
+3. **`KOR` 恆為 0**：解碼漏讀 `Keloid Lo_R1..3`（放療部位），放療紀錄沒掛到病灶上。
+   補讀後 round-trip 得到 `KOR_1=1`／`KOR_2=0`，逐病灶正確
+4. **`FW1` 被放療日佔走**：放療日已在 Operation 表的 `Radiation date` 欄，不該再算一次追蹤
+   （原本的 FW1 被擠到 FW2）。匯出改為排除 `放射治療` 紀錄，round-trip 精確還原成 31 天／90 天
+
+**順帶修掉一個真實資料的既有缺口**：匯出的 `Keloid Lo_R` / `Total Dose` 原本只從
+`radiotherapy_sessions` 取，但 99 筆手術裡只有 1 個個案有 sessions（舊資料的放療記在
+`放射治療` 型別的 `treatment_records`）。加上後備路徑後，有放療資料的個案從 **1 筆變成 71 筆**。
+
+### 尚未完成
+
+- 「其他部位」的自由文字必填驗證、後台 `export_code` 編輯欄位
+- Year 2 兩個欄名要不要照抄部長原檔的筆誤（`F20_time`／`Recurrence20`）
+- UI 版面未實機驗證（Chrome 擴充功能未連上）：人形圖左右提示條、「其他部位」按鈕、
+  症狀勾選區、匯出頁篩選表單
+
+### 待助理確認
+
+10 題（含各自的「目前預設」與資料範例）收在 `pending.md` D 區，程式先照預設做。
