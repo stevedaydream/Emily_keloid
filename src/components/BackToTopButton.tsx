@@ -59,22 +59,28 @@ export default function BackToTopButton() {
       onMouseEnter={() => supportsHover.current && setOpen(true)}
       onMouseLeave={() => supportsHover.current && setOpen(false)}
     >
+      {/* 外層用 bottom-full 讓可停留區域與按鈕上緣相接，視覺間距改由 pb-2 撐出來。
+          先前選單直接 bottom-14、按鈕只有 h-11，中間留了 12px 誰也不屬於的空隙——
+          滑鼠往上移要進選單就得先穿過它，一穿過就觸發 onMouseLeave 把選單關掉，
+          於是選單裡的項目永遠點不到。 */}
       {open && sections.length > 0 && (
-        <div className="absolute bottom-14 right-0 max-h-80 w-56 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
-          <p className="px-2 py-1 text-xs font-semibold text-slate-400">跳到區塊（再點按鈕回到最上方）</p>
-          <ul className="space-y-0.5">
-            {sections.map((s) => (
-              <li key={s.id}>
-                <button
-                  type="button"
-                  onClick={() => jumpTo(s.id)}
-                  className="block w-full rounded px-2 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100"
-                >
-                  {s.label}
-                </button>
-              </li>
-            ))}
-          </ul>
+        <div className="absolute bottom-full right-0 pb-2">
+          <div className="max-h-80 w-56 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+            <p className="px-2 py-1 text-xs font-semibold text-slate-400">跳到區塊（再點按鈕回到最上方）</p>
+            <ul className="space-y-0.5">
+              {sections.map((s) => (
+                <li key={s.id}>
+                  <button
+                    type="button"
+                    onClick={() => jumpTo(s.id)}
+                    className="block w-full rounded px-2 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100"
+                  >
+                    {s.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
       <button

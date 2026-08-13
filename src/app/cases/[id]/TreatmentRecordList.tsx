@@ -1,6 +1,7 @@
 "use client";
 
 import SubmitButton from "@/components/ui/SubmitButton";
+import CollapsedList from "@/components/ui/CollapsedList";
 import { updateTreatmentRecordAction, deleteTreatmentRecordAction } from "./actions";
 
 type FieldOption = { value: string; export_code?: number };
@@ -46,6 +47,7 @@ export default function TreatmentRecordList({
 
   return (
     <ul className="space-y-1.5">
+      <CollapsedList listClassName="space-y-1.5" label="治療紀錄">
       {records.map((r) => {
         const schema = fieldSchemas[r.treatment_type_id] ?? [];
         const values = r.field_values ?? {};
@@ -216,6 +218,7 @@ export default function TreatmentRecordList({
           </li>
         );
       })}
+      </CollapsedList>
     </ul>
   );
 }

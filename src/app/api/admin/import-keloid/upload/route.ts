@@ -118,12 +118,13 @@ export async function POST(request: NextRequest) {
 
   // ---- 查碼表 ----
   const supabase = supabaseServer();
-  const [{ data: zones }, { data: doctors }, { data: icds }, { data: options }, { data: txTypes }] = await Promise.all([
+  const [{ data: zones }, { data: doctors }, { data: icds }, { data: options }, { data: txTypes }, { data: rtDocs }] = await Promise.all([
     supabase.from("body_part_zones").select("id, zone_key, display_name, export_code").eq("active", true),
     supabase.from("doctors").select("id, code, export_code").eq("active", true),
     supabase.from("icd_codes").select("id, export_code").eq("active", true),
     supabase.from("case_intake_option_lists").select("id, category, export_code").eq("active", true),
     supabase.from("treatment_types").select("name, field_schema").in("name", ["放射治療", "手術切除"]),
+    supabase.from("radiotherapy_doctors").select("name, export_code").eq("active", true),
   ]);
 
   type FieldDefRow = { key?: string; options?: { value?: string; export_code?: number }[] };
@@ -160,7 +161,10 @@ export async function POST(request: NextRequest) {
     doctorIdByLetterCode: new Map((doctors ?? []).map((d) => [d.code.toUpperCase(), d.id])),
     icdIdByCode: new Map((icds ?? []).filter((i) => i.export_code !== null).map((i) => [i.export_code as number, i.id])),
     // 兩個 select 碼表都在 treatment_types.field_schema 裡（後台可維護）
-    rtDoctorByCode: selectCodeMap("放射治療", "rt_doctor"),
+    // 放射科醫師清單 2026-08-13 起是獨立資料表（後台 /admin/rt-doctors）
+    rtDoctorByCode: new Map(
+      (rtDocs ?? []).filter((d) => d.export_code !== null).map((d) => [d.export_code as number, String(d.name)])
+    ),
     procedureByCode: selectCodeMap("手術切除", "method"),
     optionIdByCategoryCode: (() => {
       const m = new Map<string, Map<number, string>>();

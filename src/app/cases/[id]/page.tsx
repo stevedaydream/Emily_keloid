@@ -18,7 +18,7 @@ import {
 } from "./actions";
 import TreatmentForm from "./TreatmentForm";
 import TreatmentRecordList from "./TreatmentRecordList";
-import TermRecordForm from "./TermRecordForm";
+// import TermRecordForm from "./TermRecordForm"; // 醫學術語紀錄 2026-08-13 暫時停用
 import DiagnosisSection from "./DiagnosisSection";
 import PipelineProgress from "./PipelineProgress";
 import IntakeOptionForm from "./IntakeOptionForm";
@@ -29,6 +29,7 @@ import KeloidLesionSection from "./KeloidLesionSection";
 import InfoTooltip from "@/components/InfoTooltip";
 import PatientName from "@/components/LocalNameProvider";
 import SubmitButton from "@/components/ui/SubmitButton";
+import CollapsedList from "@/components/ui/CollapsedList";
 import type { CasePipelineRow } from "@/lib/pipeline";
 import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
 import { PATIENT_INTAKE_SEGMENTS } from "@/lib/patientIntake";
@@ -36,7 +37,7 @@ import { resolveFollowupAction } from "@/app/patient/[caseId]/intake/actions";
 import { computeSF36, computePSQI, computeJSSClassification } from "@/lib/scoring";
 import LineBindingSection from "./LineBindingSection";
 
-const STAGE_LABEL: Record<string, string> = { pre: "術前", intra: "術中", post: "術後" };
+// const STAGE_LABEL: Record<string, string> = { pre: "術前", intra: "術中", post: "術後" }; // 同上，隨醫學術語紀錄一起停用
 const COMPLETENESS_LABEL: Record<string, string> = {
   has_value: "已有",
   pending: "待補",
@@ -119,7 +120,11 @@ export default async function CaseDetailPage({
     { data: caseRow },
     { data: diagnoses },
     { data: icdCodes },
+    // 下面兩項是醫學術語紀錄用的，2026-08-13 該區塊暫時停用。
+    // 查詢保留（與陣列位置對齊，拿掉會錯位），只是目前沒有人讀。
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     { data: termLibrary },
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     { data: termRecords },
     { data: treatmentTypes },
     { data: presets },
@@ -129,6 +134,7 @@ export default async function CaseDetailPage({
     { data: photos },
     { data: completeness },
     { data: doseProtocols },
+    { data: rtDoctors },
     { data: pipeline },
     { data: bodyZones },
     { data: radiotherapySessions },
@@ -179,6 +185,7 @@ export default async function CaseDetailPage({
     supabase.from("photos").select("id, taken_at, body_site, lesion_id, file_path, thumbnail_path").eq("case_id", id).order("taken_at", { ascending: false }),
     supabase.from("case_data_completeness").select("*").eq("case_id", id),
     supabase.from("radiotherapy_dose_protocols").select("dose_category, fraction_count, per_fraction_dose_cgy"),
+    supabase.from("radiotherapy_doctors").select("name").eq("active", true).order("sort_order").order("name"),
     supabase.from("v_case_pipeline_progress").select("*").eq("case_id", id).single(),
     supabase.from("body_part_zones").select("id, zone_key, view, display_name, dose_category").eq("active", true).order("sort_order"),
     supabase
@@ -225,8 +232,8 @@ export default async function CaseDetailPage({
 
   const doctor = Array.isArray(caseRow.doctors) ? caseRow.doctors[0] : caseRow.doctors;
   const biobankByKey = new Map((biobankItems ?? []).map((b) => [b.item_key, b]));
-  const termsByStage: Record<string, { id: string; term: string }[]> = { pre: [], intra: [], post: [] };
-  (termLibrary ?? []).forEach((t) => termsByStage[t.stage]?.push(t));
+  // const termsByStage: Record<string, { id: string; term: string }[]> = { pre: [], intra: [], post: [] };
+  // (termLibrary ?? []).forEach((t) => termsByStage[t.stage]?.push(t));
 
   // 部位＝病灶清單（決策 2026-07-27 多部位整合，不再有個案層級的單一「主要部位」）。
   // 每個病灶各自的 body_part_zone 決定它自己的放療劑量分類。
@@ -311,15 +318,9 @@ export default async function CaseDetailPage({
 
   // 放療療程分組：一個部位的一次手術＝一組療程（同一部位再次手術會是另一組），
   // 以「病灶 + 觸發的手術紀錄」當分組鍵。舊資料沒有 lesion_id 時歸到「未指定部位」那組。
-  // 放射科醫師名單沿用「放射治療」治療類型的 field_schema（後台可維護），
+  // 放射科醫師名單來自後台的獨立清單（/admin/rt-doctors，助理 2026-08-13 D9 指定）。
   // 逐次放療待辦標記完成時可以選——那是實際執行時真正會用到的路徑。
-  const rtDoctorOptions = (() => {
-    const schema = ((treatmentTypes ?? []).find((t) => t.name === "放射治療")?.field_schema ?? []) as {
-      key?: string;
-      options?: { value?: string }[];
-    }[];
-    return (schema.find((f) => f.key === "rt_doctor")?.options ?? []).map((o) => String(o.value ?? "")).filter(Boolean);
-  })();
+  const rtDoctorOptions = (rtDoctors ?? []).map((d) => d.name as string);
   // 同一個案先前已填過的醫師，當作下一次的預設值（同一療程通常是同一位）
   const lastRtDoctor = (radiotherapySessions ?? []).map((s) => (s as { rt_doctor?: string }).rt_doctor).filter(Boolean).pop() ?? "";
 
@@ -708,17 +709,19 @@ export default async function CaseDetailPage({
             />
           </div>
           <ul className="space-y-1">
-            {keloidHistoryRecords.map((r) => (
-              <li key={r.id} className="break-words text-xs text-ink/50">
-                {new Date(r.recorded_at).toLocaleDateString("zh-TW")} ・ {r.recorded_by} ・{" "}
-                {(r.case_intake_option_record_items ?? [])
-                  .map((it: { case_intake_option_lists: { label: string } | { label: string }[] }) =>
-                    Array.isArray(it.case_intake_option_lists) ? it.case_intake_option_lists[0]?.label : it.case_intake_option_lists?.label
-                  )
-                  .join("、") || "（無勾選項目）"}
-                {r.notes && <span className="text-ink/40">（{r.notes}）</span>}
-              </li>
-            ))}
+            <CollapsedList listClassName="space-y-1" label="病史紀錄">
+              {keloidHistoryRecords.map((r) => (
+                <li key={r.id} className="break-words text-xs text-ink/50">
+                  {new Date(r.recorded_at).toLocaleDateString("zh-TW")} ・ {r.recorded_by} ・{" "}
+                  {(r.case_intake_option_record_items ?? [])
+                    .map((it: { case_intake_option_lists: { label: string } | { label: string }[] }) =>
+                      Array.isArray(it.case_intake_option_lists) ? it.case_intake_option_lists[0]?.label : it.case_intake_option_lists?.label
+                    )
+                    .join("、") || "（無勾選項目）"}
+                  {r.notes && <span className="text-ink/40">（{r.notes}）</span>}
+                </li>
+              ))}
+            </CollapsedList>
             {keloidHistoryRecords.length === 0 && <li className="text-xs text-ink/30">尚無紀錄</li>}
           </ul>
         </div>
@@ -807,17 +810,19 @@ export default async function CaseDetailPage({
                 exclusiveLabel={EXCLUSIVE_OPTION_BY_CATEGORY[cat.key]}
               />
               <ul className="space-y-1">
-                {records.map((r) => (
-                  <li key={r.id} className="break-words text-xs text-ink/50">
-                    {new Date(r.recorded_at).toLocaleDateString("zh-TW")} ・ {r.recorded_by} ・{" "}
-                    {(r.case_intake_option_record_items ?? [])
-                      .map((it: { case_intake_option_lists: { label: string } | { label: string }[] }) =>
-                        Array.isArray(it.case_intake_option_lists) ? it.case_intake_option_lists[0]?.label : it.case_intake_option_lists?.label
-                      )
-                      .join("、") || "（無勾選項目）"}
-                    {r.notes && <span className="text-ink/40">（{r.notes}）</span>}
-                  </li>
-                ))}
+                <CollapsedList listClassName="space-y-1" label={cat.label}>
+                  {records.map((r) => (
+                    <li key={r.id} className="break-words text-xs text-ink/50">
+                      {new Date(r.recorded_at).toLocaleDateString("zh-TW")} ・ {r.recorded_by} ・{" "}
+                      {(r.case_intake_option_record_items ?? [])
+                        .map((it: { case_intake_option_lists: { label: string } | { label: string }[] }) =>
+                          Array.isArray(it.case_intake_option_lists) ? it.case_intake_option_lists[0]?.label : it.case_intake_option_lists?.label
+                        )
+                        .join("、") || "（無勾選項目）"}
+                      {r.notes && <span className="text-ink/40">（{r.notes}）</span>}
+                    </li>
+                  ))}
+                </CollapsedList>
                 {records.length === 0 && <li className="text-xs text-ink/20">尚無紀錄</li>}
               </ul>
             </div>
@@ -825,7 +830,12 @@ export default async function CaseDetailPage({
         })}
       </section>
 
-      {/* 醫學術語紀錄 */}
+      {/* 醫學術語紀錄 —— 2026-08-13 暫時停用（先註記掉，未移除）
+          原因：對照部長的收案 Excel，四張表都沒有需要用到術語紀錄的欄位，
+          填了不會進匯出檔，等於是只給人看的自由紀錄，實務上沒有填的必要。
+          保留下列程式碼與後台「醫學術語庫」維護頁，之後若要恢復，
+          把這段註解解掉即可（資料表 case_term_records 與既有資料都沒有動）。
+
       <section id="section-terms" data-nav-section data-nav-label="醫學術語紀錄" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           醫學術語紀錄
@@ -833,19 +843,22 @@ export default async function CaseDetailPage({
         </h2>
         <TermRecordForm caseId={id} terms={termLibrary ?? []} />
         <ul className="space-y-1">
-          {(termRecords ?? []).map((r) => (
-            <li key={r.id} className="text-sm text-ink/70">
-              <span className="font-medium">{STAGE_LABEL[r.stage]}</span>（{new Date(r.recorded_at).toLocaleString("zh-TW")} ・{r.recorded_by}）：
-              {(r.case_term_record_items ?? [])
-                .map((it: { term_library: { term: string } | { term: string }[] }) =>
-                  Array.isArray(it.term_library) ? it.term_library[0]?.term : it.term_library?.term
-                )
-                .join("、") || "（無術語）"}
-            </li>
-          ))}
+          <CollapsedList listClassName="space-y-1" label="術語紀錄">
+            {(termRecords ?? []).map((r) => (
+              <li key={r.id} className="text-sm text-ink/70">
+                <span className="font-medium">{STAGE_LABEL[r.stage]}</span>（{new Date(r.recorded_at).toLocaleString("zh-TW")} ・{r.recorded_by}）：
+                {(r.case_term_record_items ?? [])
+                  .map((it: { term_library: { term: string } | { term: string }[] }) =>
+                    Array.isArray(it.term_library) ? it.term_library[0]?.term : it.term_library?.term
+                  )
+                  .join("、") || "（無術語）"}
+              </li>
+            ))}
+          </CollapsedList>
           {(!termRecords || termRecords.length === 0) && <li className="text-sm text-ink/40">尚無紀錄</li>}
         </ul>
       </section>
+      */}
 
       {/* 治療紀錄 */}
       <section id="section-treatment" data-nav-section data-nav-label="治療紀錄" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
@@ -868,6 +881,7 @@ export default async function CaseDetailPage({
             symptomChangeOptions={(intakeOptions ?? [])
               .filter((o) => o.category === "symptom_change")
               .map((o) => ({ id: o.id, label: o.label }))}
+            rtDoctorOptions={rtDoctorOptions}
           />
         </div>
         <TreatmentRecordList
@@ -902,7 +916,7 @@ export default async function CaseDetailPage({
       <section id="section-radiotherapy" data-nav-section data-nav-label="放射治療進度" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           放射治療進度
-          <InfoTooltip text="登打「手術切除」治療紀錄時，該筆對應部位若已指定部位分類就自動產生一組療程（胸/肩胛區18Gy×3、耳8Gy×1、其他部位15Gy×2）。多個部位各自跑各自的療程。每次實際執行後在此標記完成並填實際劑量。" />
+          <InfoTooltip text="登打「手術切除」治療紀錄時，該筆對應部位若已指定部位分類就自動產生一組療程（胸/肩胛區18Gy×3、耳8Gy×1、其他部位15Gy×2）。多個部位各自跑各自的療程。第 1 次須在術後 24 小時內（排在手術隔天），之後每天一次不間斷。每次實際執行後在此標記完成並填實際劑量。手術日期若回頭修改，尚未完成的排程日期會自動跟著移。" />
         </h2>
         {rtCourses.length > 0 ? (
           <div className="space-y-4">
@@ -923,6 +937,12 @@ export default async function CaseDetailPage({
                     <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-brand-50 px-3 py-2 text-sm">
                       <span className="whitespace-nowrap">
                         第 {s.fraction_no}/{s.total_fractions} 次 ・ 預定 {s.planned_dose_cgy / 100}Gy ・ 到期 {s.due_date}
+                        {/* 第 1 次有臨床時效（術後 24 小時內），與後續每日一次的性質不同，標出來免得被當成一般待辦往後拖 */}
+                        {s.fraction_no === 1 && s.status !== "done" && (
+                          <span className="ml-2 whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">
+                            須於術後 24 小時內
+                          </span>
+                        )}
                         {s.status === "done" && s.actual_dose_cgy != null && (
                           <span className="ml-2 whitespace-nowrap text-xs text-emerald-600">
                             實際 {s.actual_dose_cgy / 100}Gy（{s.completed_date}）{s.rt_doctor ? `・${s.rt_doctor}` : ""}
@@ -1171,6 +1191,7 @@ export default async function CaseDetailPage({
           </div>
         </form>
         <ul className="divide-y divide-brand-50">
+          <CollapsedList listClassName="divide-y divide-brand-50" label="檢驗數據">
           {(labResults ?? []).map((r) => {
             const marker = Array.isArray(r.lab_marker_definitions) ? r.lab_marker_definitions[0] : r.lab_marker_definitions;
             return (
@@ -1198,6 +1219,7 @@ export default async function CaseDetailPage({
               </li>
             );
           })}
+          </CollapsedList>
           {(labResults ?? []).length === 0 && <li className="py-1.5 text-sm text-ink/40">尚無 Lab 數據</li>}
         </ul>
       </section>
@@ -1314,6 +1336,7 @@ export default async function CaseDetailPage({
 
         <h3 className="mb-1.5 text-xs font-semibold text-ink/60">歷次回覆紀錄</h3>
         <ul className="space-y-2">
+          <CollapsedList listClassName="space-y-2" label="回覆紀錄">
           {(responses ?? []).map((r) => {
             const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
             const answers = extractAnswers(r);
@@ -1418,6 +1441,7 @@ export default async function CaseDetailPage({
               </li>
             );
           })}
+          </CollapsedList>
           {(!responses || responses.length === 0) && <li className="text-sm text-ink/40">尚無問卷回覆</li>}
         </ul>
       </section>

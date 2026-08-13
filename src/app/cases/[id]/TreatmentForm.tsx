@@ -21,7 +21,7 @@ export type LesionOption = {
 };
 export type SymptomChangeOption = { id: string; label: string };
 
-function TypeBlock({ type, presets }: { type: TreatmentType; presets: Preset[] }) {
+function TypeBlock({ type, presets, rtDoctorOptions }: { type: TreatmentType; presets: Preset[]; rtDoctorOptions: string[] }) {
   const [presetId, setPresetId] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
   const isFreeform = (type.field_schema ?? []).length === 0;
@@ -50,6 +50,25 @@ function TypeBlock({ type, presets }: { type: TreatmentType; presets: Preset[] }
             </option>
           ))}
         </select>
+      )}
+      {/* 放射科醫師改為後台獨立清單（助理 2026-08-13 D9），不再放在 field_schema 裡，
+          所以這裡特別處理，不走一般的欄位迴圈。 */}
+      {type.name === "放射治療" && rtDoctorOptions.length > 0 && (
+        <div className="mb-2">
+          <label className="block text-xs text-slate-500">放射科醫師</label>
+          <select
+            name={`field__${type.id}__rt_doctor`}
+            defaultValue=""
+            className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          >
+            <option value="">（未選）</option>
+            {rtDoctorOptions.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </div>
       )}
       {isFreeform ? (
         <textarea
@@ -100,12 +119,15 @@ export default function TreatmentForm({
   presets,
   lesions,
   symptomChangeOptions,
+  rtDoctorOptions,
 }: {
   caseId: string;
   treatmentTypes: TreatmentType[];
   presets: Preset[];
   lesions: LesionOption[];
   symptomChangeOptions: SymptomChangeOption[];
+  /** 放射科醫師名單（後台 /admin/rt-doctors 維護） */
+  rtDoctorOptions: string[];
 }) {
   const [state, formAction] = useActionState(submitTreatmentRecordAction, null);
 
@@ -121,6 +143,7 @@ export default function TreatmentForm({
         presets={presets}
         lesions={lesions}
         symptomChangeOptions={symptomChangeOptions}
+        rtDoctorOptions={rtDoctorOptions}
         state={state}
       />
     </form>
@@ -132,20 +155,36 @@ function TreatmentFields({
   presets,
   lesions,
   symptomChangeOptions,
+  rtDoctorOptions,
   state,
 }: {
   treatmentTypes: TreatmentType[];
   presets: Preset[];
   lesions: LesionOption[];
   symptomChangeOptions: SymptomChangeOption[];
+  rtDoctorOptions: string[];
   state: TreatmentFormState;
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedLesionIds, setSelectedLesionIds] = useState<string[]>([]);
   // 逐部位的放療方案（勾選當下用該分類的預設值初始化，之後可改）
-  type RtPlan = { on: boolean; fractions: number; doseCgy: number };
+  // firstDay：第 1 次距手術幾天。1＝手術隔天（預設），0＝手術當天。
+  // 兩者都在術後 24 小時內，差別是早上開刀、當天下午就能照的情況。
+  type RtPlan = { on: boolean; fractions: number; doseCgy: number; firstDay: number };
   const [rtPlans, setRtPlans] = useState<Record<string, RtPlan>>({});
   const setRtPlan = (lesionId: string, plan: RtPlan) => setRtPlans((prev) => ({ ...prev, [lesionId]: plan }));
+  // 手術日要拿來算放療日期，所以這個欄位改成受控（原本是不受控的 <input type="date">）。
+  const [treatmentDate, setTreatmentDate] = useState("");
+
+  // 放療第 1 次必須在術後 24 小時內（＝手術隔天），之後每天一次。
+  // 這裡把日期算出來顯示，讓排程送出前就看得到，不用等排完才發現日子不對。
+  const sessionDate = (surgeryDate: string, offsetDays: number) => {
+    if (!surgeryDate) return null;
+    const d = new Date(surgeryDate);
+    if (Number.isNaN(d.getTime())) return null;
+    d.setDate(d.getDate() + offsetDays);
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+  };
 
   function toggle(id: string) {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -157,7 +196,7 @@ function TreatmentFields({
     setRtPlans((prev) => {
       if (prev[id]) return prev;
       const plan = lesions.find((l) => l.id === id)?.rtPlan;
-      return plan ? { ...prev, [id]: { on: true, fractions: plan.fractions, doseCgy: plan.doseCgy } } : prev;
+      return plan ? { ...prev, [id]: { on: true, fractions: plan.fractions, doseCgy: plan.doseCgy, firstDay: 1 } } : prev;
     });
   }
 
@@ -191,7 +230,7 @@ function TreatmentFields({
           {selectedIds.map((id) => {
             const type = treatmentTypes.find((t) => t.id === id);
             if (!type) return null;
-            return <TypeBlock key={id} type={type} presets={presets} />;
+            return <TypeBlock key={id} type={type} presets={presets} rtDoctorOptions={rtDoctorOptions} />;
           })}
         </div>
       )}
@@ -203,6 +242,8 @@ function TreatmentFields({
             type="date"
             name="treatment_date"
             required
+            value={treatmentDate}
+            onChange={(e) => setTreatmentDate(e.target.value)}
             className="mt-1 w-48 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           />
         </div>
@@ -264,8 +305,10 @@ function TreatmentFields({
                     </p>
                   );
                 }
-                const plan = rtPlans[lid] ?? { on: true, fractions: l.rtPlan.fractions, doseCgy: l.rtPlan.doseCgy };
+                const plan = rtPlans[lid] ?? { on: true, fractions: l.rtPlan.fractions, doseCgy: l.rtPlan.doseCgy, firstDay: 1 };
                 const totalGy = ((plan.fractions || 0) * (plan.doseCgy || 0)) / 100;
+                const firstDate = sessionDate(treatmentDate, plan.firstDay);
+                const lastDate = sessionDate(treatmentDate, plan.firstDay + Math.max(plan.fractions || 1, 1) - 1);
                 return (
                   <div key={lid} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-700">
                     <label className="flex items-center gap-1.5">
@@ -304,8 +347,25 @@ function TreatmentFields({
                       />
                       cGy
                     </span>
+                    <span className="flex items-center gap-1">
+                      首次
+                      <select
+                        name={`rtplan__${lid}__firstday`}
+                        value={plan.firstDay}
+                        disabled={!plan.on}
+                        onChange={(e) => setRtPlan(lid, { ...plan, firstDay: Number(e.target.value) })}
+                        className="rounded border border-slate-300 px-1 py-0.5 text-xs disabled:opacity-40"
+                      >
+                        <option value={1}>手術隔天</option>
+                        <option value={0}>手術當天</option>
+                      </select>
+                    </span>
                     <span className={plan.on ? "font-medium text-sky-800" : "text-slate-400"}>
-                      {plan.on ? `＝ 共 ${totalGy}Gy，自手術隔天起連續每日一次` : "不排放療"}
+                      {!plan.on
+                        ? "不排放療"
+                        : firstDate
+                          ? `＝ 共 ${totalGy}Gy　首次 ${firstDate}、末次 ${lastDate}`
+                          : `＝ 共 ${totalGy}Gy（填了手術日期才算得出放療日）`}
                     </span>
                   </div>
                 );
@@ -313,6 +373,10 @@ function TreatmentFields({
             </div>
             <p className="mt-2 text-[11px] text-slate-500">
               預設值來自該部位分類的標準療程，可直接修改。自由輸入的部位沒有分類，不會排放療。
+              <br />
+              <b className="text-sky-800">第 1 次須在術後 24 小時內</b>，之後每天一次不間斷。
+              預設排手術隔天；早上開刀、當天下午就照得到時可改成「手術當天」，後續次數一樣往後連續每日。
+              若手術日期填錯再回頭修改，這組排程尚未完成的日期會跟著一起移。
             </p>
           </div>
         )}
