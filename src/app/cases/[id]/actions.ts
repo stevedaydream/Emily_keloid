@@ -217,7 +217,7 @@ export async function addTreatmentRecordAction(formData: FormData): Promise<numb
   // 登打「手術切除」時，依該筆對應部位產生放療待辦（決策 2026-07-26，
   // 2026-07-27 改為每個手術部位各一組療程，2026-08-13 改為由表單逐部位確認次數與劑量）。
   //
-  // 表單會為每個勾選到的部位送出 rtplan__<lesionId>__on / __fractions / __dose。
+  // 表單會為每個勾選到的部位送出 rtplan__<lesionId>__on / __fractions / __dose / __firstday。
   // 沒有 __on＝使用者取消了那個部位的放療（checkbox 未勾選不會送出），整組不排。
   for (const surgeryRecord of createdRecordIds.filter((r) => r.typeName === "手術切除")) {
     const lid = surgeryRecord.lesionId;
@@ -225,7 +225,10 @@ export async function addTreatmentRecordAction(formData: FormData): Promise<numb
     if (formData.get(`rtplan__${lid}__on`) !== "on") continue; // 使用者明確不排
     const fractions = Number(formData.get(`rtplan__${lid}__fractions`)) || null;
     const doseCgy = Number(formData.get(`rtplan__${lid}__dose`)) || null;
-    await generateRadiotherapySessions(supabase, caseId, treatmentDate, surgeryRecord.id, lid, fractions, doseCgy);
+    // 首次日：1＝手術隔天（預設）、0＝手術當天。都在術後 24 小時內，
+    // 差別是手術排在早上、當天下午就能照的情況（2026-08-13 提出）。
+    const firstDayOffset = formData.get(`rtplan__${lid}__firstday`) === "0" ? 0 : 1;
+    await generateRadiotherapySessions(supabase, caseId, treatmentDate, surgeryRecord.id, lid, fractions, doseCgy, firstDayOffset);
   }
 
   revalidatePath(`/cases/${caseId}`);
@@ -266,6 +269,13 @@ export async function updateTreatmentRecordAction(formData: FormData) {
     }
   }
 
+  // 放療排程要跟著手術日期移，所以得先拿到改動「前」的日期算位移量。
+  const { data: before } = await supabase
+    .from("treatment_records")
+    .select("treatment_date")
+    .eq("id", recordId)
+    .single();
+
   await supabase
     .from("treatment_records")
     .update({
@@ -281,15 +291,59 @@ export async function updateTreatmentRecordAction(formData: FormData) {
     })
     .eq("id", recordId);
 
+  // 手術日期改了，這筆手術自動產生的放療排程要跟著移（2026-08-13）。
+  // 放療第 1 次必須在術後 24 小時內、之後每天一次，日期不是隨便排的；
+  // 先前改手術日期不會動排程，等於把第 1 次推到術後好幾天，臨床上是錯的。
+  // 已標記完成的不動——那是實際做過的日子，不能被往後算的排程蓋掉。
+  const shifted = await shiftRadiotherapySessions(supabase, recordId, before?.treatment_date ?? null, treatmentDate);
+
   await logAudit({
     caseId,
     operatorName: operator,
     action: "update_treatment_record",
     entity: "treatment_records",
     entityId: recordId,
-    detail: { treatmentDate },
+    detail: { treatmentDate, shiftedRtSessions: shifted },
   });
   revalidatePath(`/cases/${caseId}`);
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * 手術日期改了，把該手術產生的放療排程整組平移相同天數。
+ *
+ * 用「位移量」而不是拿新手術日重算（`手術日 + fraction_no`），因為首次日可選當天或隔天，
+ * 重算會把使用者選過的當天/隔天洗掉；平移則不論當初選哪一種都維持原本的間距。
+ * 已標記完成的不動——那是實際做過的日子，不能被排程蓋掉。
+ *
+ * @returns 實際移動的次數
+ */
+async function shiftRadiotherapySessions(
+  supabase: ReturnType<typeof supabaseServer>,
+  treatmentRecordId: string,
+  oldSurgeryDate: string | null,
+  newSurgeryDate: string
+): Promise<number> {
+  if (!oldSurgeryDate || !newSurgeryDate || oldSurgeryDate === newSurgeryDate) return 0;
+  const deltaDays = Math.round((new Date(newSurgeryDate).getTime() - new Date(oldSurgeryDate).getTime()) / DAY_MS);
+  if (!deltaDays) return 0;
+
+  const { data: sessions } = await supabase
+    .from("radiotherapy_sessions")
+    .select("id, due_date, status")
+    .eq("triggered_by_treatment_record_id", treatmentRecordId);
+  if (!sessions?.length) return 0;
+
+  let moved = 0;
+  for (const s of sessions) {
+    if (s.status === "done") continue;
+    const due = new Date(s.due_date);
+    due.setDate(due.getDate() + deltaDays);
+    await supabase.from("radiotherapy_sessions").update({ due_date: due.toISOString().slice(0, 10) }).eq("id", s.id);
+    moved++;
+  }
+  return moved;
 }
 
 export async function deleteTreatmentRecordAction(formData: FormData) {
@@ -323,7 +377,9 @@ async function generateRadiotherapySessions(
   treatmentRecordId: string,
   lesionId: string | null,
   fractionsOverride?: number | null,
-  doseOverride?: number | null
+  doseOverride?: number | null,
+  /** 第 1 次距手術幾天：1＝隔天（預設）、0＝手術當天 */
+  firstDayOffset: number = 1
 ) {
   if (!lesionId) return; // 未指定部位（自由文字或留空）就無從判斷劑量分類，不自動排程
 
@@ -351,7 +407,9 @@ async function generateRadiotherapySessions(
 
   const rows = Array.from({ length: fractionCount }, (_, i) => {
     const due = new Date(surgeryDate);
-    due.setDate(due.getDate() + i + 1); // 首次為手術隔天（24小時內），之後連續每日一次
+    // 第 1 次須在術後 24 小時內：預設排手術隔天，選「手術當天」時 offset 為 0。
+    // 之後不論哪一種都是連續每日一次。
+    due.setDate(due.getDate() + i + firstDayOffset);
     return {
       case_id: caseId,
       lesion_id: lesionId,
@@ -735,6 +793,49 @@ export async function deletePhotoAction(formData: FormData) {
   await supabase.from("photos").delete().eq("id", photoId);
 
   await logAudit({ caseId, operatorName: operator, action: "delete_photo", entity: "photos", entityId: photoId });
+  revalidatePath(`/cases/${caseId}`);
+}
+
+/**
+ * 調整病灶順序（助理 2026-08-13 D10：「優先依臨床嚴重度放第一個，嚴重及需開刀的放第一個」）。
+ * 與相鄰的病灶對調 site_no。
+ *
+ * 先前註解寫「部位編號不開放修改，改號會對不上舊照片」——那個顧慮已不成立：
+ * photos 是用 lesion_id 外鍵連結病灶，不是靠編號，重排只會改顯示的「部位N」。
+ */
+export async function moveKeloidLesionAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const lesionId = formData.get("lesion_id") as string;
+  const direction = formData.get("direction") as string; // "up" | "down"
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  const { data: lesions } = await supabase
+    .from("case_keloid_lesions")
+    .select("id, site_no")
+    .eq("case_id", caseId)
+    .order("site_no", { nullsFirst: false });
+  if (!lesions) return;
+
+  const idx = lesions.findIndex((l) => l.id === lesionId);
+  const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+  if (idx < 0 || swapIdx < 0 || swapIdx >= lesions.length) return;
+
+  const a = lesions[idx];
+  const bb = lesions[swapIdx];
+  // 兩筆的 site_no 對調。沒有 (case_id, site_no) 唯一限制，可以直接互換不需暫存值。
+  await supabase.from("case_keloid_lesions").update({ site_no: bb.site_no }).eq("id", a.id);
+  await supabase.from("case_keloid_lesions").update({ site_no: a.site_no }).eq("id", bb.id);
+
+  await syncCaseBodySite(supabase, caseId);
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "move_keloid_lesion",
+    entity: "case_keloid_lesions",
+    entityId: lesionId,
+    detail: { direction, from: a.site_no, to: bb.site_no },
+  });
   revalidatePath(`/cases/${caseId}`);
 }
 

@@ -73,6 +73,8 @@ export const LEGEND: Record<string, string> = {
   FW_k_symptom:
     "1. 明顯改善 , 2. 稍微改善 , 3. 沒有明顯變化 , 4. 稍微加重 , 5. 明顯加重 , 6. 不清楚",
   Recurrence: "無=0, 有=1",
+  visit_reason:
+    "1. 初次發生蟹足腫，尋求治療 , 2. 已接受治療但效果不理想，尋求其他治療方式 , 3. 治療後復發，尋求再次治療 , 4. 曾多次治療及復發，尋求進一步治療 , 5. 原有治療效果良好，希望持續接受治療或追蹤 , 6. 希望取得第二醫療意見或了解其他治療選擇 , 7. 其他",
 };
 
 /** 距離兩個日期的天數（b - a）。任一為空回 null。 */
@@ -107,10 +109,37 @@ export function jswNumber(raw?: string | null): number | "" {
 // 匯出（產生資料）與匯入範本（產生空白表）必須用同一份定義，
 // 否則助理填好的範本會對不上匯入解析——這正是最容易在改了一邊、忘了另一邊時炸掉的地方。
 
-const lesionBlockHeaders = (n: number) => [`Keloid Lo_${n}`, `KL size_${n}`, `KC_${n}`, `KOR_${n}`, `KSI_${n}`, `KOST_${n}`];
+// 2026-08-13 依助理回覆改版（Keloid Operation treat＿1150813.xlsx）：
+//   · 病灶區塊從 6 欄變 9 欄：KC 移到尺寸前面，尺寸拆成 長/寬/高/總面積 四格
+//   · 總面積＝長×寬（示範資料 1.3×1.6=2.08 驗證過），不是體積
+//   · 新增 Primary_Visit_Reason 欄（此次就診主要原因）
+//   · **移除 Keloid_family_history 欄**：家族史第 7 項已含「蟹足腫或肥厚性疤痕」，不需獨立一欄
+//   · Primary culture 從自由文字改為 0/1 編碼
+const lesionBlockHeaders = (n: number) => [
+  `Keloid Lo_${n}`,
+  `KC_${n}`,
+  `KL size_${n}L`,
+  `KL size_${n}W`,
+  `KL size_${n}H`,
+  `KL size_${n}T`,
+  `KOR_${n}`,
+  `KSI_${n}`,
+  `KOST_${n}`,
+];
 const lesionBlockLegends = (n: number): (string | null)[] =>
-  n === 1 ? [LEGEND.KeloidLo, "長*寬*高 (cm)", LEGEND.KC, LEGEND.KOR, LEGEND.KSI, LEGEND.KOST] : [null, null, null, null, null, null];
-const fwBlock = (n: number) => [`FW${n}_time`, `FW${n}_days`, `Recurrence_${n}`];
+  n === 1
+    ? [LEGEND.KeloidLo, LEGEND.KC, "未測量可留空", "未測量可留空", "未測量可留空", "長×寬，自動計算", LEGEND.KOR, LEGEND.KSI, LEGEND.KOST]
+    : [null, null, "未測量可留空", "未測量可留空", "未測量可留空", "長×寬，自動計算", null, null, null];
+
+/** 追蹤區塊。第 1、2 次多了當次治療的三個欄位（新格式 2026-08-13）。 */
+const fwBlock = (n: number) =>
+  n <= 2
+    ? [`FW${n}_time`, `FW${n}_days`, `KOR_FW${n}`, `KSI_FW${n}`, `KOST_FW${n}`, `Recurrence_${n}`]
+    : [`FW${n}_time`, `FW${n}_days`, `Recurrence_${n}`];
+const fwLegends = (n: number): (string | null)[] =>
+  n <= 2
+    ? [`${n}　未回診請直接填 0`, "距手術日天數", LEGEND.KOR, LEGEND.KSI, LEGEND.KOST, LEGEND.Recurrence]
+    : [`${n}　未回診請直接填 0`, null, null];
 
 export type SheetDef = { name: string; headers: string[]; legends: (string | null)[] };
 
@@ -118,7 +147,7 @@ export const BASIC_INFO_SHEET: SheetDef = {
   name: "Basic Info.",
   headers: [
     "Subject_ID", "Name", "Chart No.", "gender", "mobile", "birthday", "Age", "height", "weight", "BMI",
-    "Doctor_ID", "Diagnosis", "Medical_history_self", "Fmaily_history", "Keloid_family_history", "time of occurrence",
+    "Doctor_ID", "Diagnosis", "Medical_history_self", "Fmaily_history", "time of occurrence", "Primary_Visit_Reason",
     ...Array.from({ length: MAX_LESIONS }, (_, i) => lesionBlockHeaders(i + 1)).flat(),
     "VSS score", "JSW score", "SF-36", "PSQI", "F/W_photo", "Keloid_symptom", "BioBank", "Primary culture",
     "paraffin blocks No.", "Cryotube      Location",
@@ -127,10 +156,10 @@ export const BASIC_INFO_SHEET: SheetDef = {
     null, "（去識別化：伺服器留空，於瀏覽器端回填）", "（去識別化：伺服器留空，於瀏覽器端回填）", LEGEND.gender, null,
     LEGEND.birthday, null, LEGEND.height, LEGEND.weight, LEGEND.BMI,
     LEGEND.Doctor_ID, LEGEND.Diagnosis, LEGEND.Medical_history_self, LEGEND.Fmaily_history,
-    LEGEND.Keloid_family_history, LEGEND["time of occurrence"],
+    LEGEND["time of occurrence"], LEGEND.visit_reason,
     ...Array.from({ length: MAX_LESIONS }, (_, i) => lesionBlockLegends(i + 1)).flat(),
     "0-13", null, "8 分量表分數（順序見「編碼對照表」）", "PSQI 總分 0-21", LEGEND["F/W_photo"],
-    LEGEND.Keloid_symptom, LEGEND.BioBank, null, LEGEND["paraffin blocks No."], LEGEND["Cryotube      Location"],
+    LEGEND.Keloid_symptom, LEGEND.BioBank, "無=0, 有=1", LEGEND["paraffin blocks No."], LEGEND["Cryotube      Location"],
   ],
 };
 
@@ -160,7 +189,7 @@ export const YEAR1_SHEET: SheetDef = {
   ],
   legends: [
     null, "（伺服器留空）", "（伺服器留空）", LEGEND.gender, null, LEGEND.FW_k_symptom,
-    ...Array.from({ length: MAX_FW_PER_YEAR }, (_, i) => [null, i === 0 ? "距手術日天數" : null, i === 0 ? LEGEND.Recurrence : null]).flat(),
+    ...Array.from({ length: MAX_FW_PER_YEAR }, (_, i) => fwLegends(i + 1)).flat(),
   ],
 };
 
@@ -168,11 +197,12 @@ export const YEAR2_SHEET: SheetDef = {
   name: "Year 2 follow-up",
   headers: [
     "Subject_ID", "Name", "Chart No.", "gender", "Operation date",
-    ...Array.from({ length: MAX_FW_PER_YEAR }, (_, i) => fwBlock(i + 13)).flat(),
+    // 第二年沒有 KOR/KSI/KOST（只有第 1、2 次追蹤才有），維持三欄一組
+    ...Array.from({ length: MAX_FW_PER_YEAR }, (_, i) => [`FW${i + 13}_time`, `FW${i + 13}_days`, `Recurrence_${i + 13}`]).flat(),
   ],
   legends: [
     null, "（伺服器留空）", "（伺服器留空）", LEGEND.gender, null,
-    ...Array.from({ length: MAX_FW_PER_YEAR }, (_, i) => [null, i === 0 ? "距手術日天數" : null, i === 0 ? LEGEND.Recurrence : null]).flat(),
+    ...Array.from({ length: MAX_FW_PER_YEAR }, (_, i) => [`${i + 13}　未回診請直接填 0`, i === 0 ? "距手術日天數" : null, i === 0 ? LEGEND.Recurrence : null]).flat(),
   ],
 };
 

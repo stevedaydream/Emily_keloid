@@ -9,8 +9,6 @@ import {
   MAX_OP_SITES,
   MAX_RT_SITES,
   MAX_FW_PER_YEAR,
-  YEAR1_DAYS,
-  YEAR2_DAYS,
   BASIC_INFO_SHEET,
   OPERATION_SHEET,
   YEAR1_SHEET,
@@ -20,7 +18,6 @@ import {
   CODEBOOK_HEADERS,
   daysBetween,
   monthsBetween,
-  sizeText,
   jswNumber,
 } from "@/lib/exportCodebook";
 
@@ -124,8 +121,23 @@ type LabRow = {
   recorded_by: string | null;
 };
 
-/** 一次回診（同一天的多筆治療紀錄合併成一次） */
-type Visit = { date: string; days: number | null; recurrence: number; symptomChangeCode: number | null };
+/**
+ * 一次回診（同一天的多筆治療紀錄合併成一次）。
+ * monthIndex＝距手術第幾個月，用來對到 FW1~FW24 的固定格子——助理 2026-08-13 明確要求
+ * 「原先每個月的追蹤欄位不要刪除，也不要把延後回診直接填到原本月份而不註明」，
+ * 所以不能像先前那樣把實際回診依序塞進 FW1、FW2…。
+ */
+type Visit = {
+  date: string;
+  days: number | null;
+  monthIndex: number | null;
+  recurrence: number;
+  symptomChangeCode: number | null;
+  /** 當次治療（新格式的 KOR_FW / KSI_FW / KOST_FW，只有 FW1、FW2 有這三欄） */
+  korCode: number;
+  ksiCode: number;
+  kostCode: number | "";
+};
 
 export async function GET(request: Request) {
   const supabase = supabaseServer();
@@ -161,6 +173,7 @@ export async function GET(request: Request) {
     { data: doctors },
     { data: icdCodes },
     { data: treatmentTypeDefs },
+    { data: rtDoctorList },
   ] = await Promise.all([
     supabase.from("cases").select("*, doctors(id, code, name, export_code)"),
     supabase.from("body_part_zones").select("id, zone_key, display_name, export_label, export_code, dose_category, view, active"),
@@ -190,6 +203,7 @@ export async function GET(request: Request) {
     supabase.from("doctors").select("id, code, name, export_code").order("code"),
     supabase.from("icd_codes").select("code, description_full, export_code").order("code"),
     supabase.from("treatment_types").select("name, field_schema"),
+    supabase.from("radiotherapy_doctors").select("name, export_code"),
   ]);
 
   const zones = (zonesRaw ?? []) as Zone[];
@@ -289,6 +303,15 @@ export async function GET(request: Request) {
   // 「未能對應清單」逐筆累積（部位無法對到 22 碼、或籠統耳部無法分辨 helix/earlobe 的情形）
   const unmapped: (string | number)[][] = [];
 
+  /** 個案層級某類選項的代碼字串（例「1, 3」）。多筆紀錄取聯集。 */
+  const optionCodesFor = (caseId: string, category: string): string => {
+    const codes = (intakeByCase.get(caseId) ?? [])
+      .filter((r) => r.category === category)
+      .flatMap((r) => (r.case_intake_option_record_items ?? []).map((it) => optionById.get(it.option_id)?.export_code))
+      .filter((v): v is number => typeof v === "number");
+    return codes.length ? [...new Set(codes)].sort((x, y) => x - y).join(", ") : "";
+  };
+
   // 家族史／自身病史欄位存的是文字，但那串文字是「勾選常見疾病」時用選項 label 以頓號串起來的
   // （見 FamilyHistoryPicker），所以反推代碼是**確定的對照**、不是關鍵字猜測。
   // 舊資料匯入的自由文字對不到清單時會落到「其他」，這也是誠實的結果。
@@ -317,15 +340,15 @@ export async function GET(request: Request) {
     return [...matched].sort((x, y) => x - y).join(", ");
   };
 
-  /** 逐次放療待辦記的是醫師姓名，匯出要的是碼——對照「放射治療」的 field_schema 翻回去。 */
-  const rtDoctorCodeByName = (() => {
-    const m = new Map<string, number>();
-    const schema = ((treatmentTypeDefs ?? []).find((t) => t.name === "放射治療")?.field_schema ?? []) as FieldDef[];
-    for (const o of schema.find((f) => f.key === "rt_doctor")?.options ?? []) {
-      if (o.export_code !== undefined && o.value) m.set(String(o.value).trim(), o.export_code);
-    }
-    return m;
-  })();
+  /**
+   * 放療紀錄與逐次待辦存的都是醫師姓名，匯出要的是碼——對照後台的放射科醫師清單翻回去
+   * （2026-08-13 起這份名單是獨立資料表，不再放在 field_schema）。
+   */
+  const rtDoctorCodeByName = new Map(
+    (rtDoctorList ?? [])
+      .filter((d) => d.export_code !== null)
+      .map((d) => [String(d.name).trim(), d.export_code as number])
+  );
 
   /** 把某筆治療紀錄的某個 select 欄位值，對照 field_schema 翻成 export_code。 */
   const selectCode = (t: TreatmentRow | undefined, key: string): number | "" => {
@@ -421,6 +444,15 @@ export async function GET(request: Request) {
   }
 
   // ---- 回診（追蹤）：同一天多筆治療紀錄合併成一次回診 ----
+  /** 距手術第幾個月（1 起算）。日期在手術當月內算第 1 個月。 */
+  const monthsSince = (from: string, to: string): number => {
+    const a = new Date(from);
+    const b = new Date(to);
+    let m = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+    if (b.getDate() < a.getDate()) m--;
+    return Math.max(1, m); // 術後一個月內的回診（換藥、拆線）一律歸到第 1 個月
+  };
+
   const visitsOf = (caseId: string): Visit[] => {
     const opDate = surgeryDateOf(caseId);
     const byDate = new Map<string, TreatmentRow[]>();
@@ -432,18 +464,42 @@ export async function GET(request: Request) {
     }
     return [...byDate.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
-      // 手術當天是基準點（已在 Operation date 欄），不算成第 1 次回診，
-      // 否則每個個案的 FW1 都會是「手術日、第 0 天」，把真正的第一次追蹤擠到 FW2。
+      // 手術當天是基準點（已在 Operation date 欄），不算成回診
       .filter(([date]) => !opDate || date > opDate)
       .map(([date, rows]) => {
         const changeId = rows.map((r) => r.symptom_change_option_id).find(Boolean) ?? null;
+        // 當次治療：手術或放療→KOR=1；類固醇劑量與藥膏品項各自對照 field_schema 的碼
+        const hasOpOrRt = rows.some((r) => ["手術切除", "放射治療"].includes(typeNameOf(r)));
+        const inj = rows.find((r) => typeNameOf(r) === "病灶內注射");
+        const oint = rows.find((r) => ["藥膏", "貼片"].includes(typeNameOf(r)));
         return {
           date,
           days: daysBetween(opDate, date),
+          monthIndex: opDate ? monthsSince(opDate, date) : null,
           recurrence: rows.some((r) => r.recurrence_observed) ? 1 : 0,
           symptomChangeCode: changeId ? optionById.get(changeId)?.export_code ?? null : null,
+          korCode: hasOpOrRt ? 1 : 0,
+          ksiCode: inj ? Number(selectCode(inj, "steroid_dose") || 0) : 0,
+          kostCode: oint ? selectCode(oint, "product") : "",
         };
       });
+  };
+
+  /**
+   * 把回診放進「第 N 個月」的固定格子（新格式語意）。
+   * 同一個月有多次回診時保留第一次，其餘進「追蹤逐筆」附表——
+   * 助理要求延後的回診不可直接填進原本月份而不註明，所以寧可留空也不擠。
+   */
+  const visitsByMonthSlot = (visits: Visit[], fromMonth: number, toMonth: number) => {
+    const slots = new Map<number, Visit>();
+    const extras: Visit[] = [];
+    for (const v of visits) {
+      const m = v.monthIndex;
+      if (m === null || m < fromMonth || m > toMonth) continue;
+      if (slots.has(m)) extras.push(v);
+      else slots.set(m, v);
+    }
+    return { slots, extras };
   };
 
   const wb = new ExcelJS.Workbook();
@@ -489,19 +545,28 @@ export async function GET(request: Request) {
 
     // ---- 病灶區塊（主表前 5 個，全部進「病灶測量」附表）----
     const lesionCells: (string | number)[] = [];
+    // 助理回覆 D5：手術多半只做 1-2 處，其他疤痕治療方式各處大多一致——
+    // 所以發生原因與藥膏/貼片記在個案層級即可，各病灶填同一個值。
+    const caseKcCodes = optionCodesFor(c.id, "onset_cause");
+    const caseKostCodes = optionCodesFor(c.id, "ointment_patch");
     for (let i = 0; i < MAX_LESIONS; i++) {
       const l = allLesions[i];
       if (!l) {
-        lesionCells.push("", "", "", "", "", "");
+        lesionCells.push("", "", "", "", "", "", "", "", "");
         continue;
       }
+      const L = l.length_cm, W = l.width_cm, H = l.height_cm;
       lesionCells.push(
         zoneCodeOfLesion(l),
-        sizeText(l),
-        "", // KC：發生原因目前只有個案層級，拆不到病灶（見「欄位缺口清單」）
+        caseKcCodes,
+        L ?? "",
+        W ?? "",
+        H ?? "",
+        // 總面積＝長×寬（助理：「先計算面積就好」；示範資料 1.3×1.6=2.08 已驗證）
+        L !== null && W !== null ? Number((L * W).toFixed(2)) : "",
         korOfLesion(c.id, l.id),
         steroidCodeOfLesion(c.id, l.id),
-        "" // KOST：藥膏/貼片清單尚未建置（見「欄位缺口清單」）
+        caseKostCodes
       );
     }
     if (allLesions.length > MAX_LESIONS) {
@@ -527,10 +592,6 @@ export async function GET(request: Request) {
     const primaryIcd = (diagnosesByCase.get(c.id) ?? [])
       .sort((a, b) => Number(b.is_primary) - Number(a.is_primary))
       .map((d) => first(d.icd_codes) as { export_code?: number } | undefined)[0];
-    const symptomCodes = (intakeByCase.get(c.id) ?? [])
-      .filter((r) => r.category === "keloid_symptom")
-      .flatMap((r) => (r.case_intake_option_record_items ?? []).map((it) => optionById.get(it.option_id)?.export_code))
-      .filter((v): v is number => typeof v === "number");
     const vss = vssByCase.get(c.id);
     const vssTotal = vss ? Object.values(vss).reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0) : "";
     const sf36 = sf36ByCase.get(c.id) ? computeSF36(sf36ByCase.get(c.id)!).scales : null;
@@ -552,29 +613,20 @@ export async function GET(request: Request) {
       primaryIcd?.export_code ?? "",
       codesFromText(c.disease_history, "self_disease"),
       codesFromText(c.family_history, "family_disease"),
-      // 有(1)／無(0)／不清楚(9999)。只在「文字確實對得到選項清單」時才敢下 0 或 1：
-      //   · 對到「蟹足腫或肥厚性疤痕」→ 1
-      //   · 對到其他疾病但沒有它 → 0（表示有勾選過、只是沒勾這項）
-      //   · 明確寫「無」→ 0
-      //   · 其餘（空白、NA、以及舊表那種列出家人的自由文字）→ 9999 不清楚
-      (() => {
-        const raw = String(c.family_history ?? "").trim();
-        if (/^(無|沒有|none|no)$/i.test(raw)) return 0;
-        const codes = codesFromText(c.family_history, "family_disease");
-        if (!codes) return NO_RECORD;
-        const keloidCode = optionsOfCategory("family_disease").find((o) => o.label === "蟹足腫或肥厚性疤痕")?.export_code;
-        return keloidCode != null && codes.split(", ").includes(String(keloidCode)) ? 1 : 0;
-      })(),
+      // 2026-08-13 新格式移除了 Keloid_family_history 欄——家族史第 7 項已含「蟹足腫或肥厚性疤痕」
+      // 發生時間以月計（助理 D6：初診時問，記到年份即可，換算成月數）
       monthsBetween(c.keloid_onset_date, String(c.created_at).slice(0, 10)) ?? "",
+      optionCodesFor(c.id, "visit_reason"),
       ...lesionCells,
       vssTotal,
       jswNumber(c.jsw_score),
       sf36 ? SF36_SCALES.map((s) => sf36.find((r) => r.key === s.key)?.score ?? "").join("/") : "",
       psqi?.global ?? "",
       photoCount.get(c.id) ? 1 : 0,
-      symptomCodes.length ? [...new Set(symptomCodes)].sort((a, b) => a - b).join(", ") : "",
+      optionCodesFor(c.id, "keloid_symptom"),
       anyBiobank ? 1 : 0,
-      legacyBio?.primary_culture ?? (bioMap.get("tissue_keloid_fibroblast_culture")?.collected ? "Y" : ""),
+      // Primary culture 改為 0/1 編碼（新格式 2026-08-13）
+      legacyBio?.primary_culture || bioMap.get("tissue_keloid_fibroblast_culture")?.collected ? 1 : 0,
       legacyBio?.paraffin_block_no ?? "",
       legacyBio?.cryotube_location ?? "",
     ]);
@@ -636,8 +688,9 @@ export async function GET(request: Request) {
       rtDate,
       // 醫師有兩個來源：「放射治療」治療紀錄，以及手術後自動產生的逐次待辦。
       // 實際執行時走的是後者（每次做完在個案頁標記完成），所以治療紀錄沒填時要退回去找。
-      selectCode(rtRecord, "rt_doctor") ||
-        (rtDoctorCodeByName.get(String(sessions.find((x) => x.rt_doctor)?.rt_doctor ?? "").trim()) ?? ""),
+      rtDoctorCodeByName.get(String(rtRecord?.field_values?.rt_doctor ?? "").trim()) ??
+        rtDoctorCodeByName.get(String(sessions.find((x) => x.rt_doctor)?.rt_doctor ?? "").trim()) ??
+        "",
       sessions.length || rtRecord?.field_values?.fractions || "",
       rtRecord?.field_values?.bolus ?? "",
       rtRecord?.field_values?.electron_beam ?? "",
@@ -647,33 +700,50 @@ export async function GET(request: Request) {
     ]);
 
     // ---- Year 1 / Year 2 ----
+    // FW1~FW24 是「第 N 個月」的固定格子，不是實際回診的流水序（助理 2026-08-13）。
+    // 沒回診的月份填 0（工作表上的說明就是「未回診請直接填 0」）。
     const visits = visitsOf(c.id);
-    const y1 = visits.filter((v) => v.days === null || v.days <= YEAR1_DAYS);
-    const y2 = visits.filter((v) => v.days !== null && v.days > YEAR1_DAYS && v.days <= YEAR2_DAYS);
-    const beyond = visits.filter((v) => v.days !== null && v.days > YEAR2_DAYS);
-    if (y1.length > MAX_FW_PER_YEAR || y2.length > MAX_FW_PER_YEAR || beyond.length) {
+    const { slots: y1Slots, extras: y1Extras } = visitsByMonthSlot(visits, 1, MAX_FW_PER_YEAR);
+    const { slots: y2Slots, extras: y2Extras } = visitsByMonthSlot(visits, MAX_FW_PER_YEAR + 1, MAX_FW_PER_YEAR * 2);
+    const beyond = visits.filter((v) => v.monthIndex !== null && v.monthIndex > MAX_FW_PER_YEAR * 2);
+    if (y1Extras.length || y2Extras.length || beyond.length) {
       overflowNotes.push(
-        `${rid}：第一年 ${y1.length} 次／第二年 ${y2.length} 次／兩年後 ${beyond.length} 次回診，超出每年 ${MAX_FW_PER_YEAR} 格的部分見「追蹤逐筆」附表`
+        `${rid}：同月多次回診 ${y1Extras.length + y2Extras.length} 次、滿兩年後 ${beyond.length} 次，` +
+          `主表每個月只放第一次，其餘見「追蹤逐筆」附表`
       );
     }
-    // FW_k_symptom：術後一年內最後一筆有填的症狀變化
-    const y1Symptom = [...y1].reverse().find((v) => v.symptomChangeCode !== null)?.symptomChangeCode ?? "";
+    // FW_k_symptom：助理指定在「第 1 個月的第一次回診」問一次，所以取第 1 格的答案
+    const y1Symptom = y1Slots.get(1)?.symptomChangeCode ?? "";
 
-    const fwCells = (list: Visit[]) => {
+    /** 一個月份格子的儲存格。第 1、2 個月多了當次治療的三欄。 */
+    const fwCells = (slots: Map<number, Visit>, fromMonth: number, count: number) => {
       const cells: (string | number)[] = [];
-      for (let i = 0; i < MAX_FW_PER_YEAR; i++) {
-        const v = list[i];
-        cells.push(v?.date ?? "", v?.days ?? "", v ? v.recurrence : "");
+      for (let i = 0; i < count; i++) {
+        const m = fromMonth + i;
+        const v = slots.get(m);
+        const withTreatment = m <= 2;
+        if (!v) {
+          // 未回診：時間欄填 0（依工作表說明），其餘留空
+          cells.push(0, "", ...(withTreatment ? ["", "", ""] : []), "");
+          continue;
+        }
+        cells.push(v.date, v.days ?? "");
+        if (withTreatment) cells.push(v.korCode, v.ksiCode, v.kostCode);
+        cells.push(v.recurrence);
       }
       return cells;
     };
-    wsY1.addRow([rid, "", "", sexCode, opDate ?? "", y1Symptom, ...fwCells(y1)]);
-    wsY2.addRow([rid, "", "", sexCode, opDate ?? "", ...fwCells(y2)]);
+    wsY1.addRow([rid, "", "", sexCode, opDate ?? "", y1Symptom, ...fwCells(y1Slots, 1, MAX_FW_PER_YEAR)]);
+    wsY2.addRow([rid, "", "", sexCode, opDate ?? "", ...fwCells(y2Slots, MAX_FW_PER_YEAR + 1, MAX_FW_PER_YEAR)]);
 
     for (const [idx, v] of visits.entries()) {
       visitRows.push([
-        rid, idx + 1, v.date, v.days ?? "", v.recurrence, v.symptomChangeCode ?? "",
-        v.days === null || v.days <= YEAR1_DAYS ? "第一年" : v.days <= YEAR2_DAYS ? "第二年" : "兩年後",
+        rid, idx + 1, v.date, v.days ?? "", v.monthIndex ?? "", v.recurrence, v.symptomChangeCode ?? "",
+        v.monthIndex === null || v.monthIndex <= MAX_FW_PER_YEAR
+          ? "第一年"
+          : v.monthIndex <= MAX_FW_PER_YEAR * 2
+            ? "第二年"
+            : "兩年後",
       ]);
     }
 
@@ -726,7 +796,7 @@ export async function GET(request: Request) {
     "長cm", "寬cm", "高cm", "最大徑cm", "面積cm²", "體積cm³", "備註", "登記備註",
   ], lesionMeasureRows);
 
-  addSheet("追蹤逐筆", ["Subject_ID", "第幾次回診", "回診日期", "距手術日天數", "復發(0/1)", "症狀變化碼", "歸屬"], visitRows);
+  addSheet("追蹤逐筆", ["Subject_ID", "第幾次回診", "回診日期", "距手術日天數", "第幾個月", "復發(0/1)", "症狀變化碼", "歸屬"], visitRows);
 
   addSheet("收案選項紀錄", ["Subject_ID", "類別", "代碼", "選項"], optionRows, 26);
 

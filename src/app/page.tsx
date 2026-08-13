@@ -89,15 +89,16 @@ function countBy<T>(rows: T[], key: (r: T) => string | null | undefined) {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ stage?: string }>;
+  searchParams: Promise<{ stage?: string; sort?: string; doctor?: string }>;
 }) {
-  const { stage: stageFilter } = await searchParams;
+  const { stage: stageFilter, sort: sortKey, doctor: doctorFilter } = await searchParams;
   const supabase = supabaseServer();
 
-  const [{ data: statsRow }, { data: pipelineRaw }, { data: casesRaw }] = await Promise.all([
+  const [{ data: statsRow }, { data: pipelineRaw }, { data: casesRaw }, { data: doctorList }] = await Promise.all([
     supabase.from("v_dashboard_stats").select("*").single(),
     supabase.from("v_case_pipeline_progress").select("*").order("progress_pct", { ascending: true }),
     supabase.from("cases").select("id, enrollment_year, body_site, data_source, doctors(code, name)"),
+    supabase.from("doctors").select("id, code, name").eq("active", true).order("code"),
   ]);
 
   const stats = (statsRow ?? {}) as Partial<DashboardStats>;
@@ -109,8 +110,30 @@ export default async function DashboardPage({
     missing: allPipeline.filter((row) => !row[s.key]).length,
   })).filter((s) => s.missing > 0);
 
+  // 看板的篩選與排序（2026-08-13）：原本固定「依完成度由低到高」，
+  // 但要找特定一位病人時完成度排序反而難找，所以加上依研究編號排序與依醫師篩選。
   const activeStage = PIPELINE_STAGES.find((s) => s.key === stageFilter);
-  const pipeline = activeStage ? allPipeline.filter((row) => !row[activeStage.key]) : allPipeline;
+  let pipeline = activeStage ? allPipeline.filter((row) => !row[activeStage.key]) : allPipeline;
+  if (doctorFilter) pipeline = pipeline.filter((row) => row.doctor_id === doctorFilter);
+  if (sortKey === "research_id") {
+    // 研究編號是 [醫師代碼]-[年份]-[流水序號]，流水序號是數字——直接字串比會讓 10 排在 2 前面，
+    // 所以拆開後年份與流水各自用數值比較。
+    const parts = (rid: string) => {
+      const m = String(rid).match(/^(.*?)-(\d+)-(\d+)$/);
+      return m ? { code: m[1], year: Number(m[2]), seq: Number(m[3]) } : { code: String(rid), year: 0, seq: 0 };
+    };
+    pipeline = [...pipeline].sort((a, x) => {
+      const pa = parts(a.research_id), px = parts(x.research_id);
+      return pa.code.localeCompare(px.code) || pa.year - px.year || pa.seq - px.seq;
+    });
+  }
+  const keepParams = (over: Record<string, string | undefined>) => {
+    const q = new URLSearchParams();
+    const merged = { stage: stageFilter, sort: sortKey, doctor: doctorFilter, ...over };
+    for (const [k, v] of Object.entries(merged)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return `/${qs ? `?${qs}` : ""}#pipeline-board`;
+  };
 
   const byDoctor = countBy(cases, (c) => {
     const d = Array.isArray(c.doctors) ? c.doctors[0] : c.doctors;
@@ -184,14 +207,16 @@ export default async function DashboardPage({
             <h2 className="whitespace-nowrap text-sm font-semibold text-brand-900">收案一條龍進度看板</h2>
             <InfoTooltip text="點下方階段標籤可篩選出「該階段尚未完成」的個案；表頭上的●/○也可以點擊直接跳到該個案對應的區塊。" />
           </div>
-          <span className="whitespace-nowrap text-xs text-ink/40">依完成度由低到高排序，優先處理落後個案</span>
+          <span className="whitespace-nowrap text-xs text-ink/40">
+            {sortKey === "research_id" ? "依研究編號排序" : "依完成度由低到高排序，優先處理落後個案"}
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-2 border-b border-brand-50 px-4 py-2">
           <span className="whitespace-nowrap text-xs text-ink/40">依階段篩選未完成：</span>
           {incompleteCounts.map((s) => (
             <Link
               key={s.key}
-              href={`/?stage=${s.key}#pipeline-board`}
+              href={keepParams({ stage: s.key })}
               className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
                 stageFilter === s.key
                   ? "bg-brand-700 text-white"
@@ -203,10 +228,53 @@ export default async function DashboardPage({
           ))}
           {incompleteCounts.length === 0 && <span className="text-xs text-ink/30">全部個案各階段皆已完成</span>}
           {activeStage && (
-            <Link href="/#pipeline-board" className="whitespace-nowrap text-xs text-brand-700 underline">
-              清除篩選
+            <Link href={keepParams({ stage: undefined })} className="whitespace-nowrap text-xs text-brand-700 underline">
+              清除階段篩選
             </Link>
           )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-brand-50 px-4 py-2">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="whitespace-nowrap text-xs text-ink/40">排序：</span>
+            {[
+              { key: undefined, label: "完成度" },
+              { key: "research_id", label: "研究編號" },
+            ].map((o) => (
+              <Link
+                key={o.label}
+                href={keepParams({ sort: o.key })}
+                className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
+                  (sortKey ?? undefined) === o.key ? "bg-brand-700 text-white" : "bg-brand-50 text-brand-800 hover:bg-brand-100"
+                }`}
+              >
+                {o.label}
+              </Link>
+            ))}
+          </span>
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="whitespace-nowrap text-xs text-ink/40">醫師：</span>
+            <Link
+              href={keepParams({ doctor: undefined })}
+              className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
+                !doctorFilter ? "bg-brand-700 text-white" : "bg-brand-50 text-brand-800 hover:bg-brand-100"
+              }`}
+            >
+              全部
+            </Link>
+            {(doctorList ?? []).map((d) => (
+              <Link
+                key={d.id}
+                href={keepParams({ doctor: d.id })}
+                className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
+                  doctorFilter === d.id ? "bg-brand-700 text-white" : "bg-brand-50 text-brand-800 hover:bg-brand-100"
+                }`}
+              >
+                {d.name}
+              </Link>
+            ))}
+          </span>
+          <span className="whitespace-nowrap text-xs text-ink/30">顯示 {pipeline.length} 筆</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -284,7 +352,7 @@ export default async function DashboardPage({
               {pipeline.length === 0 && (
                 <tr>
                   <td colSpan={3 + PIPELINE_STAGES.length} className="whitespace-nowrap px-4 py-6 text-center text-ink/40">
-                    {activeStage ? "沒有符合篩選條件的個案" : "尚無個案"}
+                    {activeStage || doctorFilter ? "沒有符合篩選條件的個案" : "尚無個案"}
                   </td>
                 </tr>
               )}

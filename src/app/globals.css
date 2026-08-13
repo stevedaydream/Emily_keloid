@@ -32,11 +32,16 @@
   --font-data: var(--font-ibm-plex-mono), "IBM Plex Mono", ui-monospace, monospace;
 }
 
+/* 頁面頂端的柔光只該出現一次。
+   先前寫成 background 簡寫、沒指定 repeat，而 <html> 是 h-full（＝一個視窗高），
+   漸層的定位區域就只有一個視窗高，往下捲時整組柔光會一直重複鋪下去。
+   改成：底色用 background-color（一定填滿整個捲動畫布），漸層 no-repeat 只畫一次。 */
 body {
-  background:
+  background-color: var(--color-paper);
+  background-image:
     radial-gradient(1200px 480px at 12% -10%, color-mix(in srgb, var(--color-brand-100) 55%, transparent), transparent),
-    radial-gradient(900px 420px at 100% 0%, color-mix(in srgb, var(--color-accent-100) 45%, transparent), transparent),
-    var(--color-paper);
+    radial-gradient(900px 420px at 100% 0%, color-mix(in srgb, var(--color-accent-100) 45%, transparent), transparent);
+  background-repeat: no-repeat;
   color: var(--color-ink);
   font-family: var(--font-body);
 }

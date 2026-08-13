@@ -47,6 +47,7 @@ const GROUPS = [
     label: "團隊與帳號設定",
     items: [
       { href: "/admin/doctors", title: "醫師代碼清單", desc: "研究編號用醫師代碼維護" },
+      { href: "/admin/rt-doctors", title: "放射科醫師清單", desc: "放療紀錄可選的醫師與匯出代碼" },
       { href: "/admin/operators", title: "操作者清單", desc: "共用帳號下的操作者選單維護" },
     ],
   },

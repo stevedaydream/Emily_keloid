@@ -9,6 +9,7 @@ import { DOSE_CATEGORY_LABEL, BODY_VIEW_LABEL, type BodyView } from "@/lib/bodyZ
 import {
   addKeloidLesionAction,
   deleteKeloidLesionAction,
+  moveKeloidLesionAction,
   updateKeloidLesionAction,
   updateKeloidLesionZoneAction,
 } from "./actions";
@@ -112,8 +113,14 @@ export default function KeloidLesionSection({
         每個部位各自的分類決定它自己的放射治療劑量方案；拍照時也可直接點選對應部位。
       </p>
 
+      {/* 排序有臨床意義（助理 2026-08-13 D10）：嚴重及需開刀的放第一個，匯出時「部位1」就是它。 */}
+      {lesions.length > 1 && (
+        <p className="mt-2 text-[11px] text-ink/40">
+          順序有意義：請把<b>最嚴重、需要開刀的部位排在第一個</b>，匯出時的「部位1」就是它。用 ▲▼ 調整。
+        </p>
+      )}
       <ul className="mt-2 space-y-1">
-        {lesions.map((l) => {
+        {lesions.map((l, i) => {
           const zone = l.body_part_zone_id ? zonesById.get(l.body_part_zone_id) : null;
           return (
             <li key={l.id} className="rounded-md border border-brand-100 px-3 py-1.5 text-sm">
@@ -125,6 +132,30 @@ export default function KeloidLesionSection({
                   {l.note && <span className="ml-2 text-xs text-ink/40">（{l.note}）</span>}
                 </span>
                 <span className="flex items-center gap-2 text-xs">
+                  {lesions.length > 1 && (
+                    <span className="flex items-center">
+                      {(["up", "down"] as const).map((dir) => {
+                        const disabled = dir === "up" ? i === 0 : i === lesions.length - 1;
+                        return (
+                          <form key={dir} action={moveKeloidLesionAction}>
+                            <input type="hidden" name="case_id" value={caseId} />
+                            <input type="hidden" name="lesion_id" value={l.id} />
+                            <input type="hidden" name="direction" value={dir} />
+                            <SubmitButton
+                              variant="ghost"
+                              size="sm"
+                              disabled={disabled}
+                              title={dir === "up" ? "往前移（更嚴重）" : "往後移"}
+                              className="!px-1 !py-0 text-ink/40 hover:!bg-brand-50"
+                              pendingText="…"
+                            >
+                              {dir === "up" ? "▲" : "▼"}
+                            </SubmitButton>
+                          </form>
+                        );
+                      })}
+                    </span>
+                  )}
                   <span className="whitespace-nowrap text-ink/40">🖼 {(photosByLesion[l.id] ?? []).length} 張</span>
                   <button
                     type="button"
@@ -193,7 +224,7 @@ export default function KeloidLesionSection({
                     儲存變更
                   </SubmitButton>
                   <p className="w-full text-[11px] text-ink/40">
-                    部位編號不開放修改（照片標籤已寫入「部位{l.site_no}」，改號會對不上舊照片）。
+                    部位編號請用列表上的 ▲▼ 調整（照片是以病灶連結、不是靠編號，重排不會影響既有照片）。
                   </p>
                 </form>
               )}
