@@ -6,6 +6,7 @@ import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
 import { withTermGroup } from "@/lib/terms";
 import { generateBindCode, BIND_CODE_TTL_HOURS } from "@/lib/line";
+import { onsetMonthToDate } from "@/lib/onsetMonth";
 
 async function operatorOrThrow() {
   const op = await getCurrentOperator();
@@ -664,6 +665,8 @@ export async function updatePriorHistoryAction(formData: FormData) {
 
   const update: Record<string, string | null> = {};
   for (const f of fields) update[f] = (formData.get(f) as string) || null;
+  // 初次發生時間的輸入是 <input type="month">，送出的是 `YYYY-MM`，date 欄位吃不了，補成當月 1 日
+  update.keloid_onset_date = onsetMonthToDate(update.keloid_onset_date);
 
   await supabase.from("cases").update(update).eq("id", caseId);
 

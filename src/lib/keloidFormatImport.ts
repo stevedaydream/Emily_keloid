@@ -7,7 +7,7 @@
 // errors 會擋住該列不寫入；warnings 只是提醒，仍可寫入。
 
 import { parseSize, type ParsedSize } from "./sizeParser";
-import { MAX_LESIONS, MAX_OP_SITES, MAX_RT_SITES, MAX_FW_PER_YEAR, SEX_CODE, NO_RECORD } from "./exportCodebook";
+import { MAX_LESIONS, MAX_OP_SITES, MAX_RT_SITES, MAX_FW_YEAR1, MAX_FW_YEAR2, SEX_CODE, NO_RECORD } from "./exportCodebook";
 
 /** 一列原始資料：欄名 → 儲存格值 */
 export type SheetRow = Record<string, unknown>;
@@ -73,7 +73,7 @@ export type DecodedCase = {
     date: string | null;
     /** 放射科醫師姓名（由 RT_Doctor 碼翻回） */
     doctor: string | null;
-    /** Keloid Lo_R1..3：各療程的部位 zone id（對不到就是 null） */
+    /** Keloid Lo_R1..MAX_RT_SITES：各療程的部位 zone id（對不到就是 null） */
     zone_ids: (string | null)[];
     fractions: number | null;
     bolus: string | null;
@@ -113,6 +113,45 @@ function dateStr(v: unknown): string | null {
   const dt = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
   if (dt.getUTCFullYear() !== Number(y) || dt.getUTCMonth() !== Number(m) - 1 || dt.getUTCDate() !== Number(d)) return null;
   return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+}
+
+/**
+ * 讀一個病灶的尺寸。**兩種格式都吃**：
+ *
+ *   · 新格式（2026-08-13 部長改版後）：`KL size_NL` / `NW` / `NH` 三個數字欄
+ *     （`NT` 是總面積＝長×寬，匯出時自動算的，不讀進來，免得與長寬不一致）
+ *   · 舊格式：單格自由文字 `KL size_N`（`3.9 x 3.1 x 1.4 cm`、`8*3 cm`…），交給 sizeParser
+ *
+ * 為什麼要相容兩種：匯出與範本早就改成四欄了，解析器卻還停在單格，
+ * 導致「下載範本 → 填 → 上傳」的尺寸整批讀不到（2026-08-14 發現）。
+ * 只讀新欄的話，助理手上舊格式的檔案會反過來壞掉，所以兩邊都留。
+ */
+function readLesionSize(basic: SheetRow, i: number): { size: ParsedSize; raw: string } {
+  const cells = (["L", "W", "H"] as const).map((suffix) => str(basic[`KL size_${i}${suffix}`]));
+  const legacy = str(basic[`KL size_${i}`]);
+
+  // 三個數字欄都空 → 走舊的單格自由文字
+  if (!cells.some(Boolean)) return { size: parseSize(legacy), raw: legacy };
+
+  const nums = cells.map((c) => (c ? num(c) : null));
+  // 有欄位填了卻不是數字（例如把整串「3.9 x 3.1 x 1.4 cm」貼進 L 欄）→ 併起來當自由文字解，不硬吞
+  if (cells.some((c, idx) => c && nums[idx] === null)) {
+    const text = [legacy, ...cells].filter(Boolean).join(" ");
+    return { size: parseSize(text), raw: text };
+  }
+
+  const [length_cm, width_cm, height_cm] = nums;
+  const hasLW = length_cm !== null && width_cm !== null;
+  return {
+    size: {
+      length_cm,
+      width_cm,
+      height_cm,
+      confidence: hasLW ? "exact" : "partial",
+      note: hasLW ? "" : "尺寸欄只填了部分維度",
+    },
+    raw: cells.filter(Boolean).join("*"),
+  };
 }
 
 /** 「2, 3」或「2、3」這種多選碼字串拆成數字陣列 */
@@ -220,7 +259,7 @@ export function decodeCase(
   let unreadKsiKost = false;
   for (let i = 1; i <= MAX_LESIONS; i++) {
     const zoneCode = num(basic[`Keloid Lo_${i}`]);
-    const rawSize = str(basic[`KL size_${i}`]);
+    const { size, raw: rawSize } = readLesionSize(basic, i);
     const kc = num(basic[`KC_${i}`]);
     if (kc !== null) onsetCodes.push(kc);
     if (str(basic[`KSI_${i}`]) || str(basic[`KOST_${i}`]) || str(basic[`KOR_${i}`])) unreadKsiKost = true;
@@ -230,7 +269,6 @@ export function decodeCase(
     if (zoneCode !== null && !zone) {
       warnings.push(`Keloid Lo_${i} 代碼 ${zoneCode} 不在 1-22 的部位碼表內，該病灶的部位留空`);
     }
-    const size = parseSize(rawSize);
     if (rawSize && size.confidence !== "exact") {
       warnings.push(`KL size_${i}「${rawSize}」：${size.note || "無法解析"}`);
     }
@@ -272,7 +310,7 @@ export function decodeCase(
       surgeryProcedures.push(null);
     }
   }
-  // 放療部位（Keloid Lo_R1..3）：不讀的話放療紀錄掛不到病灶上，匯出時 KOR 會永遠是 0
+  // 放療部位（Keloid Lo_R1..MAX_RT_SITES）：不讀的話放療紀錄掛不到病灶上，匯出時 KOR 會永遠是 0
   const rtZoneIds: (string | null)[] = [];
   for (let i = 1; i <= MAX_RT_SITES; i++) {
     const code = num(op[`Keloid Lo_R${i}`]);
@@ -300,9 +338,9 @@ export function decodeCase(
   }
 
   const visits: DecodedVisit[] = [];
-  const readVisits = (row: SheetRow | undefined, offset: number) => {
+  const readVisits = (row: SheetRow | undefined, offset: number, count: number) => {
     if (!row) return;
-    for (let i = 1; i <= MAX_FW_PER_YEAR; i++) {
+    for (let i = 1; i <= count; i++) {
       const n = i + offset;
       const raw = row[`FW${n}_time`];
       if (!str(raw)) continue;
@@ -314,8 +352,8 @@ export function decodeCase(
       visits.push({ date: d, recurrence: num(row[`Recurrence_${n}`]) === 1, symptom_change_option_id: null });
     }
   };
-  readVisits(rows.year1, 0);
-  readVisits(rows.year2, 12);
+  readVisits(rows.year1, 0, MAX_FW_YEAR1);
+  readVisits(rows.year2, MAX_FW_YEAR1, MAX_FW_YEAR2);
   visits.sort((a, b) => a.date.localeCompare(b.date));
   // FW_k_symptom 是「第一年整體」一個值，掛在第一年最後一次回診上（匯出時也是這樣取回來）
   if (fwSymptomId) {

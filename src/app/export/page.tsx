@@ -36,8 +36,10 @@ export default async function ExportPage() {
         <p className="mt-1 text-xs text-ink/50">
           給助理手動補齊舊病人用的空白範本，欄位與上面的匯出檔<b>完全相同</b>（同一份定義產生），
           另附「填寫說明」與「編碼對照表」兩張參考表。
-          病灶尺寸欄可直接照病歷原文貼上（<code>3.9 x 3.1 x 1.4 cm</code>、<code>8*3 cm</code>、
-          <code>about 4 cm</code>），匯入時會自動拆成長/寬/高；拆不出來或疑似一格多處病灶的會列進人工確認清單。
+          病灶尺寸請填 <code>KL size_NL/NW/NH</code> 三個數字欄（cm，總面積 <code>NT</code> 會自動算）；
+          若是舊格式那種整串塞一格的檔案（<code>3.9 x 3.1 x 1.4 cm</code>、<code>8*3 cm</code>、
+          <code>about 4 cm</code>），照原文貼上也讀得進來，匯入時會自動拆成長/寬/高，
+          拆不出來或疑似一格多處病灶的會列進人工確認清單。
         </p>
         <a href="/api/export/import-template" className={`${buttonClasses("outline")} mt-3`}>
           下載空白範本（.xlsx）

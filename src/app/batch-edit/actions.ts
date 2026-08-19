@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase";
 import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
+import { onsetMonthToDate } from "@/lib/onsetMonth";
 
 // 批次編輯頁只開放「一個案一格」的純量欄位；家族史、prior_* 那些有專用輸入元件的欄位，
 // 以及病灶這種一對多結構，一律走右側抽屜用既有元件編輯，避免在表格裡打出格式不一致的自由文字。
@@ -127,6 +128,8 @@ export async function updateCaseNarrativeAction(formData: FormData) {
     if (!formData.has(field)) continue;
     changes[field] = ((formData.get(field) as string) ?? "").trim() || null;
   }
+  // 初次發生時間的輸入是 <input type="month">（`YYYY-MM`），補成當月 1 日才寫得進 date 欄位
+  if ("keloid_onset_date" in changes) changes.keloid_onset_date = onsetMonthToDate(changes.keloid_onset_date);
   if (Object.keys(changes).length === 0) return;
 
   await supabase.from("cases").update(changes).eq("id", caseId);

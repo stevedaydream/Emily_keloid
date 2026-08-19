@@ -114,7 +114,7 @@ export async function savePatientHistoryAction(
 
   // 此次就診主要原因走 case_intake_option_records（逐筆累加，不會蓋掉人員填的）。
   // 2026-08-12 docx 項次 2：原本這題問的是 keloid_history_type（「您的蟹足腫是怎麼來的？」），
-  // 已整組換成 visit_reason（「您此次至本院就診的主要原因為何？」7 選項）。
+  // 已整組換成 visit_reason（「您此次至本院就診的主要原因為何？」，2026-08-14 改採新版碼表後為 6 選項）。
   // 本次填寫如果已經建過一筆（病人按「上一步」回頭改），先刪掉那一筆再重建，
   // 否則同一次收案會留下兩筆互相矛盾的紀錄。items 有 on delete cascade。
   if (payload.replaceRecordId) {
