@@ -33,6 +33,7 @@ import CollapsedList from "@/components/ui/CollapsedList";
 import type { CasePipelineRow } from "@/lib/pipeline";
 import { DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
 import { PATIENT_INTAKE_SEGMENTS } from "@/lib/patientIntake";
+import { onsetDateToMonth } from "@/lib/onsetMonth";
 import { resolveFollowupAction } from "@/app/patient/[caseId]/intake/actions";
 import { computeSF36, computePSQI, computeJSSClassification } from "@/lib/scoring";
 import LineBindingSection from "./LineBindingSection";
@@ -760,11 +761,11 @@ export default async function CaseDetailPage({
         <form action={updatePriorHistoryAction} className="grid grid-cols-2 gap-3 text-sm">
           <input type="hidden" name="case_id" value={id} />
           <div>
-            <label className="block text-xs font-medium text-ink/70">蟹足腫初次發生時間</label>
+            <label className="block text-xs font-medium text-ink/70">蟹足腫初次發生時間（只到年月）</label>
             <input
-              type="date"
+              type="month"
               name="keloid_onset_date"
-              defaultValue={caseRow.keloid_onset_date ?? ""}
+              defaultValue={onsetDateToMonth(caseRow.keloid_onset_date)}
               className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
             />
           </div>

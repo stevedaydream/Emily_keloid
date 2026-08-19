@@ -26,13 +26,29 @@ export const DOSE_CODE: Record<string, number> = {
  */
 export const NO_RECORD = 9999;
 
-/** 部長格式的硬上限。超出的資料不丟棄，改列進 long-format 附表（決策 2026-08-12）。 */
-export const MAX_LESIONS = 5;
+/**
+ * 部長格式的硬上限。超出的資料不丟棄，改列進 long-format 附表（決策 2026-08-12）。
+ *
+ * 2026-08-14 依助理／部長確認擴充（原示範 Excel 是 5/4/3/24，文字回覆才是這組，已確認以文字為準）：
+ *   · 病灶 5 → 20（Basic Info. 因此從 61 欄變 206 欄，使用者已知情並確認）
+ *   · 手術部位 4（維持）
+ *   · 放療部位 3 → 4（與手術部位一樣多）
+ *   · 追蹤 24 → 27 次（Year 1 表 FW1–FW12 不動，加開的 3 格接在 Year 2 表尾＝FW13–FW27）
+ */
+export const MAX_LESIONS = 20;
 export const MAX_OP_SITES = 4;
-export const MAX_RT_SITES = 3;
-export const MAX_FW_PER_YEAR = 12;
+export const MAX_RT_SITES = 4;
+/** Year 1 工作表的月份格子數（FW1–FW12）。 */
+export const MAX_FW_YEAR1 = 12;
+/** Year 2 工作表的月份格子數（FW13–FW27）。 */
+export const MAX_FW_YEAR2 = 15;
+/** 兩張追蹤表合計的月份格子數（＝最後一格是 FW27）。 */
+export const MAX_FW_TOTAL = MAX_FW_YEAR1 + MAX_FW_YEAR2;
 
-/** 追蹤分年的界線：距手術日 ≤365 天算第一年，366–730 天算第二年。 */
+/**
+ * 追蹤分年的界線：距手術日 ≤365 天算第一年，366–730 天算第二年。
+ * （目前程式一律用「距手術第幾個月」對格子，這兩個常數只作為文件性質的參考值。）
+ */
 export const YEAR1_DAYS = 365;
 export const YEAR2_DAYS = 730;
 
@@ -74,7 +90,9 @@ export const LEGEND: Record<string, string> = {
     "1. 明顯改善 , 2. 稍微改善 , 3. 沒有明顯變化 , 4. 稍微加重 , 5. 明顯加重 , 6. 不清楚",
   Recurrence: "無=0, 有=1",
   visit_reason:
-    "1. 初次發生蟹足腫，尋求治療 , 2. 已接受治療但效果不理想，尋求其他治療方式 , 3. 治療後復發，尋求再次治療 , 4. 曾多次治療及復發，尋求進一步治療 , 5. 原有治療效果良好，希望持續接受治療或追蹤 , 6. 希望取得第二醫療意見或了解其他治療選擇 , 7. 其他",
+    // 2026-08-14 改採新版碼表：整份只剩 6 項，拿掉「希望取得第二醫療意見或了解其他治療選擇」，
+    // 「其他」從 7 遞補為 6（見 migration 20260814010000）
+    "1. 初次發生蟹足腫，尋求治療 , 2. 已接受治療，但效果不理想，尋求其他治療方式 , 3. 治療後復發，尋求再次治療 , 4. 曾多次治療及復發，尋求進一步治療 , 5. 原有治療效果良好，希望持續接受治療或追蹤 , 6. 其他",
 };
 
 /** 距離兩個日期的天數（b - a）。任一為空回 null。 */
@@ -185,11 +203,11 @@ export const YEAR1_SHEET: SheetDef = {
   name: "Year 1 follow-up",
   headers: [
     "Subject_ID", "Name", "Chart No.", "gender", "Operation date", "FW_k_symptom",
-    ...Array.from({ length: MAX_FW_PER_YEAR }, (_, i) => fwBlock(i + 1)).flat(),
+    ...Array.from({ length: MAX_FW_YEAR1 }, (_, i) => fwBlock(i + 1)).flat(),
   ],
   legends: [
     null, "（伺服器留空）", "（伺服器留空）", LEGEND.gender, null, LEGEND.FW_k_symptom,
-    ...Array.from({ length: MAX_FW_PER_YEAR }, (_, i) => fwLegends(i + 1)).flat(),
+    ...Array.from({ length: MAX_FW_YEAR1 }, (_, i) => fwLegends(i + 1)).flat(),
   ],
 };
 
@@ -198,11 +216,18 @@ export const YEAR2_SHEET: SheetDef = {
   headers: [
     "Subject_ID", "Name", "Chart No.", "gender", "Operation date",
     // 第二年沒有 KOR/KSI/KOST（只有第 1、2 次追蹤才有），維持三欄一組
-    ...Array.from({ length: MAX_FW_PER_YEAR }, (_, i) => [`FW${i + 13}_time`, `FW${i + 13}_days`, `Recurrence_${i + 13}`]).flat(),
+    ...Array.from({ length: MAX_FW_YEAR2 }, (_, i) => {
+      const n = MAX_FW_YEAR1 + 1 + i;
+      return [`FW${n}_time`, `FW${n}_days`, `Recurrence_${n}`];
+    }).flat(),
   ],
   legends: [
     null, "（伺服器留空）", "（伺服器留空）", LEGEND.gender, null,
-    ...Array.from({ length: MAX_FW_PER_YEAR }, (_, i) => [`${i + 13}　未回診請直接填 0`, i === 0 ? "距手術日天數" : null, i === 0 ? LEGEND.Recurrence : null]).flat(),
+    ...Array.from({ length: MAX_FW_YEAR2 }, (_, i) => [
+      `${MAX_FW_YEAR1 + 1 + i}　未回診請直接填 0`,
+      i === 0 ? "距手術日天數" : null,
+      i === 0 ? LEGEND.Recurrence : null,
+    ]).flat(),
   ],
 };
 

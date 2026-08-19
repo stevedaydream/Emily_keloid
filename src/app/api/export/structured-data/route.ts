@@ -8,7 +8,9 @@ import {
   MAX_LESIONS,
   MAX_OP_SITES,
   MAX_RT_SITES,
-  MAX_FW_PER_YEAR,
+  MAX_FW_YEAR1,
+  MAX_FW_YEAR2,
+  MAX_FW_TOTAL,
   BASIC_INFO_SHEET,
   OPERATION_SHEET,
   YEAR1_SHEET,
@@ -23,8 +25,9 @@ import {
 
 // 匯出格式＝部長 2026-08 版 Excel 編碼簿（docs/Keloid Operation treat.xlsx）。
 //
-// 主體是與他那份「欄位順序、欄位數量完全一致」的 4 張表，儲存格**只放數字碼**，可直接貼進統計軟體：
-//   Basic Info.(56) / Operation(26) / Year 1 follow-up(42) / Year 2 follow-up(41)
+// 主體是與他那份「欄位順序完全一致」的 4 張表，儲存格**只放數字碼**，可直接貼進統計軟體。
+// 欄位數依 2026-08-14 確認的容量（病灶 20／手術 4／放療 4／追蹤 27）計算：
+//   Basic Info.(206) / Operation(28) / Year 1 follow-up(48) / Year 2 follow-up(50)
 // 平台多出來的東西（量表分數、Lab、病灶數字化測量、編碼對照、缺口說明）一律放附表，不污染主表。
 //
 // 刻意的偏離只有一處：欄名去掉原檔的排版空白與冗長括號（原檔是 `Keloid Lo_1                     (Keloid Location)`），
@@ -123,7 +126,7 @@ type LabRow = {
 
 /**
  * 一次回診（同一天的多筆治療紀錄合併成一次）。
- * monthIndex＝距手術第幾個月，用來對到 FW1~FW24 的固定格子——助理 2026-08-13 明確要求
+ * monthIndex＝距手術第幾個月，用來對到 FW1~FW27 的固定格子——助理 2026-08-13 明確要求
  * 「原先每個月的追蹤欄位不要刪除，也不要把延後回診直接填到原本月份而不註明」，
  * 所以不能像先前那樣把實際回診依序塞進 FW1、FW2…。
  */
@@ -543,7 +546,7 @@ export async function GET(request: Request) {
     const allLesions = (lesionsByCase.get(c.id) ?? []).sort((a, b) => (a.site_no ?? 99) - (b.site_no ?? 99));
     const opDate = surgeryDateOf(c.id);
 
-    // ---- 病灶區塊（主表前 5 個，全部進「病灶測量」附表）----
+    // ---- 病灶區塊（主表前 MAX_LESIONS 個，全部進「病灶測量」附表）----
     const lesionCells: (string | number)[] = [];
     // 助理回覆 D5：手術多半只做 1-2 處，其他疤痕治療方式各處大多一致——
     // 所以發生原因與藥膏/貼片記在個案層級即可，各病灶填同一個值。
@@ -700,15 +703,15 @@ export async function GET(request: Request) {
     ]);
 
     // ---- Year 1 / Year 2 ----
-    // FW1~FW24 是「第 N 個月」的固定格子，不是實際回診的流水序（助理 2026-08-13）。
+    // FW1~FW27 是「第 N 個月」的固定格子，不是實際回診的流水序（助理 2026-08-13）。
     // 沒回診的月份填 0（工作表上的說明就是「未回診請直接填 0」）。
     const visits = visitsOf(c.id);
-    const { slots: y1Slots, extras: y1Extras } = visitsByMonthSlot(visits, 1, MAX_FW_PER_YEAR);
-    const { slots: y2Slots, extras: y2Extras } = visitsByMonthSlot(visits, MAX_FW_PER_YEAR + 1, MAX_FW_PER_YEAR * 2);
-    const beyond = visits.filter((v) => v.monthIndex !== null && v.monthIndex > MAX_FW_PER_YEAR * 2);
+    const { slots: y1Slots, extras: y1Extras } = visitsByMonthSlot(visits, 1, MAX_FW_YEAR1);
+    const { slots: y2Slots, extras: y2Extras } = visitsByMonthSlot(visits, MAX_FW_YEAR1 + 1, MAX_FW_TOTAL);
+    const beyond = visits.filter((v) => v.monthIndex !== null && v.monthIndex > MAX_FW_TOTAL);
     if (y1Extras.length || y2Extras.length || beyond.length) {
       overflowNotes.push(
-        `${rid}：同月多次回診 ${y1Extras.length + y2Extras.length} 次、滿兩年後 ${beyond.length} 次，` +
+        `${rid}：同月多次回診 ${y1Extras.length + y2Extras.length} 次、第 ${MAX_FW_TOTAL} 個月之後 ${beyond.length} 次，` +
           `主表每個月只放第一次，其餘見「追蹤逐筆」附表`
       );
     }
@@ -733,17 +736,17 @@ export async function GET(request: Request) {
       }
       return cells;
     };
-    wsY1.addRow([rid, "", "", sexCode, opDate ?? "", y1Symptom, ...fwCells(y1Slots, 1, MAX_FW_PER_YEAR)]);
-    wsY2.addRow([rid, "", "", sexCode, opDate ?? "", ...fwCells(y2Slots, MAX_FW_PER_YEAR + 1, MAX_FW_PER_YEAR)]);
+    wsY1.addRow([rid, "", "", sexCode, opDate ?? "", y1Symptom, ...fwCells(y1Slots, 1, MAX_FW_YEAR1)]);
+    wsY2.addRow([rid, "", "", sexCode, opDate ?? "", ...fwCells(y2Slots, MAX_FW_YEAR1 + 1, MAX_FW_YEAR2)]);
 
     for (const [idx, v] of visits.entries()) {
       visitRows.push([
         rid, idx + 1, v.date, v.days ?? "", v.monthIndex ?? "", v.recurrence, v.symptomChangeCode ?? "",
-        v.monthIndex === null || v.monthIndex <= MAX_FW_PER_YEAR
+        v.monthIndex === null || v.monthIndex <= MAX_FW_YEAR1
           ? "第一年"
-          : v.monthIndex <= MAX_FW_PER_YEAR * 2
+          : v.monthIndex <= MAX_FW_TOTAL
             ? "第二年"
-            : "兩年後",
+            : `第 ${MAX_FW_TOTAL} 個月之後`,
       ]);
     }
 

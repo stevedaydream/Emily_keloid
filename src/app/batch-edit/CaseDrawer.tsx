@@ -9,6 +9,7 @@ import FamilyHistoryPicker from "@/app/cases/[id]/FamilyHistoryPicker";
 import PriorTreatmentPicker from "@/app/cases/[id]/PriorTreatmentPicker";
 import MultiEntryInput from "@/app/cases/[id]/MultiEntryInput";
 import { DOSE_CATEGORY_LABEL, BODY_VIEW_LABEL, type BodyView } from "@/lib/bodyZones";
+import { onsetDateToMonth } from "@/lib/onsetMonth";
 import { updateKeloidLesionZoneAction, deleteKeloidLesionAction, addKeloidLesionAction } from "@/app/cases/[id]/actions";
 import { getCaseDetailAction, updateCaseNarrativeAction } from "./actions";
 
@@ -172,11 +173,11 @@ export default function CaseDrawer({ caseId, onClose }: { caseId: string; onClos
               <form action={updateCaseNarrativeAction} onSubmit={() => setTimeout(afterMutation, 600)} className="space-y-2 text-sm">
                 <input type="hidden" name="case_id" value={caseId} />
                 <div>
-                  <label className="block text-xs font-medium text-ink/70">蟹足腫初次發生時間</label>
+                  <label className="block text-xs font-medium text-ink/70">蟹足腫初次發生時間（只到年月）</label>
                   <input
-                    type="date"
+                    type="month"
                     name="keloid_onset_date"
-                    defaultValue={c.keloid_onset_date ?? ""}
+                    defaultValue={onsetDateToMonth(c.keloid_onset_date)}
                     className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
                   />
                 </div>

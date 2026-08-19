@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import { supabaseServer } from "@/lib/supabase";
 import { SF36_SCALES } from "@/lib/scoring";
-import { MAIN_SHEETS, buildCodebookRows, CODEBOOK_HEADERS } from "@/lib/exportCodebook";
+import { MAIN_SHEETS, MAX_LESIONS, buildCodebookRows, CODEBOOK_HEADERS } from "@/lib/exportCodebook";
 
 // 匯入用的空白範本：與匯出**完全同一份表頭定義**（MAIN_SHEETS），只是沒有資料列。
 //
@@ -23,9 +23,13 @@ const INSTRUCTIONS: string[][] = [
   ["4. 有代碼的欄位請填數字，代碼對照見「編碼對照表」工作表。"],
   ["5. 日期請填 YYYY-MM-DD（例 2023-07-15）。"],
   [""],
-  ["關於病灶尺寸（KL size_1 ~ KL size_5）"],
+  [`關於病灶尺寸（KL size_1L ~ KL size_${MAX_LESIONS}T）`],
   [""],
-  ["直接照病歷原文貼上即可，系統會自動拆成長/寬/高三個數字。以下寫法都認得："],
+  ["長（NL）、寬（NW）、高（NH）三欄請各填一個數字，單位 cm、小數 1 位；量不到的維度留空即可。"],
+  ["總面積（NT）不用填——匯出時會自動用 長×寬 算出來。"],
+  [""],
+  ["若你手上是舊格式的檔案（尺寸整串塞在單一欄「KL size_N」），也可以直接照病歷原文貼上，"],
+  ["系統會自動拆成長/寬/高。以下寫法都認得："],
   ["   3.9 x 3.1 x 1.4 cm      →  長3.9 寬3.1 高1.4"],
   ["   8*3 cm                  →  長8 寬3（高度未記錄）"],
   ["   8.0 x 5.5 x 2.0mm       →  自動換算成公分 0.8 / 0.55 / 0.2"],
@@ -33,7 +37,7 @@ const INSTRUCTIONS: string[][] = [
   ["   4-5cm                   →  取中間值 4.5（會標記為「範圍值，請確認」）"],
   [""],
   ["拆不出來、或看起來像一格塞了多處病灶的（例如「anterior chest 5.6x2.4x1.2 cm / left chest 3.6x1.0x0.8 cm」），"],
-  ["系統不會亂猜，會列進匯入預覽的「需人工確認」清單，由你逐筆確認後才寫入。"],
+  ["系統不會亂猜，會在匯入預覽標成「需人工確認」，並把原文留在該病灶的備註欄。"],
   [""],
   ["重複匯入同一個 Subject_ID"],
   [""],
@@ -57,7 +61,9 @@ export async function GET() {
   for (const line of INSTRUCTIONS) guide.addRow(line);
   guide.getColumn(1).width = 100;
   guide.getRow(1).font = { bold: true, size: 13 };
-  [12, 25].forEach((r) => (guide.getRow(r).font = { bold: true }));
+  // 兩個小標題的列號（INSTRUCTIONS 裡「關於病灶尺寸」與「重複匯入同一個 Subject_ID」的位置，
+  // 改動說明文字時要跟著調；先前是 [12, 25]，已經被上面幾次增刪推移到不是標題的列上）
+  [11, 27].forEach((r) => (guide.getRow(r).font = { bold: true }));
 
   for (const def of MAIN_SHEETS) {
     const ws = wb.addWorksheet(def.name);
