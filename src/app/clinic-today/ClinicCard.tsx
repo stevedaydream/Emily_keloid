@@ -121,6 +121,41 @@ export default function ClinicCard({
         </div>
       )}
 
+      {/* 回診動線入口（決策 2026-08-20）。已登記手術＝進入追蹤期才出現。
+          卡片上只放進度與入口，實際操作在 /cases/[id]/visit-flow——
+          那頁是平板尺寸、一次做一件事，卡片是桌機密集版，兩者用途不同。 */}
+      {data.inFollowup && (
+        <div
+          className={`mb-3 rounded-md border p-3 ${
+            data.visitRegistered && data.visitTodos.length === 0
+              ? "border-emerald-200 bg-emerald-50"
+              : "border-brand-200 bg-brand-50/40"
+          }`}
+        >
+          <p className="text-sm font-semibold text-ink/80">
+            本次回診
+            {data.monthIndex !== null && <span className="ml-1.5 font-normal text-ink/50">術後第 {data.monthIndex} 個月</span>}
+          </p>
+          <ul className="mt-1 space-y-0.5 text-sm">
+            <li className={data.visitRegistered ? "text-emerald-700" : "text-amber-800"}>
+              {data.visitRegistered ? "✓ 已登記回診" : "☐ 尚未登記回診（沒登記＝匯出檔視同沒回診）"}
+            </li>
+            {data.visitTodos.map((t) => (
+              <li key={t} className="text-amber-800">
+                ☐ {t}
+              </li>
+            ))}
+            {data.visitRegistered && data.visitTodos.length === 0 && <li className="text-emerald-700">✓ 量測與拍照已完成</li>}
+          </ul>
+          <Link
+            href={`/cases/${caseId}/visit-flow`}
+            className="mt-2 inline-block rounded-md bg-brand-700 px-3 py-1.5 text-sm text-white hover:bg-brand-800"
+          >
+            {data.visitRegistered ? "繼續本次回診 →" : "開始回診 →"}
+          </Link>
+        </div>
+      )}
+
       {/* 基本資料：主任只負責建檔，這些多半是門診當下由護理師/助理補的 */}
       <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
         <div>

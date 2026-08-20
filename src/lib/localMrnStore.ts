@@ -178,3 +178,18 @@ export async function appendMappingRow(handle: FileSystemFileHandle, row: MrnMap
   await writable.write(newText);
   await writable.close();
 }
+
+/**
+ * 這個病歷號收過案了嗎（2026-08-20）。
+ *
+ * 病歷號永遠不會離開這台裝置（決策 #1），所以伺服器**無法**檢查重複——
+ * 但送出的當下瀏覽器手上剛好就有整份對照表，檢查只能、也只需要在這裡做。
+ *
+ * 比對前正規化：去頭尾空白、忽略大小寫。醫院病歷號常有前置 0，所以**不**去掉前置 0——
+ * `0012345` 與 `12345` 在院內是不同的號，硬要當成同一個反而會擋掉正確的收案。
+ */
+export function findByMrn(rows: MrnMappingRow[], mrn: string): MrnMappingRow[] {
+  const needle = mrn.trim().toLowerCase();
+  if (!needle) return [];
+  return rows.filter((r) => (r.mrn ?? "").trim().toLowerCase() === needle);
+}

@@ -3,12 +3,12 @@
 import { useState } from "react";
 import Link from "next/link";
 import LesionMeasureFlow from "./LesionMeasureFlow";
-import { measureBlockers, type LesionCheck } from "@/lib/clinicFlow";
+import { measureBlockers, type ClinicianScale, type LesionCheck } from "@/lib/clinicFlow";
 import { PATIENT_INTAKE_SEGMENTS } from "@/lib/patientIntake";
 import type { BodyView } from "@/lib/bodyZones";
 
 // 診間收案動線（決策 2026-08-20）。三步一頁，一次只展開一步：
-//   1 病人自填（平板交出去）→ 2 量測長寬高＋拍照 → 3 醫師填 JSS
+//   1 病人自填（平板交出去）→ 2 量測長寬高＋拍照 → 3 醫師評分（JSS ＋ VSS）
 // 做完的步驟收成一行綠字，沒做完的自動展開。任何一步都點得回去——
 // 門診會被打斷，硬性的精靈式流程反而讓人卡在中間出不來。
 
@@ -21,8 +21,8 @@ export default function ClinicFlow({
   lesions,
   zones,
   sex,
-  jssTemplateId,
-  jssDone,
+  scales,
+  missingScaleNames,
 }: {
   caseId: string;
   researchId: string;
@@ -30,18 +30,28 @@ export default function ClinicFlow({
   lesions: LesionCheck[];
   zones: Zone[];
   sex: string | null;
-  jssTemplateId: string | null;
-  jssDone: boolean;
+  /** 步驟 3 要填的醫師評分量表（JSS ＋ VSS），依 CLINICIAN_SCALE_NAMES 的順序 */
+  scales: ClinicianScale[];
+  /** 後台找不到的量表名稱。缺了要講出來，不然那一份會靜悄悄地整個消失 */
+  missingScaleNames: readonly string[];
 }) {
   const intakeAllDone = intakeDone >= PATIENT_INTAKE_SEGMENTS.length;
   const blockers = measureBlockers(lesions);
   const measureAllDone = blockers.length === 0;
-  const allDone = intakeAllDone && measureAllDone && jssDone;
+  // 兩份量表都要填完才算走完這一步：它們測的是不同東西（JSS 定性、VSS 定嚴重度），
+  // 只填一份等於這次門診少收一半的臨床評分，而下次回診時的病灶狀態已經不一樣了。
+  const scalesDone = scales.length > 0 && scales.every((s) => s.done);
+  const allDone = intakeAllDone && measureAllDone && scalesDone;
 
   const steps = [
     { n: 1, title: "病人自填", done: intakeAllDone, hint: `${intakeDone}/${PATIENT_INTAKE_SEGMENTS.length} 段` },
     { n: 2, title: "病灶量測與拍照", done: measureAllDone, hint: `${lesions.length} 個部位` },
-    { n: 3, title: "JSS 疤痕診斷分類表", done: jssDone, hint: "醫師觸診後填寫" },
+    {
+      n: 3,
+      title: "醫師評分",
+      done: scalesDone,
+      hint: `JSS ＋ VSS，共 ${scales.length} 份 ・ 已完成 ${scales.filter((s) => s.done).length} 份`,
+    },
   ];
   const firstOpen = steps.find((s) => !s.done)?.n ?? 3;
   const [open, setOpen] = useState<number>(firstOpen);
@@ -57,7 +67,7 @@ export default function ClinicFlow({
         <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 p-5 text-center">
           <p className="text-5xl">✓</p>
           <h2 className="mt-2 text-2xl font-semibold text-emerald-900">本次收案完成</h2>
-          <p className="mt-1 text-base text-emerald-800">病人自填、病灶量測與拍照、JSS 分類表都已完成。</p>
+          <p className="mt-1 text-base text-emerald-800">病人自填、病灶量測與拍照、醫師評分都已完成。</p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row">
             <Link
               href={`/cases/${caseId}`}
@@ -152,22 +162,34 @@ export default function ClinicFlow({
       );
     }
 
-    if (!jssTemplateId) {
-      return <p className="text-base text-amber-700">後台找不到「JSS 疤痕診斷分類表」，請先到問卷管理建立。</p>;
-    }
-
     return (
       <div className="space-y-3">
         <p className="text-base text-ink/60">
-          由醫師觸診後填寫，共 7 題。送出後總分會自動寫回個案的 JSW score，並回到這一頁。
+          兩份都由醫師看同一顆病灶後填寫，擺在同一關是因為它們的判讀重疊——
+          JSS 定性（是不是蟹足腫），VSS 定嚴重度（追蹤治療成效）。送出後會回到這一頁。
         </p>
+
+        {missingScaleNames.length > 0 && (
+          <p className="rounded-lg border-2 border-amber-300 bg-amber-50 p-3 text-base text-amber-900">
+            後台找不到「{missingScaleNames.join("」「")}」，請先到問卷管理建立，否則這一份收不到。
+          </p>
+        )}
+
         {measureAllDone ? (
-          <Link
-            href={`/patient/${caseId}/questionnaire?questionnaire_id=${jssTemplateId}&next=/cases/${caseId}/clinic-flow`}
-            className="flex min-h-16 items-center justify-center rounded-xl bg-brand-700 px-4 text-xl font-medium text-white"
-          >
-            {jssDone ? "再填一次 JSS 分類表" : "開始填 JSS 分類表"}
-          </Link>
+          <div className="space-y-2">
+            {scales.map((s) => (
+              <Link
+                key={s.id}
+                href={`/patient/${caseId}/questionnaire?questionnaire_id=${s.id}&next=/cases/${caseId}/clinic-flow`}
+                className={`flex min-h-16 items-center justify-between gap-3 rounded-xl px-4 text-lg font-medium ${
+                  s.done ? "border-2 border-emerald-300 bg-emerald-50 text-emerald-900" : "bg-brand-700 text-white"
+                }`}
+              >
+                <span>{s.name}</span>
+                <span className="shrink-0 text-base font-normal">{s.done ? "✓ 已完成，點此重填" : "開始填 →"}</span>
+              </Link>
+            ))}
+          </div>
         ) : (
           <>
             <button
@@ -178,6 +200,7 @@ export default function ClinicFlow({
               請先完成步驟 2
             </button>
             <p className="text-base text-ink/50">
+              兩份量表都要量完才填得準：JSS 有「大小」「垂直生長」，VSS 的高度直接用 mm 分級。
               量不到或病人拒絕拍照時，可以在步驟 2 的該部位勾「無法量測／拒絕拍照」並填原因，就會放行，
               同時留一筆待補提醒。
             </p>

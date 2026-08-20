@@ -123,7 +123,7 @@ export default function AppHeader({
           type="button"
           onClick={() => setOpen(true)}
           aria-label="開啟選單"
-          className="-ml-1 shrink-0 rounded p-1.5 text-brand-700 hover:bg-brand-50 min-[560px]:hidden"
+          className="-ml-1 shrink-0 rounded p-1.5 text-brand-700 hover:bg-brand-50 min-[480px]:hidden"
         >
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7">
             <path d="M2.5 5h15M2.5 10h15M2.5 15h15" strokeLinecap="round" />
@@ -134,8 +134,11 @@ export default function AppHeader({
           <span className="font-heading text-sm font-medium text-brand-900">蟹足腫研究平台</span>
         </Link>
 
-        {/* 中段：放不下就左右捲。560px 以下捲動視窗會窄到不能用，那邊交給側邊選單。 */}
-        <div className="relative hidden min-w-0 flex-1 min-[560px]:block">
+        {/* 中段：放不下就左右捲。480px 以下捲動視窗會窄到不能用，那邊交給側邊選單。
+            斷點取 480 而不是 560：Xiaomi Pad SE 8.7 豎屏是 800 實體像素，
+            CSS 寬度取決於系統密度——533（density 240）或 600（density 213）都有可能，
+            把斷點壓在兩者之下，就不必賭那台裝置回報哪一個。 */}
+        <div className="relative hidden min-w-0 flex-1 min-[480px]:block">
           <div className="flex items-center gap-4 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <nav className="flex items-center gap-4 text-sm text-ink/60">
               {navLinks.map((l) => (
@@ -214,7 +217,7 @@ export default function AppHeader({
 
       {/* 手機版側邊選單 */}
       {open && (
-        <div className="fixed inset-0 z-50 min-[560px]:hidden">
+        <div className="fixed inset-0 z-50 min-[480px]:hidden">
           <div className="absolute inset-0 bg-ink/40" onClick={() => setOpen(false)} />
           <div className="absolute left-0 top-0 flex h-full w-64 max-w-[80vw] flex-col bg-paper-raised p-4 shadow-lg">
             <div className="mb-4 flex items-center justify-between">

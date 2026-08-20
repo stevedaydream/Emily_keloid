@@ -99,7 +99,11 @@ export async function uploadPhotoAction(formData: FormData) {
   // 有填的尺寸就寫回這個病灶（含拍照時剛自動建立的那一個）。沒填的欄位維持原值。
   const dimUpdate = Object.fromEntries(Object.entries(dims).filter(([, v]) => v !== null));
   if (lesion && Object.keys(dimUpdate).length > 0) {
-    await supabase.from("case_keloid_lesions").update(dimUpdate).eq("id", lesion.id);
+    await supabase
+      .from("case_keloid_lesions")
+      // 量測日：回診動線靠它分辨「這次量的」與「三個月前量的」（見 lib/visitFlow.ts）
+      .update({ ...dimUpdate, measured_at: new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(new Date()) })
+      .eq("id", lesion.id);
   }
 
   const bodySite = lesion ? `部位${lesion.site_no ?? ""} ${lesion.body_site}`.trim() : zone?.display_name ?? null;
@@ -149,6 +153,7 @@ export async function uploadPhotoAction(formData: FormData) {
   // 個案頁面的部位縮圖／張數要立刻反映這張新照片
   revalidatePath(`/cases/${caseId}`);
   revalidatePath(`/cases/${caseId}/clinic-flow`);
+  revalidatePath(`/cases/${caseId}/visit-flow`);
   revalidatePath(`/patient/${caseId}/photo`);
 
   const sizeNote = Object.keys(dimUpdate).length > 0 ? "，尺寸已一併記錄" : "";

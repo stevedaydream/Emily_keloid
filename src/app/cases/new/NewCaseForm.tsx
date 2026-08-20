@@ -13,8 +13,10 @@ import {
   requestHandlePermission,
   appendMappingRow,
   readAllRows,
+  findByMrn,
+  type MrnMappingRow,
 } from "@/lib/localMrnStore";
-import { syncVaultIfUnlocked, appendRowToVault, getVaultKey, subscribeVaultSession } from "@/lib/vaultSession";
+import { syncVaultIfUnlocked, appendRowToVault, getVaultKey, subscribeVaultSession, readVaultRows } from "@/lib/vaultSession";
 import { loadVaultAction } from "@/app/local-tools/mrn-mapping/vaultActions";
 
 type Doctor = { id: string; code: string; name: string };
@@ -65,6 +67,21 @@ export default function NewCaseForm({
     mrn: string;
     name: string;
   } | null>(null);
+
+  /**
+   * 病歷號撞號時擋下來的那一筆（2026-08-20）。**硬擋，沒有「再收一次」的出口。**
+   *
+   * 撞號原本完全不會報錯：伺服器看不到病歷號（決策 #1，送出前就從 FormData 刪掉了），
+   * 本機 CSV 是純 append 不檢查，保管庫的去重依據是 research_id 而不是 mrn。
+   * 結果是同一個病人被收案兩次、拿到兩個研究編號、對照表多一列——
+   * 比當場報錯難救得多，因為要等到分析時才發現，那時已經分不清哪筆該刪。
+   *
+   * 為什麼硬擋而不是「確認後仍可建立」：一個病歷號就是一個人，一個人在這個研究裡
+   * 只該有一筆個案。同一個病人身上又長了新的蟹足腫，那是**在既有個案上加一顆病灶**
+   * （系統支援一個個案 20 顆，見 pending.md D4），不是重新收一次案。
+   * 留一個「仍要建立」的按鈕，等於把這條規則交給門診當下最忙的那個人判斷。
+   */
+  const [duplicate, setDuplicate] = useState<{ mrn: string; rows: MrnMappingRow[] } | null>(null);
 
   // 保管庫同步狀態：只有在雲端真的有保管庫時才提示，否則沒用過這功能的人會看到莫名其妙的警告
   const [vaultExists, setVaultExists] = useState(false);
@@ -214,6 +231,31 @@ export default function NewCaseForm({
         }
       }
 
+      // ── 病歷號重複檢查（2026-08-20）────────────────────────────
+      // 一定要在 createCaseAction 之前：個案一旦建立就拿到研究編號、佔掉一個流水號，
+      // 事後刪除還得回頭處理編號空洞。
+      // 檢查只能在瀏覽器端做——病歷號永遠不上伺服器，但這裡手上剛好有整份對照表。
+      if (trimmedMrn) {
+        const known = supported
+          ? handle
+            ? await readAllRows(handle)
+            : null
+          : await readVaultRows();
+        if (known === null) {
+          // 讀不到對照表就不能宣稱「沒撞到」。與其放行造成重複收案，不如擋下來講清楚。
+          throw new Error(
+            supported
+              ? "還沒掛上本機對照表，無法確認這個病歷號是不是收過案了。請先按下方「選擇既有對照表」。"
+              : "保管庫鎖定中，無法確認這個病歷號是不是收過案了。請先到「病歷號對照維護」解鎖。"
+          );
+        }
+        const hits = findByMrn(known, trimmedMrn);
+        if (hits.length > 0) {
+          setDuplicate({ mrn: trimmedMrn, rows: hits });
+          return;
+        }
+      }
+
       const formData = new FormData(formRef.current);
       formData.delete("mrn"); // 病歷號絕不送到伺服器
       formData.delete("patient_name"); // 姓名同理
@@ -359,7 +401,10 @@ export default function NewCaseForm({
             autoFocus={isIntake && (supported || vaultUnlocked)}
             disabled={!supported && !vaultUnlocked}
             value={mrn}
-            onChange={(e) => setMrn(e.target.value)}
+            onChange={(e) => {
+              setMrn(e.target.value);
+              if (duplicate) setDuplicate(null);
+            }}
             placeholder={supported || vaultUnlocked ? "病歷號（留空則不建立對照）" : "保管庫鎖定中"}
             className="w-full rounded-md border border-accent-300 px-3 py-2 text-sm outline-none focus:border-accent-500 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-paper-sunken disabled:text-ink/30"
           />
@@ -426,6 +471,41 @@ export default function NewCaseForm({
         建檔後把平板交給病人自填基本資料、病史、就診資訊與兩份量表。
         診斷與同意書日期在個案頁補；追蹤時程會在登記手術後自動產生（術後每月一次、共 24 次）。
       </p>
+
+      {/* 撞號：擋下來、指出是哪一筆，並說清楚正確的做法是加病灶而不是重收一次。
+          刻意沒有「仍要建立」的按鈕——見上方 duplicate state 的說明。 */}
+      {duplicate && (
+        <div className="rounded-md border-2 border-red-300 bg-red-50 p-3 text-sm">
+          <p className="font-semibold text-red-800">
+            病歷號 {duplicate.mrn} 已經收過案了，不能重複建檔。
+          </p>
+          <ul className="mt-2 space-y-1">
+            {duplicate.rows.map((r, i) => (
+              <li key={`${r.research_id}-${i}`} className="flex flex-wrap items-center gap-2 rounded bg-white px-2 py-1.5">
+                <span className="font-data font-medium text-ink">{r.research_id}</span>
+                {r.name && <span className="text-ink/60">{r.name}</span>}
+                {r.created_at && (
+                  <span className="text-xs text-ink/40">收案於 {String(r.created_at).slice(0, 10)}</span>
+                )}
+                {r.case_id ? (
+                  <Link
+                    href={`/cases/${r.case_id}`}
+                    className="ml-auto whitespace-nowrap rounded border border-brand-300 bg-white px-2 py-1 text-xs text-brand-800 hover:bg-brand-50"
+                  >
+                    開啟這筆個案 →
+                  </Link>
+                ) : (
+                  <span className="ml-auto text-xs text-ink/40">（舊資料，對照表沒有個案連結）</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-red-800">
+            同一位病人身上又長了新的蟹足腫，請到那筆個案<b>加一顆病灶</b>，不要重新收案——
+            一個病歷號在這個研究裡只該有一筆個案，重複收案會讓匯出時同一個人被算成兩位受試者。
+          </p>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
