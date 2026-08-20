@@ -102,6 +102,25 @@ export default function ClinicCard({
         )}
       </div>
 
+      {/* 病人一走，長寬高就再也補不回來（照片裡的尺沒有被程式讀出來過，見決策 #3），
+          所以缺什麼要在門診卡片最上面攔住人，不是等到之後看報表才發現（決策 2026-08-20）。 */}
+      {data.measureBlockers.length > 0 && (
+        <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3">
+          <p className="text-sm font-medium text-amber-900">⚠️ 病人離開前要完成：</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-amber-800">
+            {data.measureBlockers.map((b) => (
+              <li key={b}>{b}</li>
+            ))}
+          </ul>
+          <Link
+            href={`/cases/${caseId}/clinic-flow`}
+            className="mt-2 inline-block rounded-md bg-amber-600 px-3 py-1.5 text-sm text-white"
+          >
+            前往量測與拍照 →
+          </Link>
+        </div>
+      )}
+
       {/* 基本資料：主任只負責建檔，這些多半是門診當下由護理師/助理補的 */}
       <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
         <div>

@@ -22,10 +22,13 @@ export default function PriorTreatmentPicker({
   name,
   label,
   defaultValue,
+  anchorClassName = "",
 }: {
   name: string;
   label: string;
   defaultValue: string;
+  /** 待補清單點過來時要落在這一格，所以外層 div 需要 id 與 :target 高亮的樣式（2026-08-20） */
+  anchorClassName?: string;
 }) {
   const initial = parseValue(defaultValue);
   const [status, setStatus] = useState(initial.status);
@@ -44,7 +47,7 @@ export default function PriorTreatmentPicker({
       : "";
 
   return (
-    <div>
+    <div id={`field-${name}`} className={anchorClassName}>
       <label className="block text-xs font-medium text-ink/70">{label}</label>
       <input type="hidden" name={name} value={composed} />
       <div className="mt-1 flex flex-wrap gap-3">

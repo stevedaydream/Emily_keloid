@@ -69,5 +69,9 @@ export async function submitQuestionnaireAction(formData: FormData) {
 
   await logAudit({ caseId, operatorName: operator, action: "submit_questionnaire", entity: "questionnaire_responses", entityId: response.id });
 
-  redirect(`/cases/${caseId}?submitted=questionnaire`);
+  // 從診間收案動線進來時回動線頁（那裡會顯示「本次收案完成」），否則照舊回個案頁。
+  // next 在頁面端已經擋過非站內路徑，這裡再擋一次——server action 是可以被直接 POST 的。
+  const next = (formData.get("next") as string) ?? "";
+  const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "";
+  redirect(safeNext || `/cases/${caseId}?submitted=questionnaire`);
 }

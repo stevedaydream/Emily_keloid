@@ -197,9 +197,9 @@ export default function MrnMappingPage() {
         <div className="space-y-2 rounded-lg border border-brand-200 bg-paper-sunken p-4 text-sm text-ink/70">
           <p className="font-medium text-ink/80">這台裝置寫不了本機 CSV，改用雲端保管庫</p>
           <p>
-            病歷號對照表原本是直接讀寫你電腦上的 CSV，用的是瀏覽器的 File System Access API，
-            <b>只有桌機版 Chrome / Edge 有實作</b>；手機與平板一律沒有（含 Android Chrome、iPad Safari），
-            那不是權限沒開，是根本沒有這個功能。
+            病歷號對照表原本是直接讀寫你電腦上的 CSV，用的是瀏覽器的 File System Access API。
+            桌機版 Chrome / Edge 一直有，<b>Android Chrome 現在也有</b>；
+            <b>這台裝置的瀏覽器沒有</b>（iPad 的 Safari 至今仍未實作），那不是權限沒開，是根本沒有這個功能。
           </p>
           <p>
             所以在這台裝置上，<b>雲端保管庫就是病歷號對照的來源</b>：用通行碼解鎖之後，

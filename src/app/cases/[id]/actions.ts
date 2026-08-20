@@ -1147,3 +1147,61 @@ export async function addScheduleItemAction(formData: FormData) {
   revalidatePath(`/cases/${caseId}`);
   revalidatePath("/clinic-today");
 }
+
+/**
+ * 「此部位無法量測／無法拍照」的免除註記（2026-08-20，診間收案動線）。
+ *
+ * 動線在開 JSS 量表前會擋住沒量完長寬高、沒拍照的病灶。臨床上確實有量不到、
+ * 病人拒絕拍照的情況，所以留這個逃生口——但它是一個**明確的動作＋原因**，
+ * 不是「留空就算了」：留空跟「量了忘了存」在資料上長得一模一樣，事後分不出來。
+ * 免除的同時往待補清單塞一筆（reason='waived'），下次回診看得到要補什麼。
+ */
+export async function setLesionWaiverAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const lesionId = formData.get("lesion_id") as string;
+  const kind = formData.get("kind") as string; // "measure" | "photo"
+  const waived = formData.get("waived") === "1";
+  const reason = ((formData.get("reason") as string) ?? "").trim() || null;
+  if (kind !== "measure" && kind !== "photo") return;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  await supabase
+    .from("case_keloid_lesions")
+    .update(
+      kind === "measure"
+        ? { measure_waived: waived, measure_waived_reason: waived ? reason : null }
+        : { photo_waived: waived, photo_waived_reason: waived ? reason : null }
+    )
+    .eq("id", lesionId);
+
+  const { data: lesion } = await supabase
+    .from("case_keloid_lesions")
+    .select("site_no, body_site")
+    .eq("id", lesionId)
+    .maybeSingle();
+  const fieldKey = `lesion_${kind}_${lesionId}`;
+  const label = `部位${lesion?.site_no ?? "?"} ${lesion?.body_site ?? ""}｜${kind === "measure" ? "長寬高未量測" : "未拍照"}`;
+
+  if (waived) {
+    await supabase
+      .from("case_intake_followups")
+      .upsert(
+        { case_id: caseId, field_key: fieldKey, field_label: label, reason: "waived", patient_answer: reason, status: "pending" },
+        { onConflict: "case_id,field_key" }
+      );
+  } else {
+    await supabase.from("case_intake_followups").delete().eq("case_id", caseId).eq("field_key", fieldKey);
+  }
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "set_lesion_waiver",
+    entity: "case_keloid_lesions",
+    entityId: lesionId,
+    detail: { kind, waived, reason },
+  });
+  revalidatePath(`/cases/${caseId}`);
+  revalidatePath(`/cases/${caseId}/clinic-flow`);
+}

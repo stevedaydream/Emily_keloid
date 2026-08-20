@@ -69,6 +69,40 @@ const COMPLETENESS_ANCHOR: Record<string, string | undefined> = {
   phone: "section-demographics",
 };
 
+/**
+ * 待補項目 → 對應輸入欄位的錨點（2026-08-20）。
+ *
+ * 跟上面的 COMPLETENESS_ANCHOR 只指到「區塊」不同，這裡指到**那一格**：
+ * 待補清單是給人員照著補的工作清單，捲到一個有八個欄位的表單然後自己找，
+ * 等於清單只做了一半。欄位的 id 與 `target:` 高亮在下面各欄位上。
+ *
+ * 病灶的免除註記（lesion_measure_<id>／lesion_photo_<id>）不在這張表裡——
+ * 它們的錨點是那個病灶自己的列，見 followupAnchor()。
+ */
+const FOLLOWUP_ANCHOR: Record<string, string | undefined> = {
+  sex: "field-sex",
+  age: "field-birth_date",
+  height: "field-height_cm",
+  weight: "field-weight_kg",
+  phone: "field-phone_number",
+  family_history: "field-family_history",
+  keloid_onset_date: "field-keloid_onset_date",
+  prior_treatment_physician: "field-prior_treatment_physician",
+  prior_steroid_treatment: "field-prior_steroid_treatment",
+  prior_tcm_treatment: "field-prior_tcm_treatment",
+  prior_ogawa_patch: "field-prior_ogawa_patch",
+  prior_radiation_treatment: "field-prior_radiation_treatment",
+};
+
+/** 從待補清單點過來時，`:target` 讓那一格亮一圈——捲到位還要自己找是哪一格就白做了。 */
+const FIELD_ANCHOR = "scroll-mt-24 rounded-md target:bg-accent-50 target:ring-2 target:ring-accent-400";
+
+function followupAnchor(fieldKey: string): string | undefined {
+  const m = fieldKey.match(/^lesion_(?:measure|photo)_(.+)$/);
+  if (m) return `lesion-${m[1]}`;
+  return FOLLOWUP_ANCHOR[fieldKey];
+}
+
 
 // 區塊標題旁的來源標記：這一段是病人自己填的，人員看得出來（也隨時可以覆蓋修改）。
 function PatientFilledBadge({ entry }: { entry?: { completed_at: string; filled_via: string } }) {
@@ -84,6 +118,8 @@ const FOLLOWUP_REASON_LABEL: Record<string, string> = {
   unknown: "病人不知道",
   no_detail: "缺細節",
   skipped: "跳過未答",
+  // 診間當下做不到而免除（例如量不到、病人拒絕拍照），見 /cases/[id]/clinic-flow
+  waived: "診間免除",
 };
 
 // 飲食衛教／運動禁忌衛教已於 2026-07-27 移除（決策：衛教內容不屬於研究要收的結構化資料，
@@ -491,14 +527,23 @@ export default async function CaseDetailPage({
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-ink/80">
             病人自填
-            <InfoTooltip text="把平板交給病人，依序填寫只有他自己知道答案的部分（基本資料、病史、發生原因、SF-36、PSQI）。臨床評分（VSS/JSS）、病灶尺寸、拍照仍由診間人員操作。病人答「不知道」或答「有」但問不到細節的項目，會列在下方待補清單。" />
+            <InfoTooltip text="把平板交給病人，依序填寫只有他自己知道答案的部分（性別／出生日期／身高體重／電話、病史、發生原因、SF-36、PSQI）。臨床評分（VSS/JSS）、病灶尺寸、拍照仍由診間人員操作。病人答「不知道」或答「有」但問不到細節的項目，會列在下方待補清單。" />
           </h2>
-          <Link
-            href={`/patient/${id}/intake`}
-            className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
-          >
-            {patientIntakeDone === 0 ? "交給病人填" : patientIntakeDone < PATIENT_INTAKE_SEGMENTS.length ? "繼續填" : "重新填寫"}
-          </Link>
+          <span className="flex flex-wrap gap-2">
+            <Link
+              href={`/patient/${id}/intake`}
+              className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
+            >
+              {patientIntakeDone === 0 ? "交給病人填" : patientIntakeDone < PATIENT_INTAKE_SEGMENTS.length ? "繼續填" : "重新填寫"}
+            </Link>
+            {/* 收案當次的完整動線（自填→量測拍照→JSS）都在這一頁，個案頁只留入口（決策 2026-08-20） */}
+            <Link
+              href={`/cases/${id}/clinic-flow`}
+              className="whitespace-nowrap rounded-md border border-brand-200 px-3 py-1.5 text-xs text-brand-700 hover:bg-brand-50"
+            >
+              診間收案動線 →
+            </Link>
+          </span>
         </div>
 
         <div className="flex flex-wrap gap-1.5">
@@ -540,9 +585,24 @@ export default async function CaseDetailPage({
                   }`}
                 >
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className={f.status === "resolved" ? "text-ink/40 line-through" : "font-medium text-ink"}>
-                      {f.field_label}
-                    </span>
+                    {/* 直接連到要補的那一格（2026-08-20）。待補清單是給人員照著補的工作清單，
+                        只捲到一個有八個欄位的表單、剩下自己找，等於清單只做了一半。
+                        已處理的就不再給連結——那是紀錄，不是待辦。 */}
+                    {(() => {
+                      const anchor = f.status === "resolved" ? undefined : followupAnchor(f.field_key);
+                      return anchor ? (
+                        <Link
+                          href={`#${anchor}`}
+                          className="font-medium text-brand-800 underline decoration-brand-300 underline-offset-2"
+                        >
+                          {f.field_label} ↓
+                        </Link>
+                      ) : (
+                        <span className={f.status === "resolved" ? "text-ink/40 line-through" : "font-medium text-ink"}>
+                          {f.field_label}
+                        </span>
+                      );
+                    })()}
                     <span className="whitespace-nowrap rounded bg-white px-1.5 py-0.5 text-xs text-ink/50">
                       {FOLLOWUP_REASON_LABEL[f.reason] ?? f.reason}
                     </span>
@@ -603,7 +663,7 @@ export default async function CaseDetailPage({
         </h2>
         <form action={updateDemographicsAction} className="grid grid-cols-2 gap-3 text-sm">
           <input type="hidden" name="case_id" value={id} />
-          <div>
+          <div id="field-sex" className={FIELD_ANCHOR}>
             <label className="block text-xs font-medium text-ink/70">性別</label>
             <select name="sex" defaultValue={caseRow.sex ?? ""} className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm">
               <option value="">未填</option>
@@ -621,7 +681,7 @@ export default async function CaseDetailPage({
               className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
             />
           </div>
-          <div>
+          <div id="field-birth_date" className={FIELD_ANCHOR}>
             <label className="block text-xs font-medium text-ink/70">出生日期</label>
             <input
               type="date"
@@ -632,7 +692,7 @@ export default async function CaseDetailPage({
           </div>
           {/* 身高體重（2026-08-13）：新格式 Basic Info. 有 height/weight/BMI 三欄，
               BMI 由匯出時自動計算，不在這裡另存欄位以免與身高體重不同步。 */}
-          <div>
+          <div id="field-height_cm" className={FIELD_ANCHOR}>
             <label className="block text-xs font-medium text-ink/70">身高（cm）</label>
             <input
               name="height_cm"
@@ -643,7 +703,7 @@ export default async function CaseDetailPage({
               className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
             />
           </div>
-          <div>
+          <div id="field-weight_kg" className={FIELD_ANCHOR}>
             <label className="block text-xs font-medium text-ink/70">體重（kg）</label>
             <input
               name="weight_kg"
@@ -654,7 +714,7 @@ export default async function CaseDetailPage({
               className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
             />
           </div>
-          <div>
+          <div id="field-phone_number" className={FIELD_ANCHOR}>
             <label className="block text-xs font-medium text-ink/70">手機號碼</label>
             <input
               name="phone_number"
@@ -681,7 +741,7 @@ export default async function CaseDetailPage({
               </Link>
             )}
           </div>
-          <div className="col-span-2">
+          <div id="field-family_history" className={`col-span-2 ${FIELD_ANCHOR}`}>
             <label className="block text-xs font-medium text-ink/70">Family（家族史）</label>
             <FamilyHistoryPicker name="family_history" title="選擇家族病史" options={familyDiseaseOptions} defaultValue={caseRow.family_history ?? ""} />
           </div>
@@ -721,7 +781,7 @@ export default async function CaseDetailPage({
           </ul>
         </div>
 
-        <div className="mt-4 border-t border-brand-50 pt-3">
+        <div id="section-lesions" className="mt-4 scroll-mt-4 border-t border-brand-50 pt-3">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-semibold text-ink/60">
               蟹足腫部位與大小
@@ -754,7 +814,7 @@ export default async function CaseDetailPage({
         </h2>
         <form action={updatePriorHistoryAction} className="grid grid-cols-2 gap-3 text-sm">
           <input type="hidden" name="case_id" value={id} />
-          <div>
+          <div id="field-keloid_onset_date" className={FIELD_ANCHOR}>
             <label className="block text-xs font-medium text-ink/70">蟹足腫初次發生時間（只到年月）</label>
             <input
               type="month"
@@ -763,7 +823,7 @@ export default async function CaseDetailPage({
               className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
             />
           </div>
-          <div>
+          <div id="field-prior_treatment_physician" className={FIELD_ANCHOR}>
             <label className="block text-xs font-medium text-ink/70">之前治療的醫師（可多位）</label>
             <MultiEntryInput
               name="prior_treatment_physician"
@@ -776,10 +836,10 @@ export default async function CaseDetailPage({
             <label className="block text-xs font-medium text-ink/70">疾病史（一般病史）</label>
             <FamilyHistoryPicker name="disease_history" title="選擇疾病史" options={familyDiseaseOptions} defaultValue={caseRow.disease_history ?? ""} />
           </div>
-          <PriorTreatmentPicker name="prior_steroid_treatment" label="之前類固醇注射治療" defaultValue={caseRow.prior_steroid_treatment ?? ""} />
-          <PriorTreatmentPicker name="prior_tcm_treatment" label="之前中醫治療" defaultValue={caseRow.prior_tcm_treatment ?? ""} />
-          <PriorTreatmentPicker name="prior_ogawa_patch" label="之前小川令貼布使用史" defaultValue={caseRow.prior_ogawa_patch ?? ""} />
-          <PriorTreatmentPicker name="prior_radiation_treatment" label="之前放射線治療史" defaultValue={caseRow.prior_radiation_treatment ?? ""} />
+          <PriorTreatmentPicker name="prior_steroid_treatment" label="之前類固醇注射治療" defaultValue={caseRow.prior_steroid_treatment ?? ""} anchorClassName={FIELD_ANCHOR} />
+          <PriorTreatmentPicker name="prior_tcm_treatment" label="之前中醫治療" defaultValue={caseRow.prior_tcm_treatment ?? ""} anchorClassName={FIELD_ANCHOR} />
+          <PriorTreatmentPicker name="prior_ogawa_patch" label="之前小川令貼布使用史" defaultValue={caseRow.prior_ogawa_patch ?? ""} anchorClassName={FIELD_ANCHOR} />
+          <PriorTreatmentPicker name="prior_radiation_treatment" label="之前放射線治療史" defaultValue={caseRow.prior_radiation_treatment ?? ""} anchorClassName={FIELD_ANCHOR} />
           <SubmitButton className="col-span-2" pendingText="更新中…">
             更新病史與過往治療
           </SubmitButton>

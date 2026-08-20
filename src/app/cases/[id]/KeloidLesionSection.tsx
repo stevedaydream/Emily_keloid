@@ -35,6 +35,12 @@ type Lesion = {
   width_cm: number | null;
   height_cm: number | null;
   note: string | null;
+  /** 診間動線標記的「此部位無法量測／無法拍照」（2026-08-20）。在這裡只呈現，
+      勾選與取消都在 /cases/[id]/clinic-flow 做——那頁才知道當下擋住的是什麼。 */
+  measure_waived?: boolean | null;
+  measure_waived_reason?: string | null;
+  photo_waived?: boolean | null;
+  photo_waived_reason?: string | null;
 };
 
 function formatSize(l: Lesion) {
@@ -123,7 +129,12 @@ export default function KeloidLesionSection({
         {lesions.map((l, i) => {
           const zone = l.body_part_zone_id ? zonesById.get(l.body_part_zone_id) : null;
           return (
-            <li key={l.id} className="rounded-md border border-brand-100 px-3 py-1.5 text-sm">
+            <li
+              key={l.id}
+              id={`lesion-${l.id}`}
+              // 待補清單的「部位N｜長寬高未量測」點過來會落在這一列並亮一圈
+              className="scroll-mt-24 rounded-md border border-brand-100 px-3 py-1.5 text-sm target:bg-accent-50 target:ring-2 target:ring-accent-400"
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span>
                   <b className="mr-1 text-brand-700">部位{l.site_no}</b>
@@ -154,6 +165,16 @@ export default function KeloidLesionSection({
                           </form>
                         );
                       })}
+                    </span>
+                  )}
+                  {l.measure_waived && (
+                    <span className="whitespace-nowrap rounded bg-sky-100 px-1.5 py-0.5 text-sky-700" title={l.measure_waived_reason ?? ""}>
+                      免量測
+                    </span>
+                  )}
+                  {l.photo_waived && (
+                    <span className="whitespace-nowrap rounded bg-sky-100 px-1.5 py-0.5 text-sky-700" title={l.photo_waived_reason ?? ""}>
+                      免拍照
                     </span>
                   )}
                   <span className="whitespace-nowrap text-ink/40">🖼 {(photosByLesion[l.id] ?? []).length} 張</span>

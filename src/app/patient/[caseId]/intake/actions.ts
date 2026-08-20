@@ -20,6 +20,15 @@ type Prior = "yes" | "no" | "unknown";
 
 const PRIOR_TEXT: Record<Prior, string> = { yes: "有", no: "無", unknown: "不知道" };
 
+/** 四種過往治療的欄位與待補標籤。順序＝病人版逐題問的順序。 */
+const PRIOR_LABELS: Record<string, string> = {
+  prior_steroid_treatment: "之前類固醇注射治療",
+  prior_tcm_treatment: "之前中醫治療",
+  prior_ogawa_patch: "之前小川令貼布使用史",
+  prior_radiation_treatment: "之前放射線治療史",
+};
+const PRIOR_KEYS = Object.keys(PRIOR_LABELS);
+
 async function operatorName() {
   // 病人自填時 operator cookie 仍是那位交出平板的人員——稽核要記得住負責的人，不是「病人」。
   return (await getCurrentOperator()) ?? "未知操作者";
@@ -62,26 +71,51 @@ async function clearFollowups(caseId: string, fieldKeys: string[]) {
   await supabase.from("case_intake_followups").delete().eq("case_id", caseId).in("field_key", fieldKeys);
 }
 
+/** 出生日期換算收案當下的實歲（生日還沒到就減一歲）。`age_at_enrollment` 仍是匯出與分析在用的欄位。 */
+function ageFromBirthDate(birthDate: string): number | null {
+  const m = birthDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const now = new Date();
+  let age = now.getFullYear() - y;
+  if (now.getMonth() + 1 < mo || (now.getMonth() + 1 === mo && now.getDate() < d)) age -= 1;
+  return Number.isFinite(age) && age >= 0 && age <= 130 ? age : null;
+}
+
 export async function savePatientBasicAction(
   caseId: string,
-  payload: { sex: string; birthYear: string | null; phone: string }
+  payload: { sex: string; birthDate: string | null; height: string | null; weight: string | null; phone: string }
 ) {
   const supabase = supabaseServer();
   const operator = await operatorName();
 
-  // 病人記得住的是出生年，不是「幾歲」——用出生年換算年齡再存，欄位本身不變。
-  const age = payload.birthYear ? new Date().getFullYear() - Number(payload.birthYear) : null;
+  // 2026-08-20：改收精確出生日期（原本只收出生年）。birth_date 進 cases，
+  // age_at_enrollment 仍照樣算出來存——匯出檔與既有分析都吃這個欄位。
+  const age = payload.birthDate ? ageFromBirthDate(payload.birthDate) : null;
+  // 身高體重是履帶選的整數，這裡仍做一次範圍檢查：資料庫欄位是 numeric，寫進髒值日後很難查。
+  const num = (raw: string | null, lo: number, hi: number): number | null => {
+    if (!raw) return null;
+    const v = Number(raw);
+    return Number.isFinite(v) && v >= lo && v <= hi ? v : null;
+  };
+  const height = num(payload.height, 50, 250);
+  const weight = num(payload.weight, 10, 300);
 
   const update: Record<string, string | number | null> = {};
   if (payload.sex) update.sex = payload.sex;
-  if (age !== null && Number.isFinite(age) && age >= 0 && age <= 130) update.age_at_enrollment = age;
+  if (payload.birthDate && age !== null) update.birth_date = payload.birthDate;
+  if (age !== null) update.age_at_enrollment = age;
+  if (height !== null) update.height_cm = height;
+  if (weight !== null) update.weight_kg = weight;
   if (payload.phone) update.phone_number = payload.phone;
   if (Object.keys(update).length > 0) await supabase.from("cases").update(update).eq("id", caseId);
 
-  await clearFollowups(caseId, ["sex", "age", "phone"]);
+  await clearFollowups(caseId, ["sex", "age", "height", "weight", "phone"]);
   await addFollowups(caseId, [
     ...(payload.sex ? [] : [{ fieldKey: "sex", fieldLabel: "性別", reason: "skipped" as const }]),
-    ...(age !== null ? [] : [{ fieldKey: "age", fieldLabel: "年齡／出生年", reason: "skipped" as const }]),
+    ...(age !== null ? [] : [{ fieldKey: "age", fieldLabel: "出生日期", reason: "skipped" as const }]),
+    ...(height !== null ? [] : [{ fieldKey: "height", fieldLabel: "身高", reason: "skipped" as const }]),
+    ...(weight !== null ? [] : [{ fieldKey: "weight", fieldLabel: "體重", reason: "skipped" as const }]),
     ...(payload.phone ? [] : [{ fieldKey: "phone", fieldLabel: "手機號碼", reason: "skipped" as const }]),
   ]);
 
@@ -97,6 +131,10 @@ export async function savePatientHistoryAction(
     familyHistoryUnknown: boolean;
     visitReasonOptionIds: string[];
     onsetYear: string | null;
+    /** 「以前有沒有為蟹足腫治療過」的總開關。答無／不記得時，四個細項不再逐題問（見下方） */
+    priorTreated: Prior | "";
+    /** 治療過的話是哪一位醫師（選項的標籤文字，可能是「其他醫院／診所」「不記得」） */
+    priorTreatmentPhysician: string | null;
     priors: Record<string, Prior>;
     /** 這一段在本次填寫中先前建立的紀錄；病人按「上一步」回頭改後重存時用來取代，避免長出第二筆 */
     replaceRecordId?: string | null;
@@ -109,7 +147,19 @@ export async function savePatientHistoryAction(
   if (!payload.familyHistoryUnknown) update.family_history = payload.familyHistory.join("、") || "無";
   // 只問到年份就好（月日長輩多半記不得），存成該年 1 月 1 日
   if (payload.onsetYear) update.keloid_onset_date = `${payload.onsetYear}-01-01`;
-  for (const [key, value] of Object.entries(payload.priors)) update[key] = PRIOR_TEXT[value];
+
+  // 治療史的總開關（2026-08-20 使用者要求）：答「沒有治療過」就不必再逐題問類固醇／中醫／
+  // 貼布／放射線——那四題的答案已經被決定了。這個推導放在伺服器端而不是讓畫面補齊，
+  // 是因為「病人跳過那四題」跟「病人答無」在 payload 上長得一樣，只有這裡分得出來。
+  const effectivePriors: Record<string, Prior> =
+    payload.priorTreated === "no"
+      ? Object.fromEntries(PRIOR_KEYS.map((k) => [k, "no" as Prior]))
+      : payload.priorTreated === "unknown"
+      ? Object.fromEntries(PRIOR_KEYS.map((k) => [k, "unknown" as Prior]))
+      : payload.priors;
+
+  for (const [key, value] of Object.entries(effectivePriors)) update[key] = PRIOR_TEXT[value];
+  if (payload.priorTreatmentPhysician) update.prior_treatment_physician = payload.priorTreatmentPhysician;
   await supabase.from("cases").update(update).eq("id", caseId);
 
   // 此次就診主要原因走 case_intake_option_records（逐筆累加，不會蓋掉人員填的）。
@@ -135,18 +185,17 @@ export async function savePatientHistoryAction(
     }
   }
 
-  const PRIOR_LABELS: Record<string, string> = {
-    prior_steroid_treatment: "之前類固醇注射治療",
-    prior_tcm_treatment: "之前中醫治療",
-    prior_ogawa_patch: "之前小川令貼布使用史",
-    prior_radiation_treatment: "之前放射線治療史",
-  };
-  const priorKeys = Object.keys(PRIOR_LABELS);
-  await clearFollowups(caseId, [...priorKeys, "family_history", "keloid_onset_date", "keloid_history_detail"]);
+  await clearFollowups(caseId, [
+    ...PRIOR_KEYS,
+    "family_history",
+    "keloid_onset_date",
+    "keloid_history_detail",
+    "prior_treatment_physician",
+  ]);
 
   await addFollowups(caseId, [
     // 答「有」→ 病人版沒問日期/次數/劑量，人員要追；答「不知道」→ 也要追；答「無」不進清單
-    ...Object.entries(payload.priors).flatMap(([key, value]) =>
+    ...Object.entries(effectivePriors).flatMap(([key, value]) =>
       value === "no"
         ? []
         : [{ fieldKey: key, fieldLabel: PRIOR_LABELS[key] ?? key, reason: value === "yes" ? ("no_detail" as const) : ("unknown" as const), patientAnswer: PRIOR_TEXT[value] }]
@@ -157,6 +206,10 @@ export async function savePatientHistoryAction(
     ...(payload.onsetYear
       ? []
       : [{ fieldKey: "keloid_onset_date", fieldLabel: "蟹足腫初次發生時間", reason: "unknown" as const, patientAnswer: "不記得" }]),
+    // 治療過但說不出是哪位醫師：人員要回頭查。答「沒有治療過」就不需要這一筆。
+    ...(payload.priorTreated === "yes" && !payload.priorTreatmentPhysician
+      ? [{ fieldKey: "prior_treatment_physician", fieldLabel: "之前治療的醫師", reason: "unknown" as const, patientAnswer: "不記得" }]
+      : []),
     // 原本這裡會依「病人勾了蟹足腫病史類型」推出一筆待補（提醒人員補部位/時間/治療方式）。
     // 2026-08-12 docx 項次 2 把那題換成「此次就診主要原因」後，這個推導不再成立，故移除。
     // 蟹足腫病史類型仍可由診間人員在個案頁記錄（category='keloid_history_type'），不受影響。
@@ -173,6 +226,8 @@ export async function savePatientIntakeOptionsAction(
   payload: {
     onsetCauseIds: string[];
     referralIds: string[];
+    /** 目前不適症狀（keloid_symptom）。純主觀症狀，只有病人答得準，2026-08-20 移進病人版。 */
+    symptomIds: string[];
     /** 同 savePatientHistoryAction：回頭改後重存時取代本次先前建立的紀錄 */
     replaceRecordIds?: (string | null)[];
   }
@@ -189,6 +244,7 @@ export async function savePatientIntakeOptionsAction(
   for (const [category, optionIds] of [
     ["onset_cause", payload.onsetCauseIds],
     ["referral_source", payload.referralIds],
+    ["keloid_symptom", payload.symptomIds],
   ] as const) {
     if (optionIds.length === 0) {
       recordIds.push(null);

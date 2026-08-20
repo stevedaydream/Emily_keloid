@@ -5,6 +5,14 @@ import { supabaseServer } from "@/lib/supabase";
 import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
 
+/** 尺寸欄位：空字串代表「這次沒填」，不是「清成 null」——不會覆蓋既有的值。 */
+function parseDim(raw: FormDataEntryValue | null): number | null {
+  const t = typeof raw === "string" ? raw.trim() : "";
+  if (!t) return null;
+  const v = Number(t);
+  return Number.isFinite(v) && v > 0 && v < 100 ? v : null;
+}
+
 export async function uploadPhotoAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
   const itemId = formData.get("item_id") as string;
@@ -12,6 +20,13 @@ export async function uploadPhotoAction(formData: FormData) {
   const lesionId = (formData.get("lesion_id") as string) || "";
   const file = formData.get("file") as File;
   const thumb = formData.get("thumb") as File | null;
+  // 長寬高跟照片一起送（決策 2026-08-20）：點部位直接進相機頁，量完拍完一次送出。
+  // 分兩趟做的話，門診被打斷就只剩照片沒有尺寸——而尺寸是病人一走就補不回來的那一半。
+  const dims = {
+    length_cm: parseDim(formData.get("length_cm")),
+    width_cm: parseDim(formData.get("width_cm")),
+    height_cm: parseDim(formData.get("height_cm")),
+  };
 
   if (!file || file.size === 0) {
     return { ok: false, message: "沒有收到照片" };
@@ -81,6 +96,12 @@ export async function uploadPhotoAction(formData: FormData) {
     }
   }
 
+  // 有填的尺寸就寫回這個病灶（含拍照時剛自動建立的那一個）。沒填的欄位維持原值。
+  const dimUpdate = Object.fromEntries(Object.entries(dims).filter(([, v]) => v !== null));
+  if (lesion && Object.keys(dimUpdate).length > 0) {
+    await supabase.from("case_keloid_lesions").update(dimUpdate).eq("id", lesion.id);
+  }
+
   const bodySite = lesion ? `部位${lesion.site_no ?? ""} ${lesion.body_site}`.trim() : zone?.display_name ?? null;
 
   const timestamp = Date.now();
@@ -127,7 +148,12 @@ export async function uploadPhotoAction(formData: FormData) {
 
   // 個案頁面的部位縮圖／張數要立刻反映這張新照片
   revalidatePath(`/cases/${caseId}`);
+  revalidatePath(`/cases/${caseId}/clinic-flow`);
   revalidatePath(`/patient/${caseId}/photo`);
 
-  return { ok: true, message: lesion ? `照片已上傳（部位${lesion.site_no ?? ""} ${lesion.body_site}）` : "照片已上傳" };
+  const sizeNote = Object.keys(dimUpdate).length > 0 ? "，尺寸已一併記錄" : "";
+  return {
+    ok: true,
+    message: lesion ? `照片已上傳（部位${lesion.site_no ?? ""} ${lesion.body_site}）${sizeNote}` : `照片已上傳${sizeNote}`,
+  };
 }

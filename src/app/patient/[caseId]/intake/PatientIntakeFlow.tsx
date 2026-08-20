@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { BigChoice, BigMultiChoice, type BigChoiceOption } from "@/components/senior/BigChoice";
-import { TimeWheel, HoursWheel, YearWheel } from "@/components/senior/WheelPicker";
+import { TimeWheel, HoursWheel, YearWheel, HeightWheel, WeightWheel } from "@/components/senior/WheelPicker";
 import BigNumpad from "@/components/senior/BigNumpad";
+import BigDateField from "@/components/senior/BigDateField";
 import Spinner from "@/components/ui/Spinner";
 import LineBindPrompt from "./LineBindPrompt";
 import {
@@ -34,6 +35,20 @@ const YES_NO_UNKNOWN: BigChoiceOption[] = [
 const NONE = "__none__";
 const UNKNOWN = "__unknown__";
 
+/** 以前治療的醫師不在本院清單裡時的選項。存進 cases.prior_treatment_physician 的就是這串文字。 */
+const OTHER_CLINIC = "其他醫院／診所";
+
+/** 目前不適症狀裡與其他選項互斥的那一個（docx 2026-08-12 明訂，個案頁與後端也都擋）。 */
+const NO_SYMPTOM_LABEL = "無明顯不適";
+
+/** 勾了「無明顯不適」就清掉其他症狀，反之亦然。跟 toggleExclusive 同一套邏輯，只是互斥的是某個選項 id。 */
+function toggleNoSymptom(next: string[], prev: string[], noSymptomId: string | undefined): string[] {
+  if (!noSymptomId) return next;
+  const added = next.find((v) => !prev.includes(v));
+  if (added === noSymptomId) return [noSymptomId];
+  return next.filter((v) => v !== noSymptomId);
+}
+
 // PSQI 前四題不是選項題。這裡指定各自的元件，並且**寫回跟原本一模一樣的字串格式**
 // （HH:MM／分鐘數／小時數），src/lib/scoring.ts 的 computePSQI 完全不用改。
 const PSQI_SLEEP_LATENCY: BigChoiceOption[] = [
@@ -51,6 +66,9 @@ const PSQI_SKIP_ORDERS = [14, 25];
 const PSQI_BED_PARTNER_ORDER = 20;
 const PSQI_PARTNER_ONLY_ORDERS = [21, 22, 23, 24, 25];
 
+/** 出生日期的下界。上界是「今天」，但今天要等掛載後才算得出來（見 birthDateMax）。 */
+const BIRTH_DATE_MIN = "1900-01-01";
+
 type Screen = {
   segment: PatientIntakeSegmentKey;
   title: string;
@@ -61,17 +79,29 @@ type Screen = {
 };
 
 /** 建檔時診間已填過的欄位，用來當作病人流程的初始值 */
-export type IntakePrefill = { sex: string; birthYear: string; phone: string; onsetYear: string };
+export type IntakePrefill = {
+  sex: string;
+  /** ISO `YYYY-MM-DD`。2026-08-20 起收精確出生日期，不再只收年份 */
+  birthDate: string;
+  height: string;
+  weight: string;
+  phone: string;
+  onsetYear: string;
+};
 
 export default function PatientIntakeFlow({
   caseId,
   researchId,
   completedSegments,
   prefill,
+  birthDateMax,
   familyDiseaseOptions,
   visitReasonOptions,
   onsetCauseOptions,
   referralOptions,
+  symptomOptions,
+  priorDoctorOptions,
+  hasLesions,
   sf36,
   psqi,
 }: {
@@ -79,10 +109,19 @@ export default function PatientIntakeFlow({
   researchId: string;
   completedSegments: string[];
   prefill: IntakePrefill;
+  /** 台北時區的今天（`YYYY-MM-DD`），出生日期的上界。由伺服器算好傳進來——
+      伺服器跑 UTC、平板是 UTC+8，各自算會差一天而讓 hydration 對不起來。 */
+  birthDateMax: string;
   familyDiseaseOptions: Option[];
   visitReasonOptions: Option[];
   onsetCauseOptions: Option[];
   referralOptions: Option[];
+  /** 目前不適症狀（keloid_symptom）。「無明顯不適」與其他選項互斥，後端也會再擋一次。 */
+  symptomOptions: Option[];
+  /** 以前治療過的話，是哪位醫師。本院醫師清單，另外補「其他醫院／診所」「不記得」。 */
+  priorDoctorOptions: Option[];
+  /** 這位已經登記過病灶部位了嗎——完成畫面要據此提醒人員別讓病人就這樣走掉 */
+  hasLesions: boolean;
   sf36: Questionnaire | null;
   psqi: Questionnaire | null;
 }) {
@@ -90,7 +129,9 @@ export default function PatientIntakeFlow({
   // 初始值＝建檔時診間已填的資料（2026-08-12）。病人看到的是已經選好/填好的畫面，
   // 確認無誤直接按下一步即可；要改也照樣能改，送出時以病人這次的答案為準。
   const [sex, setSex] = useState(prefill.sex);
-  const [birthYear, setBirthYear] = useState(prefill.birthYear);
+  const [birthDate, setBirthDate] = useState(prefill.birthDate);
+  const [height, setHeight] = useState(prefill.height);
+  const [weight, setWeight] = useState(prefill.weight);
   const [phone, setPhone] = useState(prefill.phone);
 
   const [family, setFamily] = useState<string[]>([]);
@@ -100,6 +141,12 @@ export default function PatientIntakeFlow({
 
   const [onsetCause, setOnsetCause] = useState<string[]>([]);
   const [referral, setReferral] = useState<string[]>([]);
+  const [symptoms, setSymptoms] = useState<string[]>([]);
+
+  // 治療史的總開關（2026-08-20）。答「沒有治療過」就不再逐題問類固醇／中醫／貼布／放射線，
+  // 那四題由伺服器一律帶「無」；答「不記得」則一律帶「不知道」。
+  const [priorTreated, setPriorTreated] = useState<Prior | "">("");
+  const [priorDoctor, setPriorDoctor] = useState("");
 
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
 
@@ -124,6 +171,10 @@ export default function PatientIntakeFlow({
     if (added === NONE || added === UNKNOWN) return [added];
     return next.filter((v) => v !== NONE && v !== UNKNOWN);
   }
+
+  // 「無明顯不適」與其他症狀互斥。這裡先擋一次是為了畫面即時反應，
+  // 真正的把關在 saveIntakeOptionRecordAction（server action 可以被直接 POST）。
+  const noSymptomId = symptomOptions.find((o) => o.label === NO_SYMPTOM_LABEL)?.id;
 
   const multiOptions = (opts: Option[], extras: BigChoiceOption[]): BigChoiceOption[] => [
     ...opts.map((o) => ({ value: o.id, label: o.label })),
@@ -158,9 +209,24 @@ export default function PatientIntakeFlow({
     });
     list.push({
       segment: "basic",
-      title: "您是哪一年出生的？",
-      hint: prefilledHint(!!prefill.birthYear, "上下滑動選擇年份"),
-      body: <YearWheel value={birthYear} onChange={setBirthYear} />,
+      title: "您的出生日期？",
+      hint: prefilledHint(!!prefill.birthDate, "點一下欄位，從日曆選出生年月日"),
+      body: <BigDateField value={birthDate} onChange={setBirthDate} min={BIRTH_DATE_MIN} max={birthDateMax} />,
+    });
+    // 身高體重（2026-08-20，pending.md E3 選 (A)）：匯出檔 Basic Info 的 height/weight/BMI
+    // 三欄原本沒有任何來源，一律是缺值哨兵。改由病人自報——診間量最準但多一道工，
+    // 而這兩格病人自己答得出來，符合病人版「只放病人自己知道的事」的範圍原則。
+    list.push({
+      segment: "basic",
+      title: "您的身高大約幾公分？",
+      hint: prefilledHint(!!prefill.height, "上下滑動選擇。不確定可以直接按「下一步」跳過"),
+      body: <HeightWheel value={height} onChange={setHeight} />,
+    });
+    list.push({
+      segment: "basic",
+      title: "您的體重大約幾公斤？",
+      hint: prefilledHint(!!prefill.weight, "上下滑動選擇。不確定可以直接按「下一步」跳過"),
+      body: <WeightWheel value={weight} onChange={setWeight} />,
     });
     list.push({
       segment: "basic",
@@ -204,24 +270,67 @@ export default function PatientIntakeFlow({
       hint: "不記得的話直接按「下一步」，我們會請護理師再跟您確認",
       body: <YearWheel value={onsetYear} onChange={setOnsetYear} />,
     });
-    for (const [key, label] of [
-      ["prior_steroid_treatment", "以前有沒有打過類固醇針？"],
-      ["prior_tcm_treatment", "以前有沒有看過中醫治療？"],
-      ["prior_ogawa_patch", "以前有沒有貼過疤痕貼布？"],
-      ["prior_radiation_treatment", "以前有沒有做過放射線（電療）？"],
-    ] as const) {
+    // 治療史的總開關（2026-08-20 使用者要求）。原本一上來就逐題問類固醇／中醫／貼布／放射線，
+    // 對「從來沒治療過」的病人是四題無效問答。先問有沒有治療過：
+    //   有   → 接著問是哪位醫師，再逐題問四個細項
+    //   沒有 → 四題整組跳過，伺服器一律帶「無」
+    //   不記得 → 同樣跳過，伺服器一律帶「不知道」（跟「無」是不同的資料，不能混）
+    list.push({
+      segment: "history",
+      title: "以前有沒有為蟹足腫接受過治療？",
+      hint: "包含打針、擦藥、貼布、電療、中醫等任何處理",
+      autoAdvance: true,
+      body: (
+        <BigChoice
+          value={priorTreated}
+          onChange={(v) => setPriorTreated(v as Prior)}
+          options={[
+            { value: "no", label: "沒有治療過" },
+            { value: "yes", label: "有治療過" },
+            { value: "unknown", label: "不記得" },
+          ]}
+        />
+      ),
+    });
+
+    if (priorTreated === "yes") {
       list.push({
         segment: "history",
-        title: label,
+        title: "是哪一位醫師幫您治療的？",
+        hint: "想不起來也沒關係，選「不記得」我們再查",
         autoAdvance: true,
         body: (
           <BigChoice
-            value={priors[key] ?? ""}
-            onChange={(v) => setPriors((p) => ({ ...p, [key]: v as Prior }))}
-            options={YES_NO_UNKNOWN}
+            value={priorDoctor}
+            onChange={setPriorDoctor}
+            options={[
+              ...priorDoctorOptions.map((d) => ({ value: d.label, label: d.label })),
+              { value: OTHER_CLINIC, label: OTHER_CLINIC },
+              { value: "", label: "不記得" },
+            ]}
           />
         ),
       });
+
+      for (const [key, label] of [
+        ["prior_steroid_treatment", "以前有沒有打過類固醇針？"],
+        ["prior_tcm_treatment", "以前有沒有看過中醫治療？"],
+        ["prior_ogawa_patch", "以前有沒有貼過疤痕貼布？"],
+        ["prior_radiation_treatment", "以前有沒有做過放射線（電療）？"],
+      ] as const) {
+        list.push({
+          segment: "history",
+          title: label,
+          autoAdvance: true,
+          body: (
+            <BigChoice
+              value={priors[key] ?? ""}
+              onChange={(v) => setPriors((p) => ({ ...p, [key]: v as Prior }))}
+              options={YES_NO_UNKNOWN}
+            />
+          ),
+        });
+      }
     }
 
     list.push({
@@ -233,6 +342,20 @@ export default function PatientIntakeFlow({
           values={onsetCause}
           onChange={(v) => setOnsetCause(toggleExclusive(v, onsetCause))}
           options={multiOptions(onsetCauseOptions, [{ value: UNKNOWN, label: "我不知道" }])}
+        />
+      ),
+    });
+    // 目前不適症狀（2026-08-20）：搔癢／疼痛／灼熱／緊繃／影響睡眠這些是純主觀症狀，
+    // 只有病人答得準。原本只在個案頁由人員代填，等於讓人員替病人猜。
+    list.push({
+      segment: "intake_options",
+      title: "蟹足腫目前讓您有哪些不舒服？",
+      hint: "可以複選。都不會不舒服就選「無明顯不適」",
+      body: (
+        <BigMultiChoice
+          values={symptoms}
+          onChange={(v) => setSymptoms(toggleNoSymptom(v, symptoms, noSymptomId))}
+          options={symptomOptions.map((o) => ({ value: o.id, label: o.label }))}
         />
       ),
     });
@@ -288,10 +411,11 @@ export default function PatientIntakeFlow({
 
     return list;
   }, [
-    sex, birthYear, phone, family, visitReason, onsetYear, priors,
-    onsetCause, referral, answers,
-    prefill.sex, prefill.birthYear, prefill.phone,
-    familyDiseaseOptions, visitReasonOptions, onsetCauseOptions, referralOptions, sf36, psqi,
+    sex, birthDate, height, weight, phone, family, visitReason, onsetYear, priors,
+    priorTreated, priorDoctor, onsetCause, referral, symptoms, noSymptomId, answers,
+    prefill.sex, prefill.birthDate, prefill.height, prefill.weight, prefill.phone, birthDateMax,
+    familyDiseaseOptions, visitReasonOptions, onsetCauseOptions, referralOptions,
+    symptomOptions, priorDoctorOptions, sf36, psqi,
   ]);
 
   // 續填：從第一個「還沒完成的段落」的第一個畫面開始
@@ -303,15 +427,32 @@ export default function PatientIntakeFlow({
   const [index, setIndex] = useState<number | null>(null); // null = 還在歡迎畫面
   const allDone = completedSegments.length >= PATIENT_INTAKE_SEGMENTS.length;
 
+  // screens 的長度會隨作答改變：第10題答「沒有睡伴或室友」時，第11題那四小題整組消失，
+  // 總題數當場從 51 掉到 49。autoAdvance 的 setTimeout 抓的是「點下去那一刻」的 screens，
+  // 220ms 後執行時那份已經過期，於是 setIndex 會指到一個不存在的畫面而整頁崩掉。
+  // goNext 一律改讀這個 ref 上最新的一份。
+  const screensRef = useRef(screens);
+  useEffect(() => {
+    screensRef.current = screens;
+  }, [screens]);
+
   async function saveSegment(segment: PatientIntakeSegmentKey) {
     if (segment === "basic") {
-      await savePatientBasicAction(caseId, { sex, birthYear: birthYear || null, phone });
+      await savePatientBasicAction(caseId, {
+        sex,
+        birthDate: birthDate || null,
+        height: height || null,
+        weight: weight || null,
+        phone,
+      });
     } else if (segment === "history") {
       const { recordId } = await savePatientHistoryAction(caseId, {
         familyHistory: familyDiseaseOptions.filter((o) => family.includes(o.id)).map((o) => o.label),
         familyHistoryUnknown: family.includes(UNKNOWN),
         visitReasonOptionIds: visitReason.filter((v) => v !== NONE && v !== UNKNOWN),
         onsetYear: onsetYear || null,
+        priorTreated,
+        priorTreatmentPhysician: priorTreated === "yes" ? priorDoctor || null : null,
         priors,
         replaceRecordId: savedIds.history,
       });
@@ -320,6 +461,7 @@ export default function PatientIntakeFlow({
       const { recordIds } = await savePatientIntakeOptionsAction(caseId, {
         onsetCauseIds: onsetCause.filter((v) => v !== NONE && v !== UNKNOWN),
         referralIds: referral.filter((v) => v !== NONE && v !== UNKNOWN),
+        symptomIds: symptoms,
         replaceRecordIds: savedIds.intakeOptions,
       });
       setSavedIds((s) => ({ ...s, intakeOptions: recordIds }));
@@ -341,8 +483,10 @@ export default function PatientIntakeFlow({
   }
 
   async function goNext(from: number) {
-    const current = screens[from];
-    const next = screens[from + 1];
+    const list = screensRef.current;
+    const current = list[from];
+    if (!current) return;
+    const next = list[from + 1];
     // 跨段（或走完最後一段）時把這一段存起來——被打斷也只會丟掉當下這一段
     if (!next || next.segment !== current.segment) {
       setSaving(true);
@@ -377,8 +521,26 @@ export default function PatientIntakeFlow({
           <div className="mx-auto mt-2 max-w-md text-left">
             <LineBindPrompt caseId={caseId} />
           </div>
-          {/* 人員拿回平板後要知道出口在哪；字級刻意小，病人不會特別注意 */}
-          <p className="mt-8 text-sm text-ink/35">診間人員：請按右上角「診間人員」返回系統</p>
+
+          {/* 交還平板之後的下一步（決策 2026-08-20）。這裡是整個門診裡唯一還來得及量病灶的時機——
+              病人一走，長寬高就再也補不回來（照片裡的尺沒有被程式讀出來過，見決策 #3）。
+              放在 QR code 之後：病人先掃完碼，人員才接手。
+              ⚠️ 這顆按鈕會直接進到完整系統，跟 StaffExit「出口不要太顯眼」的取捨相反——
+              使用者要求要有明顯的轉跳鈕，取捨記在 project.md。 */}
+          <div className="mx-auto mt-8 max-w-md text-left">
+            {!hasLesions && (
+              <p className="rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-lg text-amber-900">
+                ⚠️ 這位還沒量測病灶尺寸，<b>請不要讓病人先離開</b>。
+              </p>
+            )}
+            <Link
+              href={`/cases/${caseId}/clinic-flow`}
+              className="mt-3 flex min-h-16 items-center justify-center rounded-2xl bg-brand-700 px-6 text-xl font-medium text-white"
+            >
+              診間人員：接續量測病灶 →
+            </Link>
+            <p className="mt-2 text-center text-sm text-ink/35">接著量長寬高、拍照，最後由醫師填 JSS 分類表。</p>
+          </div>
         </div>
       </Shell>
     );
@@ -428,7 +590,10 @@ export default function PatientIntakeFlow({
     );
   }
 
-  const screen = screens[index];
+  // 保險：index 落在範圍外時夾回最後一頁，而不是讓 screens[index] 是 undefined 把整頁炸掉。
+  // 病人手上的平板沒有任何錯誤畫面可退，崩一次就得整份重填。
+  const pos = Math.min(index, screens.length - 1);
+  const screen = screens[pos];
   const segmentMeta = PATIENT_INTAKE_SEGMENTS.find((s) => s.key === screen.segment);
 
   return (
@@ -439,13 +604,13 @@ export default function PatientIntakeFlow({
           <div className="flex items-baseline justify-between text-base text-ink/50">
             <span>{segmentMeta?.label}</span>
             <span className="tabular-nums">
-              第 {index + 1} / {screens.length} 題
+              第 {pos + 1} / {screens.length} 題
             </span>
           </div>
           <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-brand-100">
             <div
               className="h-full rounded-full bg-brand-600 transition-all"
-              style={{ width: `${((index + 1) / screens.length) * 100}%` }}
+              style={{ width: `${((pos + 1) / screens.length) * 100}%` }}
             />
           </div>
         </div>
@@ -458,7 +623,7 @@ export default function PatientIntakeFlow({
             // 單選畫面：選完短暫停頓讓病人看到打勾，再自動翻頁
             onClickCapture={() => {
               if (!screen.autoAdvance) return;
-              setTimeout(() => goNext(index), 220);
+              setTimeout(() => goNext(pos), 220);
             }}
           >
             {screen.body}
@@ -472,15 +637,15 @@ export default function PatientIntakeFlow({
         <div className="sticky bottom-0 flex gap-3 bg-paper-raised py-4">
           <button
             type="button"
-            onClick={() => setIndex(Math.max(0, index - 1))}
-            disabled={index === 0 || saving}
+            onClick={() => setIndex(Math.max(0, pos - 1))}
+            disabled={pos === 0 || saving}
             className="min-h-16 flex-1 rounded-xl border-2 border-brand-200 text-xl text-ink/70 disabled:opacity-40"
           >
             上一步
           </button>
           <button
             type="button"
-            onClick={() => goNext(index)}
+            onClick={() => goNext(pos)}
             disabled={saving}
             className="flex min-h-16 flex-[2] items-center justify-center gap-2 rounded-xl bg-brand-700 text-xl font-medium text-white hover:bg-brand-800 disabled:opacity-60"
           >
@@ -489,7 +654,7 @@ export default function PatientIntakeFlow({
                 <Spinner className="h-5 w-5" />
                 儲存中…
               </>
-            ) : index === screens.length - 1 ? (
+            ) : pos === screens.length - 1 ? (
               "完成"
             ) : (
               "下一步"

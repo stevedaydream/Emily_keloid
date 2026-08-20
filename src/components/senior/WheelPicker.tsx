@@ -144,3 +144,28 @@ export function YearWheel({ value, onChange }: { value: string; onChange: (v: st
     </div>
   );
 }
+
+/**
+ * 身高（cm）。範圍 120-210，1cm 一格——選項多到排不成大按鈕，照決策 2026-07-29 用履帶。
+ * 預設停在 160，長輩多半只要往上下捲幾格。
+ */
+export function HeightWheel({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const items = range(120, 210).map((h) => ({ value: String(h), label: `${h} 公分` }));
+  const current = items.some((i) => i.value === value) ? value : "160";
+  return (
+    <div className="flex">
+      <Column items={items} value={current} onChange={onChange} ariaLabel="身高" />
+    </div>
+  );
+}
+
+/** 體重（kg）。範圍 30-150，1kg 一格，預設停在 60。 */
+export function WeightWheel({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const items = range(30, 150).map((w) => ({ value: String(w), label: `${w} 公斤` }));
+  const current = items.some((i) => i.value === value) ? value : "60";
+  return (
+    <div className="flex">
+      <Column items={items} value={current} onChange={onChange} ariaLabel="體重" />
+    </div>
+  );
+}

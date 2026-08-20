@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase";
 import { getCurrentOperator } from "@/lib/operator";
+import { measureBlockers } from "@/lib/clinicFlow";
 import { logAudit } from "@/lib/audit";
 import { addTreatmentRecordAction } from "@/app/cases/[id]/actions";
 
@@ -12,7 +13,8 @@ export type ClinicCaseData = Awaited<ReturnType<typeof getClinicCaseAction>>;
 export async function getClinicCaseAction(caseId: string) {
   const supabase = supabaseServer();
 
-  const [{ data: caseRow }, { data: lesions }, { data: treatmentTypes }, { data: scheduleItems }] = await Promise.all([
+  const [{ data: caseRow }, { data: lesions }, { data: treatmentTypes }, { data: scheduleItems }, { data: photos }] =
+    await Promise.all([
     supabase
       .from("cases")
       .select("id, research_id, sex, age_at_enrollment, phone_number, jsw_score, body_site, doctors(code, name)")
@@ -20,7 +22,9 @@ export async function getClinicCaseAction(caseId: string) {
       .single(),
     supabase
       .from("case_keloid_lesions")
-      .select("id, site_no, body_site, body_part_zone_id, body_part_zones(display_name, dose_category)")
+      .select(
+        "id, site_no, body_site, body_part_zone_id, length_cm, width_cm, height_cm, measure_waived, photo_waived, body_part_zones(display_name, dose_category)"
+      )
       .eq("case_id", caseId)
       .order("site_no"),
     supabase.from("treatment_types").select("id, name").eq("active", true).order("sort_order"),
@@ -30,11 +34,33 @@ export async function getClinicCaseAction(caseId: string) {
       .eq("case_id", caseId)
       .eq("status", "pending")
       .order("due_date"),
+    // 病灶照片張數：卡片要提醒「這位還沒量／還沒拍，別讓他走」（決策 2026-08-20）
+    supabase.from("photos").select("lesion_id").eq("case_id", caseId),
   ]);
 
   const doctor = caseRow ? (Array.isArray(caseRow.doctors) ? caseRow.doctors[0] : caseRow.doctors) : null;
 
+  const photoCount = new Map<string, number>();
+  for (const p of photos ?? []) {
+    if (p.lesion_id) photoCount.set(p.lesion_id, (photoCount.get(p.lesion_id) ?? 0) + 1);
+  }
+  // 判定用 lib/clinicFlow 那一套，不在這裡另外寫一遍——三個地方各寫一次「什麼叫量完了」遲早會不一致。
+  const measureBlocked = measureBlockers(
+    (lesions ?? []).map((l) => ({
+      id: l.id,
+      site_no: l.site_no,
+      body_site: l.body_site,
+      length_cm: l.length_cm,
+      width_cm: l.width_cm,
+      height_cm: l.height_cm,
+      measure_waived: l.measure_waived ?? false,
+      photo_waived: l.photo_waived ?? false,
+      photoCount: photoCount.get(l.id) ?? 0,
+    }))
+  );
+
   return {
+    measureBlockers: measureBlocked,
     id: caseRow?.id ?? caseId,
     research_id: caseRow?.research_id ?? "",
     doctor: doctor ? `${doctor.code} ${doctor.name}` : "",

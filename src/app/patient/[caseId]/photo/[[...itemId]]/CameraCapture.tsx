@@ -11,6 +11,8 @@ export default function CameraCapture({
   zoneDisplayName,
   doseCategory,
   lesionId,
+  initialSize,
+  doneLabel = "回個案頁面",
   onBack,
   onDone,
 }: {
@@ -20,6 +22,9 @@ export default function CameraCapture({
   zoneDisplayName: string;
   doseCategory: string;
   lesionId?: string | null;
+  /** 這個部位已經量過的長寬高，帶進來讓人員只補缺的那一格 */
+  initialSize?: { length: string; width: string; height: string };
+  doneLabel?: string;
   onBack: () => void;
   onDone: () => void;
 }) {
@@ -30,6 +35,9 @@ export default function CameraCapture({
   const [capturedUrl, setCapturedUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "uploading" | "done" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
+  // 長寬高跟照片一起送（決策 2026-08-20）。分兩趟做的話，門診一被打斷就只剩照片沒有尺寸，
+  // 而尺寸是病人一走就再也補不回來的那一半（照片裡的尺沒有被程式讀出來過，見決策 #3）。
+  const [size, setSize] = useState(initialSize ?? { length: "", width: "", height: "" });
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -89,6 +97,9 @@ export default function CameraCapture({
     formData.append("item_id", itemId);
     formData.append("zone_key", zoneKey);
     if (lesionId) formData.append("lesion_id", lesionId);
+    formData.append("length_cm", size.length);
+    formData.append("width_cm", size.width);
+    formData.append("height_cm", size.height);
     formData.append("file", blob, "photo.jpg");
     if (thumbBlob) formData.append("thumb", thumbBlob, "thumb.jpg");
     const result = await uploadPhotoAction(formData);
@@ -113,7 +124,7 @@ export default function CameraCapture({
             <div className="p-8 text-center text-white">
               <p className="text-lg">✓ {message}</p>
               <button onClick={onDone} className="mt-3 inline-block whitespace-nowrap text-sm text-blue-300 underline">
-                回個案頁面
+                {doneLabel}
               </button>
             </div>
           ) : capturedUrl ? (
@@ -146,6 +157,34 @@ export default function CameraCapture({
             </>
           )}
         </div>
+
+        {/* 尺寸就在相機下方：拍完不用再回上一頁找輸入格，量完拍完一次送出。
+            這裡用原生數字鍵盤而不是大鍵盤——相機預覽已經吃掉大半個畫面，
+            再放一組 3×4 的大鍵盤就要一直捲。 */}
+        {status !== "done" && (
+          <div className="border-t border-slate-200 px-3 pt-3">
+            <p className="text-xs text-slate-500">病灶尺寸（可留空，之後再補）</p>
+            <div className="mt-1 grid grid-cols-3 gap-2">
+              {([
+                ["length", "長"],
+                ["width", "寬"],
+                ["height", "高"],
+              ] as const).map(([key, label]) => (
+                <label key={key} className="block">
+                  <span className="block text-[11px] text-slate-500">{label} cm</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    inputMode="decimal"
+                    value={size[key]}
+                    onChange={(e) => setSize({ ...size, [key]: e.target.value })}
+                    className="mt-0.5 min-h-12 w-full rounded-md border border-slate-300 px-2 text-lg tabular-nums"
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         {status !== "done" && (
           <div className="flex gap-2 p-3">

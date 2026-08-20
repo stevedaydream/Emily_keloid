@@ -10,10 +10,12 @@ export default async function ClinicQuestionnairePage({
   searchParams,
 }: {
   params: Promise<{ caseId: string; itemId?: string[] }>;
-  searchParams: Promise<{ questionnaire_id?: string }>;
+  searchParams: Promise<{ questionnaire_id?: string; next?: string }>;
 }) {
   const { caseId, itemId: itemIdParam } = await params;
-  const { questionnaire_id: questionnaireIdParam } = await searchParams;
+  const { questionnaire_id: questionnaireIdParam, next: nextParam } = await searchParams;
+  // 送出後要回哪裡。只收站內相對路徑——`//evil.com` 也是以 / 開頭，會被瀏覽器當成外站。
+  const nextPath = nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//") ? nextParam : "";
   const itemId = itemIdParam?.[0] ?? "";
   const supabase = supabaseServer();
 
@@ -91,6 +93,7 @@ export default async function ClinicQuestionnairePage({
         <input type="hidden" name="case_id" value={caseId} />
         <input type="hidden" name="item_id" value={itemId} />
         <input type="hidden" name="questionnaire_id" value={questionnaireId} />
+        <input type="hidden" name="next" value={nextPath} />
 
         {(questions ?? []).map((q) => (
           <div key={q.id}>
