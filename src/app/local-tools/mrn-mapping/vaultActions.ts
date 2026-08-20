@@ -49,6 +49,30 @@ export async function saveVaultAction(payload: VaultPayload): Promise<{ ok: bool
   );
   if (error) return { ok: false, message: `寫入失敗：${error.message}` };
 
+  // 自動備份（決策 2026-08-20）：每次寫入留一份版本快照，只保留最近 30 份。
+  // 平板收案之後 mrn_vault 是病歷號對照的唯一來源，覆蓋錯或損毀就再也還原不回來。
+  // 備份失敗不擋主流程——主要的那份已經寫進去了，這裡失敗只是少一層保險。
+  try {
+    await supabase.from("mrn_vault_versions").insert({
+      ciphertext: payload.ciphertext,
+      salt: payload.salt,
+      iv: payload.iv,
+      iterations: payload.iterations,
+      row_count: payload.row_count,
+      created_by: operator,
+    });
+    const { data: keep } = await supabase
+      .from("mrn_vault_versions")
+      .select("id")
+      .order("created_at", { ascending: false })
+      .range(30, 1000);
+    if (keep && keep.length > 0) {
+      await supabase.from("mrn_vault_versions").delete().in("id", keep.map((k) => k.id));
+    }
+  } catch {
+    // 忽略：備份是額外保險，不該讓它擋下已經成功的主寫入
+  }
+
   // 稽核只記「誰在什麼時候更新了保管庫、幾筆」，不含任何對照內容。
   await logAudit({
     operatorName: operator,

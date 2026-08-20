@@ -11,7 +11,7 @@ import {
   passphraseIssue,
   PBKDF2_ITERATIONS,
 } from "@/lib/mrnVault";
-import { forgetVaultKey, getVaultKey, rememberVaultKey, subscribeVaultSession } from "@/lib/vaultSession";
+import { forgetVaultKey, getVaultKey, getVaultKeyDaysLeft, rememberVaultKey, subscribeVaultSession } from "@/lib/vaultSession";
 import { loadVaultAction, saveVaultAction } from "./vaultActions";
 import type { MrnMappingRow } from "@/lib/localMrnStore";
 
@@ -21,7 +21,7 @@ function RememberToggle({ checked, onChange }: { checked: boolean; onChange: (v:
   return (
     <label className="flex items-center gap-1.5 text-[11px] text-ink/60">
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      記住到分頁關閉為止（之後新增個案自動同步，不必再打通行碼）
+      記住 30 天（之後收案自動寫入保管庫，不必再打通行碼）
     </label>
   );
 }
@@ -29,11 +29,18 @@ function RememberToggle({ checked, onChange }: { checked: boolean; onChange: (v:
 /**
  * 雲端加密保管庫。
  *
+ * 2026-08-20 起這是病歷號對照的**權威來源**（收案動線移到平板，而平板沒有 File System Access
+ * 寫不了本機 CSV）。解鎖後收案會直接把新的對照加密寫進來，見 lib/vaultSession 的 appendRowToVault。
+ *
  * 兩個方向：
- * - 上傳：把目前掛著的本機對照表加密後存到雲端（只有桌機掛得上本機檔案，所以這一側通常在診間電腦做）
+ * - 上傳：把目前掛著的本機對照表整份加密後覆蓋雲端（桌機才掛得上本機檔案）
  * - 解密掛載：任何裝置（含手機／平板）輸入通行碼，把雲端的密文解開讀進記憶體
  *
- * 通行碼與解密結果都只存在記憶體，重整就沒。
+ * 通行碼從頭到尾沒有以可讀形式落地；解鎖狀態記 30 天（金鑰是 extractable:false 的 CryptoKey，
+ * 存得進 IndexedDB 但匯不出金鑰材料）。裝置要借人或送修時按「鎖定」立即失效。
+ *
+ * 每次寫入都會自動留一份版本快照（mrn_vault_versions，保留最近 30 份），
+ * 防的是 blob 損毀／覆蓋錯——**防不了忘記通行碼**，快照用的是同一組通行碼。
  */
 export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] | null }) {
   const { mountFromRows } = useLocalNames();
@@ -49,6 +56,7 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
   // 記住金鑰＝之後新增個案會自動同步到保管庫，不用再打通行碼（見 lib/vaultSession.ts）
   const [remember, setRemember] = useState(true);
   const [unlocked, setUnlocked] = useState(false);
+  const [daysLeft, setDaysLeft] = useState<number | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -64,7 +72,10 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
   }, []);
 
   useEffect(() => {
-    const refresh = () => void getVaultKey().then((k) => setUnlocked(!!k));
+    const refresh = () => {
+      void getVaultKey().then((k) => setUnlocked(!!k));
+      void getVaultKeyDaysLeft().then(setDaysLeft);
+    };
     refresh();
     return subscribeVaultSession(refresh);
   }, []);
@@ -158,7 +169,9 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
         </span>
         {unlocked && (
           <span className="ml-auto flex items-center gap-2">
-            <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-800">🔓 本分頁已解鎖，新增個案自動同步</span>
+            <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-800">
+              🔓 已解鎖{daysLeft !== null ? `，還剩 ${daysLeft} 天` : ""}，收案自動寫入
+            </span>
             <button type="button" onClick={() => void handleLock()} className="underline hover:text-red-600">
               鎖定
             </button>
@@ -169,7 +182,7 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
       {/* 解密掛載：任何裝置都能用 */}
       {meta && (
         <div className="space-y-2 rounded-md border border-brand-100 p-3">
-          <p className="text-xs font-medium text-ink/70">解密掛載（本次工作階段）</p>
+          <p className="text-xs font-medium text-ink/70">解密掛載（解鎖後記住 30 天）</p>
           <input
             type="password"
             value={unlockPass}

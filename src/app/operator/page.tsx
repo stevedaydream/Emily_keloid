@@ -13,8 +13,10 @@ export default async function OperatorPage({
   const supabase = supabaseServer();
   const { data: operators } = await supabase
     .from("operators")
-    .select("id, name, role, landing_mode")
+    .select("id, name, role, landing_mode, sort_order")
     .eq("active", true)
+    // 這是每天每個人的第一個畫面，最常被點的排最上面（順序在後台可調）
+    .order("sort_order")
     .order("name");
 
   return (

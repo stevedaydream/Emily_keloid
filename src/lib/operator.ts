@@ -6,11 +6,12 @@ import { supabaseServer } from "@/lib/supabase";
  * 部長退出收案後那個二分失去前提（見 pending.md F-A），導覽列合併成一張，
  * 這個欄位就退化成純粹的「登入後落在哪一頁」，所以值直接等於頁面。
  */
-export type LandingMode = "clinic_today" | "intake" | "dashboard" | "admin";
+export type LandingMode = "clinic_today" | "intake" | "batch_edit" | "dashboard" | "admin";
 
 export const LANDING_PATH: Record<LandingMode, string> = {
   clinic_today: "/clinic-today",
   intake: "/intake",
+  batch_edit: "/batch-edit",
   dashboard: "/",
   admin: "/admin",
 };
@@ -18,6 +19,7 @@ export const LANDING_PATH: Record<LandingMode, string> = {
 export const LANDING_LABEL: Record<LandingMode, string> = {
   clinic_today: "今日門診",
   intake: "收案",
+  batch_edit: "批次編輯",
   dashboard: "儀表板",
   admin: "後台管理",
 };
@@ -29,7 +31,7 @@ export const LANDING_OPTIONS = (Object.keys(LANDING_PATH) as LandingMode[]).map(
 
 /** 查不到或值不認得時一律當儀表板，不要把人鎖在某一頁。 */
 export function toLandingMode(raw: unknown): LandingMode {
-  return raw === "clinic_today" || raw === "intake" || raw === "admin" ? raw : "dashboard";
+  return raw === "clinic_today" || raw === "intake" || raw === "batch_edit" || raw === "admin" ? raw : "dashboard";
 }
 
 export async function getCurrentOperator(): Promise<string | null> {

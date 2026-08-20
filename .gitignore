@@ -45,3 +45,6 @@ next-env.d.ts
 
 # clasp 的部署 ID：每個人/每個環境的部署不同，不進版控
 gas/deployment-id.txt
+
+# supabase link 產生的本機快取（含專案 ref 與憑證快取），不進版控
+supabase/.temp/
