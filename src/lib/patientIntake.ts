@@ -9,7 +9,7 @@
 //   3. 一頁的題數由「選項數 × 題數」自動算，不寫死。
 
 export const PATIENT_INTAKE_SEGMENTS = [
-  { key: "basic", label: "基本資料", hint: "性別、年齡、聯絡電話" },
+  { key: "basic", label: "基本資料", hint: "性別、出生日期、身高體重、聯絡電話" },
   { key: "history", label: "過去病史", hint: "家族史、蟹足腫病史、以前做過的治療" },
   { key: "intake_options", label: "就診資訊", hint: "怎麼發生的、怎麼知道要來看診" },
   { key: "sf36", label: "健康狀況", hint: "SF-36 健康調查" },

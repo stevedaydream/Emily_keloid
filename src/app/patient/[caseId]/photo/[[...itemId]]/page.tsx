@@ -7,10 +7,10 @@ export default async function CasePhotoCapturePage({
   searchParams,
 }: {
   params: Promise<{ caseId: string; itemId?: string[] }>;
-  searchParams: Promise<{ lesion_id?: string; zone_key?: string }>;
+  searchParams: Promise<{ lesion_id?: string; zone_key?: string; next?: string }>;
 }) {
   const { caseId, itemId: itemIdParam } = await params;
-  const { lesion_id: lesionIdParam, zone_key: zoneKeyParam } = await searchParams;
+  const { lesion_id: lesionIdParam, zone_key: zoneKeyParam, next: nextParam } = await searchParams;
   const itemId = itemIdParam?.[0] ?? "";
   const supabase = supabaseServer();
 
@@ -23,7 +23,7 @@ export default async function CasePhotoCapturePage({
       .order("sort_order"),
     supabase
       .from("case_keloid_lesions")
-      .select("id, site_no, body_site, note, body_part_zones(zone_key, dose_category)")
+      .select("id, site_no, body_site, note, length_cm, width_cm, height_cm, body_part_zones(zone_key, dose_category)")
       .eq("case_id", caseId)
       .order("site_no"),
     supabase.from("photos").select("lesion_id").eq("case_id", caseId),
@@ -47,6 +47,9 @@ export default async function CasePhotoCapturePage({
       zoneKey: zone?.zone_key ?? "",
       doseCategory: zone?.dose_category ?? "other",
       photoCount: photoCountByLesion.get(l.id) ?? 0,
+      length: l.length_cm != null ? String(l.length_cm) : "",
+      width: l.width_cm != null ? String(l.width_cm) : "",
+      height: l.height_cm != null ? String(l.height_cm) : "",
     };
   });
 
@@ -59,6 +62,7 @@ export default async function CasePhotoCapturePage({
       sites={sites}
       initialLesionId={lesionIdParam ?? null}
       initialZoneKey={zoneKeyParam ?? null}
+      next={nextParam ?? null}
     />
   );
 }

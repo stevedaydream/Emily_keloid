@@ -4,13 +4,13 @@
 // 直接讀寫使用者選定的本機 CSV 檔案，這段程式碼「不會」對任何伺服器（含本平台的 Vercel/Supabase）
 // 發出任何網路請求，病歷號因此完全不會離開這台電腦。
 //
-// ⚠️ 僅支援**桌機版** Chrome / Edge。手機與平板（Android Chrome、iPad Safari/Chrome）
-// 都沒有實作 File System Access API，那是瀏覽器本身的限制，不是權限設定問題。
+// ⚠️ 支援度：桌機版 Chrome / Edge 一直有；**Android Chrome 現在也有**（2026-08-20 平板實測，
+// 檔案會落在裝置的「下載」資料夾）。iPad Safari 仍然沒有，那台只能走雲端保管庫。
 //
-// 刻意不做行動版的替代方案：用 <input type="file"> 是讀得到 CSV，但拿不到可持續的
-// handle，重新整理就沒了，要能用就得把「病歷號＋姓名」快取進該裝置的 IndexedDB——
-// 而平板是要交到病人手上的（見 pending.md C1b：Phase 0 沒有裝置隔離），
-// 等於在最不該留身分資料的裝置上留一份。所以行動裝置一律不掛對照表。
+// 2026-08-20 決策（使用者指定）：**平板要能讀寫對照表，不排除行動裝置**。
+// 代價是病歷號與姓名會落在平板上，而平板也是交給病人自填的那一台（pending.md C1b：
+// Phase 0 沒有裝置隔離）。使用者在被提醒後仍要求保留，正式收案前應搭配裝置管理措施
+// （螢幕鎖、不外借、離開診間收好），Phase 1 送 IRB 時要一併說明。
 
 const DB_NAME = "keloid-local-tools";
 const STORE_NAME = "handles";
@@ -18,6 +18,20 @@ const HANDLE_KEY = "mrn-mapping-file";
 // 第 5 欄 name 是 2026-07-28 才加的（決策：姓名跟病歷號一樣只留本機，雲端永遠不存）。
 // 舊檔案只有 4 欄也讀得動，name 會是空字串。
 const CSV_HEADER = "mrn,research_id,case_id,created_at,name";
+
+/**
+ * 行動裝置判斷。**不是**用來擋掉 File System Access（使用者要求平板照樣能讀寫），
+ * 只用來決定檔案選擇器要不要帶 `types`——見 openExistingMappingFile 的說明。
+ */
+function isMobileDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const uaData = (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData;
+  if (uaData?.mobile) return true;
+  const ua = navigator.userAgent;
+  if (/Android|iPhone|iPod|iPad/i.test(ua)) return true;
+  // iPadOS 13+ 的 Safari 把自己報成 Macintosh，只剩觸控點數分得出來
+  return /Macintosh/i.test(ua) && navigator.maxTouchPoints > 1;
+}
 
 export function isFileSystemAccessSupported(): boolean {
   return typeof window !== "undefined" && "showSaveFilePicker" in window;
@@ -56,6 +70,10 @@ async function loadHandle(): Promise<FileSystemFileHandle | null> {
 
 async function ensurePermission(handle: FileSystemFileHandle): Promise<boolean> {
   const opts = { mode: "readwrite" as const };
+  // Android Chrome 的實作沒有 queryPermission／requestPermission（那是桌機才有的權限持久化機制）。
+  // 少了這兩支不代表沒權限——剛從選擇器拿到的 handle 本來就是可讀寫的，直接放行，
+  // 真的不能寫時 createWritable() 會自己丟錯，錯誤訊息也比「權限被拒絕」精確。
+  if (typeof handle.queryPermission !== "function" || typeof handle.requestPermission !== "function") return true;
   if ((await handle.queryPermission(opts)) === "granted") return true;
   return (await handle.requestPermission(opts)) === "granted";
 }
@@ -63,9 +81,11 @@ async function ensurePermission(handle: FileSystemFileHandle): Promise<boolean> 
 // 建立一份新的本機對照表檔案（存檔對話框），並記住這次選擇供之後的瀏覽器工作階段重用。
 // 必須在使用者手勢（click）觸發的處理函式內直接呼叫，不能包在多層 await 之後。
 export async function pickMappingFile(): Promise<FileSystemFileHandle> {
+  // 行動裝置同樣不帶 types：存檔時帶進去的 MIME 會被系統記在該檔案上，
+  // 之後用開檔選擇器找它時反而更容易對不上而變灰。
   const handle = await window.showSaveFilePicker({
     suggestedName: "病歷號對照表.csv",
-    types: [{ description: "CSV", accept: { "text/csv": [".csv"] } }],
+    ...(isMobileDevice() ? {} : { types: [{ description: "CSV", accept: { "text/csv": [".csv"] } }] }),
   });
   await saveHandle(handle);
   return handle;
@@ -76,9 +96,15 @@ export async function pickMappingFile(): Promise<FileSystemFileHandle> {
 // 對「我已經有一份對照表、只想掛上去」的情境很嚇人。開檔對話框拿到的 handle 預設只有唯讀權限，
 // 因此這裡立刻要求 readwrite（之後新增個案要把新的對應附加寫回同一個檔案）。
 export async function openExistingMappingFile(): Promise<FileSystemFileHandle> {
+  // ⚠️ 行動裝置不能帶 types（2026-08-20 平板實測的反灰主因）。
+  // Android 的檔案選擇器是依**系統認定的 MIME** 過濾、不看副檔名：同樣一個 .csv，
+  // 來源不同會被標成 text/comma-separated-values、application/vnd.ms-excel、
+  // application/octet-stream……帶了 accept 就整批變灰點不到，連自己剛建的那份也選不了。
+  // 桌機的選擇器是看副檔名，留著 types 才不會滿畫面都是無關檔案。
+  // （同一個坑 mrn-mapping 頁的 <input type="file"> 已經踩過，那裡的解法也是不設 accept。）
   const [handle] = await window.showOpenFilePicker({
     multiple: false,
-    types: [{ description: "CSV", accept: { "text/csv": [".csv"] } }],
+    ...(isMobileDevice() ? {} : { types: [{ description: "CSV", accept: { "text/csv": [".csv"] } }] }),
   });
   if (!handle) throw new Error("沒有選到檔案");
   const granted = await ensurePermission(handle);

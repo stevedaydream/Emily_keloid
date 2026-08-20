@@ -15,16 +15,27 @@ type Site = {
   zoneKey: string;
   doseCategory: string;
   photoCount: number;
+  /** 已量過的尺寸，帶進相機頁讓人員只補缺的那一格（2026-08-20：尺寸與照片一起送） */
+  length: string;
+  width: string;
+  height: string;
 };
 
 // 相機需要的部位資訊：從個案部位清單挑選時帶入該病灶自己的 zone/劑量分類；從身體圖挑選時帶入該區塊資訊。
-type Target = { zoneKey: string; displayName: string; doseCategory: string; lesionId: string | null };
+type Target = {
+  zoneKey: string;
+  displayName: string;
+  doseCategory: string;
+  lesionId: string | null;
+  size?: { length: string; width: string; height: string };
+};
 
 const targetForSite = (s: Site): Target => ({
   zoneKey: s.zoneKey,
   displayName: `部位${s.site_no ?? ""} ${s.body_site}`.trim(),
   doseCategory: s.doseCategory,
   lesionId: s.id,
+  size: { length: s.length, width: s.width, height: s.height },
 });
 
 export default function PhotoCaptureFlow({
@@ -35,12 +46,15 @@ export default function PhotoCaptureFlow({
   sites,
   initialLesionId,
   initialZoneKey,
+  next,
 }: {
   caseId: string;
   itemId: string;
   zones: Zone[];
   sex?: string | null;
   sites?: Site[];
+  /** 拍完要回哪裡。診間收案動線會帶自己的網址進來，讓人拍完直接回到那三步的畫面。 */
+  next?: string | null;
   /** 從個案頁面的「拍這個部位」進來時直接跳到該部位的相機畫面 */
   initialLesionId?: string | null;
   /** 從個案頁面的人形圖點選部位後直接進來拍照時帶的區塊代碼 */
@@ -60,6 +74,7 @@ export default function PhotoCaptureFlow({
       ? { zoneKey: initialZone.zone_key, displayName: initialZone.display_name, doseCategory: initialZone.dose_category, lesionId: null }
       : null
   );
+  const backTo = next && next.startsWith("/") && !next.startsWith("//") ? next : `/cases/${caseId}`;
   const [showDiagram, setShowDiagram] = useState((sites ?? []).length === 0);
   const router = useRouter();
 
@@ -72,8 +87,10 @@ export default function PhotoCaptureFlow({
         zoneDisplayName={target.displayName}
         doseCategory={target.doseCategory}
         lesionId={target.lesionId}
+        initialSize={target.size}
+        doneLabel={next ? "回到收案動線" : "回個案頁面"}
         onBack={() => setTarget(null)}
-        onDone={() => router.push(`/cases/${caseId}`)}
+        onDone={() => router.push(backTo)}
       />
     );
   }
@@ -129,7 +146,9 @@ export default function PhotoCaptureFlow({
       {showDiagram && (
         <BodyDiagram
           zones={zones}
-          onSelect={(z) => setTarget({ zoneKey: z.zone_key, displayName: z.display_name, doseCategory: z.dose_category, lesionId: null })}
+          onSelect={(z) =>
+            setTarget({ zoneKey: z.zone_key, displayName: z.display_name, doseCategory: z.dose_category, lesionId: null })
+          }
           sex={sex}
         />
       )}

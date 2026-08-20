@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import Button from "@/components/ui/Button";
 import { TOUR_ROLES, TOUR_FACTS } from "@/lib/tour";
 
 // 平台導覽：選身分 → 一步步走。每一步右邊是模擬畫面，當前落點高亮、其餘淡出。
@@ -10,6 +12,20 @@ export default function TourViewer() {
   const [roleIdx, setRoleIdx] = useState(0);
   const [stepIdx, setStepIdx] = useState(0);
   const railRef = useRef<HTMLOListElement>(null);
+  const router = useRouter();
+
+  /**
+   * 畫面上要有一顆看得見的「回上一頁」（2026-08-20 使用者要求）。
+   * 導覽是從導覽列的問號點進來的，看完要回到剛才在做的事——但那條路只存在於
+   * 瀏覽器的返回鍵／Android 的返回手勢裡，不是每個人都會用。
+   *
+   * 判斷放在點下去的當下而不是掛載後：掛載後才算會讓伺服器與瀏覽器第一次 render 不一致。
+   * 沒有站內上一頁可退（例如直接貼網址開新分頁）就回首頁，免得「回上一頁」把人踢出系統。
+   */
+  function goBack() {
+    if (typeof window !== "undefined" && window.history.length > 1) router.back();
+    else router.push("/");
+  }
 
   const role = TOUR_ROLES[roleIdx];
   const step = role.steps[stepIdx];
@@ -45,7 +61,10 @@ export default function TourViewer() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="font-heading text-xl font-medium text-brand-900">平台導覽</h1>
+        <Button variant="outline" onClick={goBack} className="!py-2" aria-label="回上一頁">
+          ← 回上一頁
+        </Button>
+        <h1 className="mt-3 font-heading text-xl font-medium text-brand-900">平台導覽</h1>
         <p className="mt-1 max-w-2xl text-sm text-ink/50">
           選一個身分，跟著走一遍你實際會做的事。每一步會標出畫面上的落點，以及那樣設計的原因。
         </p>
