@@ -39,7 +39,7 @@ export default async function RootLayout({
   const operator = cookieStore.get("keloid_operator")?.value;
   const signedIn = session === "ok" && Boolean(operator);
 
-  // landing_mode 決定 header 要給哪一組導覽（見 lib/operator.ts）。
+  // nav_compact 決定 header 要不要把非核心功能收進「更多」（見 lib/operator.ts）。
   // 這裡一律取得（不再依路徑跳過）——「要不要顯示導覽列」已移到 AppChrome 由客戶端判斷，
   // root layout 在客戶端導航時不會重新渲染，把判斷留在這裡會導致導覽列該消失時沒消失。
   const operatorContext = signedIn ? await getCurrentOperatorContext() : null;
@@ -55,7 +55,7 @@ export default async function RootLayout({
         <LocalNameProvider devMobileMapping={operatorContext?.devMobileMapping ?? false}>
           <AppChrome
             operator={operatorContext?.name ?? null}
-            landingMode={operatorContext?.landingMode ?? "full"}
+            navCompact={operatorContext?.navCompact ?? false}
             initialPathname={pathname}
           >
             {children}

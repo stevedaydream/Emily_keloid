@@ -1,4 +1,5 @@
 import { supabaseServer } from "@/lib/supabase";
+import { LANDING_LABEL, toLandingMode } from "@/lib/operator";
 import { setOperatorAction } from "./actions";
 import SubmitButton from "@/components/ui/SubmitButton";
 import BrandMark from "@/components/ui/BrandMark";
@@ -32,12 +33,10 @@ export default async function OperatorPage({
               <SubmitButton variant="outline" justify="start" pendingText="切換中…" className="w-full text-left">
                 {op.name}
                 {op.role ? <span className="ml-2 text-xs text-ink/40">{op.role}</span> : null}
-                {/* 選了會落在哪一頁，先講清楚，免得部長以為功能不見了 */}
-                {op.landing_mode === "intake" && (
-                  <span className="ml-auto whitespace-nowrap rounded bg-accent-100 px-1.5 py-0.5 text-xs text-accent-800">
-                    → 收案頁
-                  </span>
-                )}
+                {/* 選了會落在哪一頁，先講清楚，免得以為功能不見了 */}
+                <span className="ml-auto whitespace-nowrap rounded bg-accent-100 px-1.5 py-0.5 text-xs text-accent-800">
+                  → {LANDING_LABEL[toLandingMode(op.landing_mode)]}
+                </span>
               </SubmitButton>
             </form>
           ))}

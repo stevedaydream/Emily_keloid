@@ -56,10 +56,15 @@ const GROUPS = [
     items: [
       {
         href: "/admin/import-keloid",
-        title: "舊資料匯入（部長格式）",
+        title: "批次匯入（部長格式）",
         desc: "下載空白範本→填寫→上傳，尺寸自動拆成長寬高",
       },
       { href: "/admin/import", title: "舊資料匯入（自訂欄位對應）", desc: "任意格式 Excel/CSV，需手動對應欄位" },
+      {
+        href: "/admin/control-subjects",
+        title: "對照組（健康受試者）",
+        desc: "一人一次抽血；獨立編號 CTL-年份-序號，匯出為獨立分頁",
+      },
       {
         href: "/local-tools/mrn-mapping",
         title: "病歷號對照設定",

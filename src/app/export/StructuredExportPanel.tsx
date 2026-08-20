@@ -23,6 +23,9 @@ export default function StructuredExportPanel({
   const [doctor, setDoctor] = useState("");
   const [operated, setOperated] = useState("");
   const [source, setSource] = useState("");
+  // 未簽同意書的個案預設排除（決策 2026-08-20 F-C2）。實務上病人是先在平板填完、
+  // 之後才補簽同意書，所以「已填問卷但同意書還沒進來」是常態；那些資料不該混進交出去的檔案。
+  const [consentOnly, setConsentOnly] = useState(true);
   const [sort, setSort] = useState("created");
 
   const params = new URLSearchParams();
@@ -31,10 +34,11 @@ export default function StructuredExportPanel({
   if (doctor) params.set("doctor", doctor);
   if (operated) params.set("operated", operated);
   if (source) params.set("source", source);
+  if (!consentOnly) params.set("consent", "all");
   if (sort && sort !== "created") params.set("sort", sort);
   const query = params.toString();
   const href = `/api/export/structured-data${query ? `?${query}` : ""}`;
-  const filtered = [yearFrom, yearTo, doctor, operated, source].some(Boolean);
+  const filtered = [yearFrom, yearTo, doctor, operated, source].some(Boolean) || consentOnly;
 
   const field = "mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm";
 
@@ -80,6 +84,23 @@ export default function StructuredExportPanel({
               </option>
             ))}
           </select>
+        </div>
+        <div className="col-span-2 sm:col-span-3">
+          <label className="flex items-start gap-2 rounded-md border border-brand-100 bg-paper-sunken px-2 py-1.5 text-xs text-ink/70">
+            <input
+              type="checkbox"
+              checked={consentOnly}
+              onChange={(e) => setConsentOnly(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <b>只匯出已簽署知情同意書的個案</b>（預設開啟）
+              <span className="mt-0.5 block text-ink/40">
+                關閉後，同意書日期還空著的個案也會一起匯出。這些個案的問卷與檢體資料在研究上尚不可用，
+                個案頁與「未能對應清單」會標示出來。
+              </span>
+            </span>
+          </label>
         </div>
         <div>
           <label className="block text-xs font-medium text-ink/60">是否已手術</label>

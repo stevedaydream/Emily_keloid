@@ -7,6 +7,7 @@ import { logAudit } from "@/lib/audit";
 import { withTermGroup } from "@/lib/terms";
 import { generateBindCode, BIND_CODE_TTL_HOURS } from "@/lib/line";
 import { onsetMonthToDate } from "@/lib/onsetMonth";
+import { BIOBANK_ITEM_LABEL, bloodDrawWindows, followupSchedule } from "@/lib/biobank";
 
 async function operatorOrThrow() {
   const op = await getCurrentOperator();
@@ -232,8 +233,75 @@ export async function addTreatmentRecordAction(formData: FormData): Promise<numb
     await generateRadiotherapySessions(supabase, caseId, treatmentDate, surgeryRecord.id, lid, fractions, doseCgy, firstDayOffset);
   }
 
+  // 手術一登記就以手術日為錨點產生術後追蹤與後三次抽血（決策 2026-08-20，見 pending.md F-D1 / F-E2）。
+  // 追蹤時程原本在收案時以「建檔日」起算，但匯出的 FW 欄位、追蹤規則、抽血時程全部以手術日為準；
+  // 收案到手術有時間差時，建檔日起算的日期會整批提早，變成病人還沒開刀就被叫回診。
+  if (createdRecordIds.some((r) => r.typeName === "手術切除")) {
+    await generatePostOpSchedule(supabase, caseId, treatmentDate, operator);
+  }
+
   revalidatePath(`/cases/${caseId}`);
   return createdRecordIds.length;
+}
+
+/**
+ * 術後時程：每月一次 × 24 個月（＝匯出的 FW1–FW24）＋ 第 2/3/4 次抽血。
+ * 只在還沒產生過時建立，避免同一個案重複登記手術切除時長出兩套。
+ */
+async function generatePostOpSchedule(
+  supabase: ReturnType<typeof supabaseServer>,
+  caseId: string,
+  surgeryDate: string,
+  operator: string
+) {
+  const { data: existing } = await supabase
+    .from("case_schedule_items")
+    .select("id")
+    .eq("case_id", caseId)
+    .eq("source", "post_op")
+    .limit(1);
+  if (existing && existing.length > 0) return;
+
+  const followups = followupSchedule(surgeryDate).map((f) => ({
+    case_id: caseId,
+    label: f.label,
+    due_date: f.dueDate,
+    actions: ["visit_reminder"],
+    source: "post_op",
+  }));
+
+  // 抽血項目同時掛 checklist（人只勾一次，標記完成時回寫 collected/collected_date）
+  const draws = bloodDrawWindows(surgeryDate);
+  const drawItems = draws.map((d) => ({
+    case_id: caseId,
+    label: d.label,
+    due_date: d.dueDate,
+    actions: ["blood_draw"],
+    source: "post_op",
+    biobank_item_key: d.key,
+  }));
+
+  await supabase.from("case_schedule_items").insert([...followups, ...drawItems]);
+
+  await supabase.from("biobank_checklist_items").upsert(
+    draws.map((d) => ({
+      case_id: caseId,
+      item_key: d.key,
+      item_label: BIOBANK_ITEM_LABEL[d.key],
+      collected: false,
+      window_start: d.windowStart,
+      window_end: d.windowEnd,
+    })),
+    { onConflict: "case_id,item_key" }
+  );
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "generate_post_op_schedule",
+    entity: "case_schedule_items",
+    detail: { surgeryDate, followups: followups.length, draws: draws.length },
+  });
 }
 
 // useActionState 用的包裝：把成功/失敗結果回傳給 TreatmentForm，
@@ -483,13 +551,32 @@ export async function markScheduleItemAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
   const itemId = formData.get("item_id") as string;
   const status = formData.get("status") as string;
+  // skipped＝醫師判定穩定、這個月免回診（決策 2026-08-20 F-D3）。項目留著不刪，
+  // 但不算逾期、不推 LINE、匯出視同未回診——比直接刪掉更查得到是從第幾個月開始降頻的。
+  const skippedReason = ((formData.get("skipped_reason") as string) ?? "").trim() || null;
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
 
-  await supabase
+  const { data: item } = await supabase
     .from("case_schedule_items")
-    .update({ status, completed_at: status === "done" ? new Date().toISOString() : null })
-    .eq("id", itemId);
+    .update({
+      status,
+      completed_at: status === "done" ? new Date().toISOString() : null,
+      skipped_reason: status === "skipped" ? skippedReason ?? "醫師判定穩定，改為每 2 個月追蹤" : null,
+    })
+    .eq("id", itemId)
+    .select("biobank_item_key, due_date")
+    .maybeSingle();
+
+  // 抽血類的時程項目標記完成時，單向回寫檢體清單（人只勾一次，兩邊都有紀錄）。
+  // 只寫 collected/collected_date，窗期是產生時就定好的，不在這裡動。
+  if (item?.biobank_item_key && status === "done") {
+    await supabase
+      .from("biobank_checklist_items")
+      .update({ collected: true, collected_date: new Date().toISOString().slice(0, 10), updated_at: new Date().toISOString() })
+      .eq("case_id", caseId)
+      .eq("item_key", item.biobank_item_key);
+  }
 
   await logAudit({ caseId, operatorName: operator, action: "update_schedule_item", entity: "case_schedule_items", entityId: itemId, detail: { status } });
   revalidatePath(`/cases/${caseId}`);

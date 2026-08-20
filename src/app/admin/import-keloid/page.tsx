@@ -17,7 +17,7 @@ export default async function KeloidImportPage() {
   return (
     <div className="max-w-3xl space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">舊資料匯入（部長 2026-08 格式）</h1>
+        <h1 className="text-xl font-semibold">批次匯入（部長格式）</h1>
         <p className="mt-1 text-sm text-ink/50">
           助理手動補齊舊病人用。流程：下載空白範本 → 填寫 → 上傳 → 檢視預覽與人工確認清單 → 正式寫入。
           範本的欄位與匯出檔完全相同（同一份定義產生），所以匯出與匯入可以互相對照。

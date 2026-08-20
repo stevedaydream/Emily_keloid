@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Button from "@/components/ui/Button";
 import { createCaseAction } from "./actions";
-import DiagnosisPicker, { type IcdOption } from "./DiagnosisPicker";
 import {
   isFileSystemAccessSupported,
   getConfiguredHandle,
@@ -19,27 +18,29 @@ import { syncVaultIfUnlocked } from "@/lib/vaultSession";
 import { loadVaultAction } from "@/app/local-tools/mrn-mapping/vaultActions";
 
 type Doctor = { id: string; code: string; name: string };
-type Template = { id: string; name: string };
 
 /**
- * variant 決定建檔成功後的動線（決策 2026-07-29）：
- * - "full"（/cases/new）：跳進剛建好的個案頁，維持原本行為
- * - "intake"（/intake，連續收案的醫師）：留在原頁、清空表單、焦點回病歷號，
- *   醫師/時程範本這種「整診都一樣」的欄位刻意不清空。性別/年齡/手機收進折疊區
- *   （主要由病人在自填頁填），沒用平板的病人才展開代填。
+ * 收案表單只有三格：負責醫師、病歷號、姓名（決策 2026-08-20，見 pending.md F-B）。
+ *
+ * 部長退出收案後，收案由診間護理師執行，其餘資料一律由病人在平板自填。
+ * 原本表單上的性別／年齡／出生日期／手機與病人自填的 basic 段重複，已移除；
+ * ICD 診斷、追蹤時程、同意書日期則改成事後補：
+ *   · 追蹤時程改以**手術日**起算，登記手術後才產生（F-D1），收案當下排不了
+ *   · 同意書實務上是病人填完平板才補簽（F-C1），收案當下也填不了
+ * 負責醫師留著是硬需求——研究編號 [醫師碼]-[年]-[序] 靠它產生。
+ *
+ * variant 只剩「建檔成功後去哪裡」：
+ * - "full"（/cases/new）：跳進剛建好的個案頁
+ * - "intake"（/intake）：留在原頁、清空表單、焦點回病歷號，醫師欄刻意不清空
  */
 export type NewCaseFormVariant = "full" | "intake";
 
 export default function NewCaseForm({
   doctors,
-  templates,
-  icdCodes,
   variant = "full",
   onCreated,
 }: {
   doctors: Doctor[];
-  templates: Template[];
-  icdCodes: IcdOption[];
   variant?: NewCaseFormVariant;
   onCreated?: (created: { caseId: string; researchId: string }) => void;
 }) {
@@ -49,8 +50,6 @@ export default function NewCaseForm({
   const isIntake = variant === "intake";
   // 整診不會變的欄位做成受控，表單 reset 後才留得住
   const [doctorId, setDoctorId] = useState(doctors[0]?.id ?? "");
-  const [scheduleTemplateId, setScheduleTemplateId] = useState("");
-  const [sex, setSex] = useState("");
   const [mrn, setMrn] = useState("");
   // 姓名跟病歷號一樣只寫進本機對照表，送出前會從 FormData 移除，絕不進伺服器。
   const [patientName, setPatientName] = useState("");
@@ -58,8 +57,6 @@ export default function NewCaseForm({
   const [fileHandle, setFileHandle] = useState<FileSystemFileHandle | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // ICD 選擇器有自己的內部 state，換 key 讓它整組重新掛載＝清空
-  const [resetKey, setResetKey] = useState(0);
   const [lastCreated, setLastCreated] = useState<{ caseId: string; researchId: string } | null>(null);
   // 個案已成功建立但本機對照表寫入失敗時，保留這筆資訊讓使用者可以重試或手動記錄。
   const [pendingMapping, setPendingMapping] = useState<{
@@ -153,8 +150,6 @@ export default function NewCaseForm({
     formRef.current?.reset();
     setMrn("");
     setPatientName("");
-    setSex("");
-    setResetKey((k) => k + 1);
     setLastCreated(created);
     onCreated?.(created);
     router.refresh(); // 讓右側「今日收案」清單長出這一筆
@@ -312,42 +307,11 @@ export default function NewCaseForm({
         )}
       </div>
 
-      <div>
-        <label className="mb-1 block text-sm font-medium text-ink/80">診斷（ICD-9/10）</label>
-        <DiagnosisPicker key={resetKey} codes={icdCodes} />
-      </div>
-
-      {/* 性別／年齡／手機主要由病人在自填頁填（決策 2026-07-29）。這裡收成折疊區，
-          沒用平板的病人（長輩、趕時間）才展開由人員代填。 */}
-      <PatientBasicFields collapsed={isIntake} sex={sex} onSexChange={setSex} />
-
-      <div>
-        <label className="block text-sm font-medium text-ink/80">套用追蹤時程範本</label>
-        <select
-          name="schedule_template_id"
-          value={scheduleTemplateId}
-          onChange={(e) => setScheduleTemplateId(e.target.value)}
-          className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
-        >
-          <option value="">不套用（之後再手動設定）</option>
-          {templates.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-        {isIntake && <p className="mt-1 text-xs text-ink/40">連續收案時這一欄不會被清空。</p>}
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-ink/80">知情同意書已簽署日期</label>
-        <input
-          type="date"
-          name="consent_signed_at"
-          className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
-        />
-        <p className="mt-1 text-xs text-ink/40">紙本簽署流程不變，此欄位僅記錄狀態；未填代表尚未簽署。</p>
-      </div>
+      {/* 診斷、追蹤時程、同意書日期都不在這裡（決策 2026-08-20，見本檔頂端註解）。 */}
+      <p className="rounded-md border border-brand-100 bg-paper-sunken px-3 py-2 text-xs text-ink/50">
+        建檔後把平板交給病人自填基本資料、病史、就診資訊與兩份量表。
+        診斷與同意書日期在個案頁補；追蹤時程會在登記手術後自動產生（術後每月一次、共 24 次）。
+      </p>
 
       {error && (
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -386,75 +350,5 @@ export default function NewCaseForm({
         {isIntake ? "建立並繼續收下一位" : "建立個案"}
       </Button>
     </form>
-  );
-}
-
-// 性別／年齡／手機：病人自填頁的主要欄位，收案頁只當備援（可折疊）。
-function PatientBasicFields({
-  collapsed,
-  sex,
-  onSexChange,
-}: {
-  collapsed: boolean;
-  sex: string;
-  onSexChange: (v: string) => void;
-}) {
-  const fields = (
-    <div className="grid gap-3 sm:grid-cols-3">
-      <div>
-        <label className="block text-sm font-medium text-ink/80">性別</label>
-        <select
-          name="sex"
-          value={sex}
-          onChange={(e) => onSexChange(e.target.value)}
-          className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
-        >
-          <option value="">未填</option>
-          <option value="F">女</option>
-          <option value="M">男</option>
-          <option value="other">其他</option>
-        </select>
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-ink/80">年齡</label>
-        <input
-          type="number"
-          name="age_at_enrollment"
-          min={0}
-          max={130}
-          className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
-        />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-ink/80">出生日期</label>
-        <input
-          type="date"
-          name="birth_date"
-          className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
-        />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-ink/80">手機號碼</label>
-        <input
-          name="phone_number"
-          type="tel"
-          inputMode="tel"
-          placeholder="不存姓名/病歷號"
-          className="mt-1 w-full rounded-md border border-brand-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
-        />
-      </div>
-    </div>
-  );
-
-  if (!collapsed) return fields;
-
-  return (
-    <details className="rounded-md border border-brand-100 p-3">
-      <summary className="cursor-pointer text-sm font-medium text-ink/70">
-        性別／年齡／手機（選填）
-        <span className="ml-2 text-xs font-normal text-ink/40">病人自填頁會問，這裡只在不用平板時代填</span>
-      </summary>
-      <div className="mt-3">{fields}</div>
-    </details>
   );
 }

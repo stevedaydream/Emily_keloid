@@ -65,6 +65,8 @@ export function computeSF36(answers: AnswerMap): { scales: SF36ScaleResult[] } {
 // 資料來源：Buysse et al. 1989 匹茲堡睡眠品質量表原始計分演算法（7 面向各 0-3 分，總分 0-21 分，>5 分視為睡眠品質不佳）。
 // 限制：本平台第5j題（其他睡眠困擾原因）僅收文字說明，未收 0-3 頻率評分，故「睡眠困擾」面向的加總只涵蓋 5b-5i 共8小題
 // （官方為5b-5j共9小題），會使極少數重度個案的睡眠困擾分數略為低估，其餘6個面向不受影響。
+// 第10、11題（睡伴／室友狀況與睡伴觀察到的情形，order_no 19-24）在原始演算法中就不計分，只作睡眠呼吸中止／
+// 肢動症的篩檢資訊，這裡刻意不取用。
 
 function parseLeadingNumber(text: unknown): number | null {
   if (typeof text === "number") return Number.isFinite(text) ? text : null;
