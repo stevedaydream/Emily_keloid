@@ -1,18 +1,16 @@
 import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase";
 import ClinicFlow from "./ClinicFlow";
-import type { LesionCheck } from "@/lib/clinicFlow";
-
-export const JSS_CLASSIFICATION_NAME = "JSS 疤痕診斷分類表";
+import { CLINICIAN_SCALE_NAMES, type ClinicianScale, type LesionCheck } from "@/lib/clinicFlow";
 
 // 診間收案動線（決策 2026-08-20）。病人把平板還回來之後走的那一段：
-// 量測長寬高＋拍照 → 醫師填 JSS。放在 /cases/[id] 底下而不是 /patient 底下，
+// 量測長寬高＋拍照 → 醫師評分（JSS ＋ VSS）。放在 /cases/[id] 底下而不是 /patient 底下，
 // 是因為這一段從頭到尾都是人員操作，不該套用病人版那個「不渲染導覽列」的全螢幕版型。
 export default async function ClinicFlowPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = supabaseServer();
 
-  const [{ data: caseRow }, { data: progress }, { data: zones }, { data: lesionRows }, { data: photos }, { data: jssTemplate }] =
+  const [{ data: caseRow }, { data: progress }, { data: zones }, { data: lesionRows }, { data: photos }, { data: scaleTemplates }] =
     await Promise.all([
       supabase.from("cases").select("id, research_id, sex").eq("id", id).single(),
       supabase.from("case_patient_intake_progress").select("segment_key").eq("case_id", id),
@@ -27,7 +25,10 @@ export default async function ClinicFlowPage({ params }: { params: Promise<{ id:
         .eq("case_id", id)
         .order("site_no"),
       supabase.from("photos").select("lesion_id").eq("case_id", id),
-      supabase.from("questionnaire_templates").select("id").eq("name", JSS_CLASSIFICATION_NAME).maybeSingle(),
+      supabase
+        .from("questionnaire_templates")
+        .select("id, name")
+        .in("name", CLINICIAN_SCALE_NAMES as unknown as string[]),
     ]);
 
   if (!caseRow) return notFound();
@@ -49,21 +50,27 @@ export default async function ClinicFlowPage({ params }: { params: Promise<{ id:
     photoCount: photoCount.get(l.id) ?? 0,
   }));
 
-  // JSS 是「這次門診有沒有填過」。同一份量表每次追蹤都會重填，所以不能只看有沒有紀錄——
-  // 但本次收案的判定用「最近一次是不是今天」就夠了，不需要另外記一個狀態欄位。
-  let jssDone = false;
-  if (jssTemplate) {
-    const { data: latest } = await supabase
-      .from("questionnaire_responses")
-      .select("submitted_at")
-      .eq("case_id", id)
-      .eq("questionnaire_id", jssTemplate.id)
-      .order("submitted_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(new Date());
-    jssDone = !!latest && new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(new Date(latest.submitted_at)) === today;
-  }
+  // 「這次門診有沒有填過」＝最近一筆是不是今天。兩份量表每次追蹤都會重填，
+  // 所以不能只看有沒有紀錄；但本次收案的判定用日期就夠，不需要另外記一個狀態欄位。
+  const taipeiDate = (d: Date) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(d);
+  const today = taipeiDate(new Date());
+  const templateIds = (scaleTemplates ?? []).map((t) => t.id);
+  const { data: scaleResponses } = templateIds.length
+    ? await supabase
+        .from("questionnaire_responses")
+        .select("questionnaire_id, submitted_at")
+        .eq("case_id", id)
+        .in("questionnaire_id", templateIds)
+    : { data: [] };
+  const doneToday = new Set(
+    (scaleResponses ?? []).filter((r) => taipeiDate(new Date(r.submitted_at)) === today).map((r) => r.questionnaire_id)
+  );
+
+  // 依 CLINICIAN_SCALE_NAMES 的順序排（先診斷分類、再嚴重度），不是資料庫回傳的順序。
+  const scales: ClinicianScale[] = CLINICIAN_SCALE_NAMES.map((name) => {
+    const t = (scaleTemplates ?? []).find((x) => x.name === name);
+    return t ? { id: t.id, name: t.name, done: doneToday.has(t.id) } : null;
+  }).filter((s): s is ClinicianScale => s !== null);
 
   return (
     <ClinicFlow
@@ -73,8 +80,8 @@ export default async function ClinicFlowPage({ params }: { params: Promise<{ id:
       lesions={lesions}
       zones={zones ?? []}
       sex={caseRow.sex ?? null}
-      jssTemplateId={jssTemplate?.id ?? null}
-      jssDone={jssDone}
+      scales={scales}
+      missingScaleNames={CLINICIAN_SCALE_NAMES.filter((n) => !scales.some((s) => s.name === n))}
     />
   );
 }

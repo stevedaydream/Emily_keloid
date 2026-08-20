@@ -9,6 +9,11 @@ import { generateBindCode, BIND_CODE_TTL_HOURS } from "@/lib/line";
 import { onsetMonthToDate } from "@/lib/onsetMonth";
 import { BIOBANK_ITEM_LABEL, bloodDrawWindows, followupSchedule } from "@/lib/biobank";
 
+/** 伺服器跑 UTC，直接 toISOString() 早上八點前會少一天。日期欄位一律走這支。 */
+function todayInTaipei(): string {
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(new Date());
+}
+
 async function operatorOrThrow() {
   const op = await getCurrentOperator();
   if (!op) throw new Error("未選擇操作者");
@@ -961,6 +966,8 @@ export async function addKeloidLesionAction(formData: FormData) {
       length_cm: lengthRaw ? Number(lengthRaw) : null,
       width_cm: widthRaw ? Number(widthRaw) : null,
       height_cm: heightRaw ? Number(heightRaw) : null,
+      // 量測日：回診動線靠它分辨「這次量的」與「三個月前量的」（見 lib/visitFlow.ts）
+      measured_at: lengthRaw || widthRaw || heightRaw ? todayInTaipei() : null,
       note,
     })
     .select("id")
@@ -996,6 +1003,8 @@ export async function updateKeloidLesionAction(formData: FormData) {
       length_cm: lengthRaw ? Number(lengthRaw) : null,
       width_cm: widthRaw ? Number(widthRaw) : null,
       height_cm: heightRaw ? Number(heightRaw) : null,
+      // 尺寸有動就重蓋量測日；整組清空時一併清掉，免得留下一個沒有值的量測日
+      measured_at: lengthRaw || widthRaw || heightRaw ? todayInTaipei() : null,
       note,
     })
     .eq("id", lesionId);

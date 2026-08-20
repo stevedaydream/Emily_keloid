@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase";
 import { getCurrentOperator } from "@/lib/operator";
 import { measureBlockers } from "@/lib/clinicFlow";
+import { monthsSinceSurgery, visitLesionTodos } from "@/lib/visitFlow";
 import { logAudit } from "@/lib/audit";
 import { addTreatmentRecordAction } from "@/app/cases/[id]/actions";
 
@@ -13,7 +14,7 @@ export type ClinicCaseData = Awaited<ReturnType<typeof getClinicCaseAction>>;
 export async function getClinicCaseAction(caseId: string) {
   const supabase = supabaseServer();
 
-  const [{ data: caseRow }, { data: lesions }, { data: treatmentTypes }, { data: scheduleItems }, { data: photos }] =
+  const [{ data: caseRow }, { data: lesions }, { data: treatmentTypes }, { data: scheduleItems }, { data: photos }, { data: allTreatments }] =
     await Promise.all([
     supabase
       .from("cases")
@@ -23,7 +24,7 @@ export async function getClinicCaseAction(caseId: string) {
     supabase
       .from("case_keloid_lesions")
       .select(
-        "id, site_no, body_site, body_part_zone_id, length_cm, width_cm, height_cm, measure_waived, photo_waived, body_part_zones(display_name, dose_category)"
+        "id, site_no, body_site, body_part_zone_id, length_cm, width_cm, height_cm, measured_at, measure_waived, photo_waived, body_part_zones(display_name, dose_category)"
       )
       .eq("case_id", caseId)
       .order("site_no"),
@@ -35,7 +36,9 @@ export async function getClinicCaseAction(caseId: string) {
       .eq("status", "pending")
       .order("due_date"),
     // 病灶照片張數：卡片要提醒「這位還沒量／還沒拍，別讓他走」（決策 2026-08-20）
-    supabase.from("photos").select("lesion_id").eq("case_id", caseId),
+    supabase.from("photos").select("lesion_id, taken_at").eq("case_id", caseId),
+    // 回診進度：今天有沒有登記回診（＝今天有沒有任何一筆治療紀錄，含「追蹤（無治療）」）
+    supabase.from("treatment_records").select("treatment_date, treatment_types(name)").eq("case_id", caseId),
   ]);
 
   const doctor = caseRow ? (Array.isArray(caseRow.doctors) ? caseRow.doctors[0] : caseRow.doctors) : null;
@@ -59,8 +62,41 @@ export async function getClinicCaseAction(caseId: string) {
     }))
   );
 
+  // ── 回診進度（決策 2026-08-20）──────────────────────────────
+  // 收案動線看的是「有沒有做過」，回診看的是「今天做了沒」——三個月前拍過照
+  // 對這次回診沒有意義。所以這裡的判定一律限定當天。
+  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(new Date());
+  const typeNameOf = (t: { treatment_types: unknown }) => {
+    const tt = Array.isArray(t.treatment_types) ? t.treatment_types[0] : t.treatment_types;
+    return (tt as { name?: string } | null)?.name ?? "";
+  };
+  const surgeryDate = (allTreatments ?? []).find((t) => typeNameOf(t) === "手術切除")?.treatment_date ?? null;
+  const visitRegistered = (allTreatments ?? []).some((t) => t.treatment_date === today);
+  const photoTodayCount = new Map<string, number>();
+  for (const p of photos ?? []) {
+    if (p.lesion_id && String(p.taken_at).slice(0, 10) === today) {
+      photoTodayCount.set(p.lesion_id, (photoTodayCount.get(p.lesion_id) ?? 0) + 1);
+    }
+  }
+  const visitTodos = visitLesionTodos(
+    (lesions ?? []).map((l) => ({
+      id: l.id,
+      site_no: l.site_no,
+      body_site: l.body_site,
+      measured_at: l.measured_at,
+      hasSize: l.length_cm !== null && l.width_cm !== null && l.height_cm !== null,
+      photoCountToday: photoTodayCount.get(l.id) ?? 0,
+    })),
+    today
+  );
+
   return {
     measureBlockers: measureBlocked,
+    /** 已登記手術＝進入追蹤期，卡片才顯示回診動線那一段 */
+    inFollowup: surgeryDate !== null,
+    visitRegistered,
+    visitTodos,
+    monthIndex: monthsSinceSurgery(surgeryDate, today),
     id: caseRow?.id ?? caseId,
     research_id: caseRow?.research_id ?? "",
     doctor: doctor ? `${doctor.code} ${doctor.name}` : "",

@@ -185,3 +185,19 @@ export async function appendRowToVault(
     return { status: "failed", message: err instanceof Error ? err.message : "寫入保管庫失敗" };
   }
 }
+
+/**
+ * 讀出保管庫裡的全部對照（2026-08-20，收案前的病歷號重複檢查用）。
+ *
+ * 平板沒有本機 CSV 可讀，重複檢查的唯一資料來源就是保管庫。
+ * 沒解鎖時回 null 而不是空陣列——「查不到」與「確定沒有」必須分得出來，
+ * 否則鎖著的保管庫會讓每一筆重複都變成「沒撞到」而放行。
+ */
+export async function readVaultRows(): Promise<MrnMappingRow[] | null> {
+  const held = await getVaultKey();
+  if (!held) return null;
+  const existing = await loadVaultAction();
+  if (!existing) return [];
+  if (existing.salt !== held.salt) return null; // 別台裝置用新通行碼重建過，手上的金鑰對不上
+  return decryptWithKey(existing, held.key);
+}

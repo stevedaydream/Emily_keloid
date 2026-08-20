@@ -536,12 +536,18 @@ export default async function CaseDetailPage({
             >
               {patientIntakeDone === 0 ? "交給病人填" : patientIntakeDone < PATIENT_INTAKE_SEGMENTS.length ? "繼續填" : "重新填寫"}
             </Link>
-            {/* 收案當次的完整動線（自填→量測拍照→JSS）都在這一頁，個案頁只留入口（決策 2026-08-20） */}
+            {/* 收案／回診當次的完整動線都各自成頁，個案頁只留入口（決策 2026-08-20） */}
             <Link
               href={`/cases/${id}/clinic-flow`}
               className="whitespace-nowrap rounded-md border border-brand-200 px-3 py-1.5 text-xs text-brand-700 hover:bg-brand-50"
             >
               診間收案動線 →
+            </Link>
+            <Link
+              href={`/cases/${id}/visit-flow`}
+              className="whitespace-nowrap rounded-md border border-brand-200 px-3 py-1.5 text-xs text-brand-700 hover:bg-brand-50"
+            >
+              回診登記 →
             </Link>
           </span>
         </div>

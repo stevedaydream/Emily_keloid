@@ -48,3 +48,25 @@ export function measureBlockers(lesions: LesionCheck[]): string[] {
   }
   return out;
 }
+
+/**
+ * 步驟 3「醫師評分」要填的量表（2026-08-20）。
+ *
+ * 兩份都要醫師看同一顆病灶、摸同一個質地——JSS 的「11. 疤痕周圍紅斑」與 VSS 的「血管分布」
+ * 是同一件事的兩種刻度，「8. 垂直生長」與「高度/厚度」也是。分成兩次做等於摸兩次病人，
+ * 所以擺在同一關、兩份都完成才算結束。
+ *
+ * 兩份都排在量測之後：JSS 有「7. 大小」「8. 垂直生長／隆起」，VSS 的高度直接用 mm 分級，
+ * 沒量長寬高那幾題只能用猜的。
+ *
+ * 順序＝畫面上的排列順序。JSS 是診斷分類（這是不是蟹足腫，初診定性），
+ * VSS 是嚴重度評分（每次追蹤重複測，看治療成效），沒有先後依賴，先列定性的那份。
+ */
+export const CLINICIAN_SCALE_NAMES = ["JSS 疤痕診斷分類表", "Vancouver Scar Scale (VSS)"] as const;
+
+export type ClinicianScale = {
+  id: string;
+  name: string;
+  /** 這次門診（今天）已經填過 */
+  done: boolean;
+};
