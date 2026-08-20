@@ -97,7 +97,7 @@ export default async function DashboardPage({
   const [{ data: statsRow }, { data: pipelineRaw }, { data: casesRaw }, { data: doctorList }] = await Promise.all([
     supabase.from("v_dashboard_stats").select("*").single(),
     supabase.from("v_case_pipeline_progress").select("*").order("progress_pct", { ascending: true }),
-    supabase.from("cases").select("id, enrollment_year, body_site, data_source, doctors(code, name)"),
+    supabase.from("cases").select("id, research_id, enrollment_year, body_site, data_source, consent_signed_at, created_at, doctors(code, name)"),
     supabase.from("doctors").select("id, code, name").eq("active", true).order("code"),
   ]);
 
@@ -145,6 +145,12 @@ export default async function DashboardPage({
   const bySite = countBy(cases, (c) => c.body_site);
   const currentYear = new Date().getFullYear();
 
+  // 已收案、同意書未簽（決策 2026-08-20 F-C2）。實務上病人先在平板填完才補簽，
+  // 所以這張清單是常態工作名單；匯出預設也會把這些個案排除在外。
+  const unconsented = cases
+    .filter((c) => !c.consent_signed_at)
+    .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -155,6 +161,33 @@ export default async function DashboardPage({
       </div>
 
       <CaseSearchBox redirectTo="/cases" />
+
+      {unconsented.length > 0 && (
+        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <h2 className="text-sm font-semibold text-amber-900">
+            已收案、同意書未簽
+            <span className="ml-2 font-data text-xs font-normal text-amber-700">{unconsented.length} 位</span>
+          </h2>
+          <p className="mt-1 text-xs text-amber-800/70">
+            這些個案的問卷與檢體資料在研究上尚不可用，<b>匯出時預設會被排除</b>。補上同意書日期後就會自動納入。
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {unconsented.slice(0, 30).map((c) => (
+              <li key={c.id}>
+                <Link
+                  href={`/cases/${c.id}#section-consent`}
+                  className="whitespace-nowrap rounded-md border border-amber-300 bg-white px-2 py-1 font-data text-xs text-amber-900 hover:bg-amber-100"
+                >
+                  {c.research_id}
+                </Link>
+              </li>
+            ))}
+            {unconsented.length > 30 && (
+              <li className="self-center text-xs text-amber-800/60">…另有 {unconsented.length - 30} 位</li>
+            )}
+          </ul>
+        </section>
+      )}
 
       {/* KPI 卡片 */}
       <section id="section-kpi" data-nav-section data-nav-label="KPI 卡片" className="scroll-mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">

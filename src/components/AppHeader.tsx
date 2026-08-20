@@ -6,38 +6,27 @@ import BrandMark from "@/components/ui/BrandMark";
 import { buttonClasses } from "@/components/ui/buttonStyles";
 import { useLocalNames } from "@/components/LocalNameProvider";
 
-type LandingMode = "intake" | "full";
+// 導覽列只有一張（決策 2026-08-20，見 pending.md F-A5）。
+// 原本依 landing_mode 分 intake/full 兩組，前提是「醫師只建檔、其他人只登打」；
+// 部長退出收案後那個前提消失，收案的人同時也是登打的人，兩組都不合用。
+//
+// 取捨改由 nav_compact 決定：診間護理師只要收案建檔、門診當下登打、遞平板，
+// 其餘「收折保留」——收進「更多」，不是拿掉。沒有權限，藏掉只會讓人從網址列繞回去。
+const QUICK_LINKS = [
+  { href: "/cases", label: "個案列表" },
+  { href: "/intake", label: "+ 收案" },
+];
 
-// 導覽依身分的預設落點分兩組（決策 2026-07-29）。
-// intake＝連續收案的醫師：只留他用得到的，不再讓他自己在四個後台入口裡找路。
-// 這是動線不是權限——「完整功能」那個連結仍然通到 dashboard，任何頁面都進得去。
-const QUICK_LINKS: Record<LandingMode, { href: string; label: string }[]> = {
-  full: [
-    { href: "/cases", label: "個案列表" },
-    { href: "/cases/new", label: "+ 新增個案" },
-  ],
-  intake: [
-    { href: "/cases", label: "個案列表" },
-    { href: "/intake", label: "+ 收案" },
-  ],
-};
+/** 精簡模式也留著的核心動線。收案與個案列表是上面那兩顆按鈕，所以這裡只剩今日門診。 */
+const NAV_CORE = [{ href: "/clinic-today", label: "今日門診" }];
 
-const NAV_LINKS: Record<LandingMode, { href: string; label: string }[]> = {
-  full: [
-    { href: "/clinic-today", label: "今日門診" },
-    { href: "/batch-edit", label: "批次編輯" },
-    { href: "/admin", label: "後台管理" },
-    { href: "/export", label: "資料匯出" },
-    { href: "/about", label: "導覽" },
-  ],
-  intake: [
-    { href: "/intake", label: "收案" },
-    { href: "/cases", label: "個案列表" },
-    { href: "/export", label: "資料匯出" },
-    { href: "/about", label: "導覽" },
-    { href: "/", label: "完整功能" },
-  ],
-};
+/** 精簡模式收進「更多」的其餘功能。 */
+const NAV_MORE = [
+  { href: "/batch-edit", label: "批次編輯" },
+  { href: "/admin", label: "後台管理" },
+  { href: "/export", label: "資料匯出" },
+  { href: "/about", label: "導覽" },
+];
 
 // 姓名顯示開關：只有掛了本機對照表（linked）才有意義，沒掛的時候整顆隱藏。
 function ShowNamesToggle({ className = "" }: { className?: string }) {
@@ -69,14 +58,16 @@ function ShowNamesToggle({ className = "" }: { className?: string }) {
 
 export default function AppHeader({
   operator,
-  landingMode = "full",
+  navCompact = false,
 }: {
   operator: string;
-  landingMode?: LandingMode;
+  navCompact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const quickLinks = QUICK_LINKS[landingMode];
-  const navLinks = NAV_LINKS[landingMode];
+  const quickLinks = QUICK_LINKS;
+  // 精簡模式：核心留在列上，其餘收進「更多」。非精簡模式就是一張攤平的完整導覽列。
+  const navLinks = navCompact ? NAV_CORE : [...NAV_CORE, ...NAV_MORE];
+  const collapsed = navCompact ? NAV_MORE : [];
   const primary = quickLinks[quickLinks.length - 1];
   const secondary = quickLinks[0];
 
@@ -99,12 +90,31 @@ export default function AppHeader({
             <BrandMark size={28} />
             <span className="font-heading text-sm font-medium text-brand-900">蟹足腫研究平台</span>
           </Link>
-          <nav className="hidden gap-4 text-sm text-ink/60 md:flex">
+          <nav className="hidden items-center gap-4 text-sm text-ink/60 md:flex">
             {navLinks.map((l) => (
               <Link key={l.href} href={l.href} className="whitespace-nowrap hover:text-brand-700">
                 {l.label}
               </Link>
             ))}
+            {collapsed.length > 0 && (
+              /* 用原生 details 而不是自己管 open state：點外面會自動收起，不必加全域監聽 */
+              <details className="relative">
+                <summary className="cursor-pointer list-none whitespace-nowrap hover:text-brand-700 [&::-webkit-details-marker]:hidden">
+                  更多 ▾
+                </summary>
+                <div className="absolute left-0 top-full z-40 mt-2 flex min-w-36 flex-col rounded-md border border-brand-100 bg-paper-raised py-1 shadow-lg">
+                  {collapsed.map((l) => (
+                    <Link
+                      key={l.href}
+                      href={l.href}
+                      className="whitespace-nowrap px-3 py-1.5 text-ink/70 hover:bg-brand-50 hover:text-brand-800"
+                    >
+                      {l.label}
+                    </Link>
+                  ))}
+                </div>
+              </details>
+            )}
           </nav>
         </div>
         <div className="hidden items-center gap-2 md:flex">
@@ -173,6 +183,25 @@ export default function AppHeader({
                   {l.label}
                 </Link>
               ))}
+              {collapsed.length > 0 && (
+                <details className="mt-1 border-t border-brand-50 pt-1">
+                  <summary className="cursor-pointer list-none rounded-md px-2 py-2 text-ink/50 [&::-webkit-details-marker]:hidden">
+                    更多 ▾
+                  </summary>
+                  <div className="flex flex-col gap-1">
+                    {collapsed.map((l) => (
+                      <Link
+                        key={l.href}
+                        href={l.href}
+                        onClick={() => setOpen(false)}
+                        className="whitespace-nowrap rounded-md px-2 py-2 text-ink/70 hover:bg-brand-50"
+                      >
+                        {l.label}
+                      </Link>
+                    ))}
+                  </div>
+                </details>
+              )}
             </nav>
             <div className="mt-3 border-t border-brand-100 pt-3">
               <ShowNamesToggle className="w-full" />

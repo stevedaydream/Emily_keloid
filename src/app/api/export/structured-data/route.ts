@@ -98,6 +98,7 @@ type CaseRow = {
   id: string;
   research_id: string;
   created_at: string;
+  consent_signed_at: string | null;
   enrollment_year: number | null;
   doctor_id: string | null;
   data_source: string | null;
@@ -156,6 +157,8 @@ export async function GET(request: Request) {
   const filterOperated = sp.get("operated") || null; // "yes" | "no"
   const filterSource = sp.get("source") || null; // "normal" | "legacy_import"
   const sort = sp.get("sort") || "created"; // created | research_id | surgery
+  // 同意書：預設只匯出已簽署的（決策 2026-08-20 F-C2）。consent=all 才會把未簽的一起帶出來。
+  const includeUnconsented = sp.get("consent") === "all";
 
   const [
     { data: casesRaw },
@@ -207,6 +210,12 @@ export async function GET(request: Request) {
     supabase.from("icd_codes").select("code, description_full, export_code").order("code"),
     supabase.from("treatment_types").select("name, field_schema"),
     supabase.from("radiotherapy_doctors").select("name, export_code"),
+  ]);
+
+  // 對照組是獨立的表（見下方「對照組」分頁），與 cases 完全不相干，所以單獨撈。
+  const [{ data: controlSubjects }, { data: controlLabResults }] = await Promise.all([
+    supabase.from("control_subjects").select("*").eq("active", true).order("subject_code"),
+    supabase.from("lab_results").select("control_subject_id, marker_id, value, value_text").not("control_subject_id", "is", null),
   ]);
 
   const zones = (zonesRaw ?? []) as Zone[];
@@ -436,6 +445,7 @@ export async function GET(request: Request) {
   if (filterSource) cases = cases.filter((c) => (c.data_source ?? "normal") === filterSource);
   if (filterOperated === "yes") cases = cases.filter((c) => surgeryDateOf(c.id) !== null);
   if (filterOperated === "no") cases = cases.filter((c) => surgeryDateOf(c.id) === null);
+  if (!includeUnconsented) cases = cases.filter((c) => Boolean(c.consent_signed_at));
 
   // ---- 排序（預設＝收案建檔順序，即部長說的「收案點選先後順序」）----
   if (sort === "research_id") {
@@ -828,6 +838,39 @@ export async function GET(request: Request) {
     ]);
   addSheet("Lab 生物標記逐筆", ["Subject_ID", "標記", "單位", "採檢日期", "數值", "原始字串", "備註", "記錄者"], labRows);
 
+  // ---- 對照組（健康受試者）----
+  // 獨立一張分頁（決策 2026-08-20 F-F3）：他們不在 cases 裡，也不該進 Basic Info.——
+  // 一個人一次抽血，其餘兩百多欄對他們永遠是空的。Lab 數值與實驗組共用同一張表，
+  // 所以下面把該受試者的生物標記一併攤平在同一列後面，跑組間比較不用再合併兩個來源。
+  const controlMarkers = labMarkers ?? [];
+  const controlLabBySubject = new Map<string, Map<string, string | number>>();
+  for (const r of controlLabResults ?? []) {
+    if (!r.control_subject_id) continue;
+    const row = controlLabBySubject.get(r.control_subject_id) ?? new Map();
+    row.set(r.marker_id, r.value ?? r.value_text ?? "");
+    controlLabBySubject.set(r.control_subject_id, row);
+  }
+  const controlRows = (controlSubjects ?? [])
+    .filter((cs) => includeUnconsented || Boolean(cs.consent_signed_at))
+    .map((cs) => {
+      const markers = controlLabBySubject.get(cs.id);
+      return [
+        cs.subject_code ?? "",
+        cs.sex === "male" ? 1 : cs.sex === "female" ? 2 : "",
+        cs.age_at_enrollment ?? "",
+        cs.consent_signed_at ?? "",
+        cs.blood_draw_date ?? "",
+        cs.notes ?? "",
+        ...controlMarkers.map((m) => markers?.get(m.id) ?? ""),
+      ];
+    });
+  addSheet(
+    "對照組",
+    ["Subject_ID", "gender", "Age", "同意書簽署日", "抽血日期", "備註", ...controlMarkers.map((m) => m.display_name)],
+    controlRows,
+    18
+  );
+
   // ---- 問卷逐題作答（docx 項次 9）----
   // 「目前 JSS raw data 是給總分、SF-36 是給各項 8 項指標的各項總分，附上 raw data 呈現結果」
   // ＝ 主表與「問卷分數」附表只有計分結果，這裡逐題列出病人實際點了哪個選項。
@@ -890,6 +933,27 @@ export async function GET(request: Request) {
       icdCodes: icdCodes ?? [],
       sf36Scales: SF36_SCALES,
     }),
+    22
+  );
+
+  // ---- 同意書時序檢查（決策 2026-08-20 F-C3）----
+  // 實務上病人先在平板填完問卷、之後才補簽同意書，所以「問卷填寫時間早於同意書簽署日」
+  // 在這裡是常態而非例外。系統不擋、不跳警告，但要讓它有紀錄、可查、可統計。
+  const consentTimeline: (string | number)[][] = [];
+  for (const c of cases) {
+    const caseResponses = (responses ?? []).filter((r) => r.case_id === c.id && r.submitted_at);
+    if (caseResponses.length === 0) continue;
+    const earliest = caseResponses.map((r) => String(r.submitted_at).slice(0, 10)).sort()[0];
+    if (!c.consent_signed_at) {
+      consentTimeline.push([c.research_id, earliest, "（未簽署）", caseResponses.length, "同意書日期空白——這些問卷資料在研究上尚不可用"]);
+    } else if (earliest < String(c.consent_signed_at).slice(0, 10)) {
+      consentTimeline.push([c.research_id, earliest, c.consent_signed_at, caseResponses.length, "最早的問卷填寫日早於同意書簽署日"]);
+    }
+  }
+  addSheet(
+    "同意書時序檢查",
+    ["Subject_ID", "最早問卷填寫日", "同意書簽署日", "問卷份數", "說明"],
+    consentTimeline,
     22
   );
 

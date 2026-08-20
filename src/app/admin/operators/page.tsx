@@ -5,15 +5,11 @@ import {
   updateOperatorAction,
   deleteOperatorAction,
   toggleDevMobileMappingAction,
+  toggleNavCompactAction,
 } from "./actions";
+import { LANDING_OPTIONS, LANDING_LABEL, toLandingMode } from "@/lib/operator";
 import SubmitButton from "@/components/ui/SubmitButton";
 import EditableListItem from "@/components/admin/EditableListItem";
-
-const LANDING_OPTIONS = [
-  { value: "full", label: "完整後台" },
-  { value: "intake", label: "精簡收案頁" },
-];
-const LANDING_LABEL: Record<string, string> = { full: "完整後台", intake: "精簡收案頁" };
 
 export default async function OperatorsAdminPage() {
   const supabase = supabaseServer();
@@ -24,8 +20,9 @@ export default async function OperatorsAdminPage() {
       <h1 className="font-heading text-xl font-medium text-brand-900">操作者清單</h1>
       <p className="text-sm text-ink/50">
         共用帳號登入後，選擇「目前操作者」用於稽核紀錄。
-        「登入後落點」決定這位操作者選完身分要進哪一頁——連續收案的醫師選「精簡收案頁」，
-        其餘選「完整後台」。<b>這只是預設落點，不是權限</b>：任何人仍可自行前往任何頁面。
+        「登入後落點」決定這位操作者選完身分要進哪一頁；「精簡導覽列」把非核心功能收進「更多」，
+        給只需要收案建檔、門診登打、遞平板的診間護理師用。
+        <b>兩者都只是動線，不是權限</b>：任何人仍可自行前往任何頁面。
       </p>
 
       <form action={addOperatorAction} className="flex flex-wrap items-end gap-2 rounded-lg border border-brand-100 bg-paper-raised p-4">
@@ -39,7 +36,7 @@ export default async function OperatorsAdminPage() {
         </div>
         <div>
           <label className="block text-xs font-medium text-ink/60">登入後落點</label>
-          <select name="landing_mode" defaultValue="full" className="mt-1 w-36 rounded-md border border-brand-200 px-2 py-1.5 text-sm">
+          <select name="landing_mode" defaultValue="dashboard" className="mt-1 w-36 rounded-md border border-brand-200 px-2 py-1.5 text-sm">
             {LANDING_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
@@ -47,6 +44,10 @@ export default async function OperatorsAdminPage() {
             ))}
           </select>
         </div>
+        <label className="flex items-center gap-1.5 pb-1.5 text-xs text-ink/60">
+          <input type="checkbox" name="nav_compact" className="rounded border-brand-300" />
+          精簡導覽列
+        </label>
         <SubmitButton pendingText="新增中…">新增</SubmitButton>
       </form>
 
@@ -61,7 +62,7 @@ export default async function OperatorsAdminPage() {
                 {
                   name: "landing_mode",
                   label: "登入後落點",
-                  defaultValue: o.landing_mode ?? "full",
+                  defaultValue: toLandingMode(o.landing_mode),
                   type: "select",
                   options: LANDING_OPTIONS,
                 },
@@ -70,6 +71,18 @@ export default async function OperatorsAdminPage() {
               deleteAction={deleteOperatorAction}
               trailing={
                 <span className="flex items-center gap-3">
+                  <form action={toggleNavCompactAction}>
+                    <input type="hidden" name="id" value={o.id} />
+                    <input type="hidden" name="nav_compact" value={String(o.nav_compact)} />
+                    <SubmitButton
+                      variant="ghost"
+                      size="sm"
+                      className="!px-0 !py-0 whitespace-nowrap text-xs text-ink/40 underline hover:!bg-transparent"
+                      pendingText="處理中…"
+                    >
+                      {o.nav_compact ? "取消精簡導覽" : "設為精簡導覽"}
+                    </SubmitButton>
+                  </form>
                   <form action={toggleDevMobileMappingAction}>
                     <input type="hidden" name="id" value={o.id} />
                     <input type="hidden" name="dev_mobile_mapping" value={String(o.dev_mobile_mapping)} />
@@ -94,13 +107,17 @@ export default async function OperatorsAdminPage() {
             >
               <span className={o.active ? "" : "text-ink/30 line-through"}>
                 {o.name} {o.role && <span className="text-xs text-ink/40">（{o.role}）</span>}
-                <span
-                  className={`ml-2 whitespace-nowrap rounded px-1.5 py-0.5 text-xs ${
-                    o.landing_mode === "intake" ? "bg-accent-100 text-accent-800" : "bg-brand-50 text-brand-800"
-                  }`}
-                >
-                  {LANDING_LABEL[o.landing_mode ?? "full"]}
+                <span className="ml-2 whitespace-nowrap rounded bg-brand-50 px-1.5 py-0.5 text-xs text-brand-800">
+                  → {LANDING_LABEL[toLandingMode(o.landing_mode)]}
                 </span>
+                {o.nav_compact && (
+                  <span
+                    className="ml-2 whitespace-nowrap rounded bg-accent-100 px-1.5 py-0.5 text-xs text-accent-800"
+                    title="導覽列只留「+ 收案・今日門診・個案列表」，其餘收進「更多」"
+                  >
+                    精簡導覽
+                  </span>
+                )}
                 {o.dev_mobile_mapping && (
                   <span
                     className="ml-2 whitespace-nowrap rounded bg-sky-100 px-1.5 py-0.5 text-xs text-sky-800"

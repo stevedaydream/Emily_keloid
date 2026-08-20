@@ -3,7 +3,6 @@
 import { usePathname } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
 import BackToTopButton from "@/components/BackToTopButton";
-import type { LandingMode } from "@/lib/operator";
 
 /** 病人自填頁是要交到病人手上的全螢幕介面：不掛導覽列、不套內距。 */
 function isKioskPath(pathname: string): boolean {
@@ -25,12 +24,12 @@ function isKioskPath(pathname: string): boolean {
  */
 export default function AppChrome({
   operator,
-  landingMode,
+  navCompact,
   initialPathname,
   children,
 }: {
   operator: string | null;
-  landingMode: LandingMode;
+  navCompact: boolean;
   initialPathname: string;
   children: React.ReactNode;
 }) {
@@ -39,7 +38,7 @@ export default function AppChrome({
 
   return (
     <>
-      {operator && !kiosk && <AppHeader operator={operator} landingMode={landingMode} />}
+      {operator && !kiosk && <AppHeader operator={operator} navCompact={navCompact} />}
       <main className={kiosk ? "flex-1" : "mx-auto w-full max-w-6xl flex-1 px-4 py-6"}>{children}</main>
       {!kiosk && <BackToTopButton />}
     </>

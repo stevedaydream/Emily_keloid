@@ -42,8 +42,11 @@ const PSQI_SLEEP_LATENCY: BigChoiceOption[] = [
   { value: "45", label: "31 到 60 分鐘" },
   { value: "90", label: "超過 60 分鐘" },
 ];
-/** 5j 是自由文字補充、且不列入 PSQI 計分，病人版直接略過。 */
-const PSQI_SKIP_ORDER = 14;
+/** 5j、11e 是自由文字補充、且不列入 PSQI 計分，病人版直接略過。 */
+const PSQI_SKIP_ORDERS = [14, 24];
+/** 第10題（睡伴／室友）答「沒有睡伴或室友」時，第11題（睡伴觀察到的情形）整組跳過。 */
+const PSQI_BED_PARTNER_ORDER = 19;
+const PSQI_PARTNER_ONLY_ORDERS = [20, 21, 22, 23, 24];
 
 type Screen = {
   segment: PatientIntakeSegmentKey;
@@ -249,7 +252,15 @@ export default function PatientIntakeFlow({
       ["psqi", psqi],
     ] as const) {
       if (!q) continue;
-      const usable = q.questions.filter((x) => !(segment === "psqi" && x.order_no === PSQI_SKIP_ORDER));
+      const noBedPartner =
+        segment === "psqi" &&
+        String(answers[q.questions.find((x) => x.order_no === PSQI_BED_PARTNER_ORDER)?.id ?? ""] ?? "") === "0";
+      const usable = q.questions.filter((x) => {
+        if (segment !== "psqi") return true;
+        if (PSQI_SKIP_ORDERS.includes(x.order_no)) return false;
+        if (noBedPartner && PSQI_PARTNER_ONLY_ORDERS.includes(x.order_no)) return false;
+        return true;
+      });
       for (const page of paginateQuestions(usable)) {
         list.push({
           segment,

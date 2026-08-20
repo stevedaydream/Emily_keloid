@@ -4,24 +4,16 @@ import { supabaseServer } from "@/lib/supabase";
 import { generateResearchId } from "@/lib/researchId";
 import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
+import { BIOBANK_ITEM_LABEL } from "@/lib/biobank";
 
 export async function createCaseAction(formData: FormData): Promise<{ caseId: string; researchId: string }> {
   const supabase = supabaseServer();
   const operator = (await getCurrentOperator()) ?? "未知操作者";
 
+  // 收案表單只剩三格（決策 2026-08-20，見 pending.md F-B）：病歷號、姓名都只寫本機對照表，
+  // 送到伺服器的實際上只有 doctor_id。性別／年齡／出生日期／手機由病人自填頁收；
+  // ICD 診斷、同意書日期在個案頁補；追蹤時程改以手術日起算，登記手術後才產生。
   const doctorId = formData.get("doctor_id") as string;
-  // 診斷（決策 2026-07-28：建檔頁改收 ICD 診斷，部位改在個案頁面用人形圖登記）
-  const icdCodeIds = formData.getAll("icd_code_ids") as string[];
-  const primaryIcdCodeId = (formData.get("primary_icd_code_id") as string) || null;
-  const phoneNumber = formData.get("phone_number") as string;
-  const scheduleTemplateId = formData.get("schedule_template_id") as string;
-  const consentSignedAt = formData.get("consent_signed_at") as string;
-  const sex = (formData.get("sex") as string) || null;
-  const ageRaw = formData.get("age_at_enrollment") as string;
-  const ageAtEnrollment = ageRaw ? Number(ageRaw) : null;
-  // 出生日期（2026-08-13 使用者決定加入）。⚠️ 與性別/部位組合具再識別風險，
-  // 是決策 #1「雲端只存年齡」的例外，見 project.md 安全性備忘。
-  const birthDate = ((formData.get("birth_date") as string) ?? "").trim() || null;
 
   const { data: doctor } = await supabase
     .from("doctors")
@@ -45,13 +37,6 @@ export async function createCaseAction(formData: FormData): Promise<{ caseId: st
       doctor_id: doctorId,
       enrollment_year: year,
       sequence_no: sequenceNo,
-      sex,
-      age_at_enrollment: ageAtEnrollment,
-      birth_date: birthDate,
-      phone_number: phoneNumber || null,
-      schedule_template_id: scheduleTemplateId || null,
-      consent_signed_at: consentSignedAt || null,
-      consent_confirmed_by: consentSignedAt ? operator : null,
       created_by: operator,
     })
     .select("id")
@@ -59,41 +44,14 @@ export async function createCaseAction(formData: FormData): Promise<{ caseId: st
 
   if (error || !newCase) throw error ?? new Error("建立個案失敗");
 
-  // 建檔時勾選的 ICD 診斷（可複選：主診斷＋共病）。留空代表之後在個案頁面再補。
-  if (icdCodeIds.length > 0) {
-    await supabase.from("case_diagnoses").insert(
-      icdCodeIds.map((icdCodeId) => ({
-        case_id: newCase.id,
-        icd_code_id: icdCodeId,
-        is_primary: icdCodeId === primaryIcdCodeId,
-      }))
-    );
-  }
-
-  // 套用時程範本，產生個案實際時程（可之後個別微調）
-  if (scheduleTemplateId) {
-    const { data: templateItems } = await supabase
-      .from("schedule_template_items")
-      .select("label, offset_days, actions, questionnaire_id, id")
-      .eq("template_id", scheduleTemplateId);
-
-    if (templateItems && templateItems.length > 0) {
-      const today = new Date();
-      const rows = templateItems.map((item) => {
-        const due = new Date(today);
-        due.setDate(due.getDate() + item.offset_days);
-        return {
-          case_id: newCase.id,
-          label: item.label,
-          due_date: due.toISOString().slice(0, 10),
-          actions: item.actions,
-          questionnaire_id: item.questionnaire_id,
-          source_template_item_id: item.id,
-        };
-      });
-      await supabase.from("case_schedule_items").insert(rows);
-    }
-  }
+  // 術前抽血 baseline：唯一 100% 必做、且必須在手術前完成的事，所以收案當下就開待辦
+  // （決策 2026-08-20 F-E6）。其餘三次抽血以手術日為錨點，登記手術時才產生。
+  await supabase.from("biobank_checklist_items").insert({
+    case_id: newCase.id,
+    item_key: "blood_pre_op",
+    item_label: BIOBANK_ITEM_LABEL["blood_pre_op"],
+    collected: false,
+  });
 
   await logAudit({
     caseId: newCase.id,
@@ -101,7 +59,7 @@ export async function createCaseAction(formData: FormData): Promise<{ caseId: st
     action: "create_case",
     entity: "cases",
     entityId: newCase.id,
-    detail: { research_id: researchId, icdCodeIds },
+    detail: { research_id: researchId },
   });
 
   return { caseId: newCase.id, researchId };

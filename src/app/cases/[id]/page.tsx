@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase";
+import { BIOBANK_ITEMS, isOutOfWindow } from "@/lib/biobank";
 import {
   markScheduleItemAction,
   updateScheduleItemQuestionnaireAction,
@@ -68,13 +69,6 @@ const COMPLETENESS_ANCHOR: Record<string, string | undefined> = {
   phone: "section-demographics",
 };
 
-const BIOBANK_ITEMS = [
-  { key: "tissue_paraffin_block", label: "蠟塊", group: "組織" },
-  { key: "tissue_keloid_fibroblast_culture", label: "Keloid fibroblast 原代培養", group: "組織" },
-  { key: "tissue_periskin_fibroblast_culture", label: "Periskin fibroblast 原代培養", group: "組織" },
-  { key: "blood_pre_op", label: "術前", group: "血液" },
-  { key: "blood_post_op_day1", label: "術後治療第一天", group: "血液" },
-] as const;
 
 // 區塊標題旁的來源標記：這一段是病人自己填的，人員看得出來（也隨時可以覆蓋修改）。
 function PatientFilledBadge({ entry }: { entry?: { completed_at: string; filled_via: string } }) {
@@ -1121,6 +1115,23 @@ export default async function CaseDetailPage({
                       >
                         {existing?.collected ? "已收" : "待收"}
                       </span>
+                      {/* 窗期只顯示不擋：檢體都抽了，擋下來只會逼人填假日期（決策 2026-08-20 F-E4） */}
+                      {existing?.window_start && existing?.window_end && (
+                        <span
+                          className="whitespace-nowrap font-data text-xs text-ink/40"
+                          title="計畫書規定的採檢窗期"
+                        >
+                          窗期 {existing.window_start} ~ {existing.window_end}
+                        </span>
+                      )}
+                      {isOutOfWindow(existing?.collected_date, existing?.window_start, existing?.window_end) && (
+                        <span
+                          className="whitespace-nowrap rounded bg-red-100 px-2 py-0.5 text-xs text-red-700"
+                          title="採檢日期落在計畫書窗期之外，匯出時會標記為 protocol deviation"
+                        >
+                          窗外採檢
+                        </span>
+                      )}
                       <SubmitButton variant="ghost" size="sm" className="!px-1.5 !py-0.5 text-ink/40 underline" pendingText="更新中…">
                         更新
                       </SubmitButton>
@@ -1502,9 +1513,23 @@ export default async function CaseDetailPage({
                         : "bg-accent-100 text-accent-800"
                     }`}
                   >
-                    {item.status === "done" ? "已完成" : item.status === "skipped" ? "已跳過" : "待處理"}
+                    {item.status === "done" ? "已完成" : item.status === "skipped" ? "本月免回診" : "待處理"}
                   </span>
                 </div>
+
+                {item.status === "skipped" && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-ink/40">
+                    <span>{item.skipped_reason ?? "醫師判定免回診"}</span>
+                    <form action={markScheduleItemAction}>
+                      <input type="hidden" name="case_id" value={id} />
+                      <input type="hidden" name="item_id" value={item.id} />
+                      <input type="hidden" name="status" value="pending" />
+                      <SubmitButton variant="ghost" size="sm" className="!px-1 !py-0 text-xs underline" pendingText="處理中…">
+                        改回待處理
+                      </SubmitButton>
+                    </form>
+                  </div>
+                )}
 
                 {/* 改期：範本算出來的日期只是預估，實際約診日確定後改這裡，提醒才會在對的日子送出 */}
                 {item.status === "pending" && (
@@ -1560,6 +1585,21 @@ export default async function CaseDetailPage({
                           標記完成
                         </SubmitButton>
                       </form>
+                      {/* 醫師判定穩定、改為每 2 個月追蹤時，跳過的月份標這個而不是刪掉：
+                          欄位對齊 FW1–24 不變，也查得到是從第幾個月開始降頻的（決策 2026-08-20 F-D3） */}
+                      <form action={markScheduleItemAction}>
+                        <input type="hidden" name="case_id" value={id} />
+                        <input type="hidden" name="item_id" value={item.id} />
+                        <input type="hidden" name="status" value="skipped" />
+                        <SubmitButton
+                          variant="ghost"
+                          size="sm"
+                          className="!px-1.5 !py-0.5 text-ink/40 underline"
+                          pendingText="處理中…"
+                        >
+                          本月免回診
+                        </SubmitButton>
+                      </form>
                     </span>
                   </div>
                 )}
@@ -1596,7 +1636,9 @@ export default async function CaseDetailPage({
               </div>
             </li>
           ))}
-          {(!scheduleItems || scheduleItems.length === 0) && <li className="text-sm text-ink/40">尚未套用時程範本</li>}
+          {(!scheduleItems || scheduleItems.length === 0) && (
+            <li className="text-sm text-ink/40">尚未產生追蹤時程——登記「手術切除」治療紀錄後，會以手術日為起點自動排出術後 24 個月的每月追蹤與後三次抽血。</li>
+          )}
         </ul>
       </section>
 

@@ -4,10 +4,9 @@ import NewCaseForm from "@/app/cases/new/NewCaseForm";
 import PatientName from "@/components/LocalNameProvider";
 import { PATIENT_INTAKE_SEGMENTS } from "@/lib/patientIntake";
 
-// 精簡收案頁（決策 2026-07-29）：連續收案的醫師登入後的預設落點。
+// 收案頁。2026-08-20 起這是全平台唯一的建檔入口（/cases/new 仍在，但已退出導覽列）。
 // 跟 /cases/new 共用同一個表單元件，差別在 variant="intake"——建檔後留在原頁、
-// 清空表單、焦點回病歷號，醫師與時程範本不清空。
-// 這是動線優化，不是權限：header 仍有「完整功能」連結，任何頁面都進得去。
+// 清空表單、焦點回病歷號，醫師欄不清空，右側「今日收案」可直接把平板交給病人。
 export default async function IntakePage() {
   const supabase = supabaseServer();
 
@@ -17,16 +16,8 @@ export default async function IntakePage() {
   const dayStart = new Date(`${taipeiToday}T00:00:00+08:00`).toISOString();
   const dayEnd = new Date(`${taipeiToday}T23:59:59.999+08:00`).toISOString();
 
-  const [{ data: doctors }, { data: templates }, { data: icdCodes }, { data: todayCases }] = await Promise.all([
+  const [{ data: doctors }, { data: todayCases }] = await Promise.all([
     supabase.from("doctors").select("id, code, name").eq("active", true).order("code"),
-    supabase.from("schedule_templates").select("id, name").eq("active", true).order("name"),
-    supabase
-      .from("icd_codes")
-      .select("id, code, system, description_full, mapping_key")
-      .eq("active", true)
-      .order("mapping_key")
-      .order("system")
-      .order("code"),
     supabase
       .from("cases")
       .select("id, research_id, created_at, created_by, case_patient_intake_progress(segment_key)")
@@ -44,15 +35,10 @@ export default async function IntakePage() {
           <h1 className="font-heading text-xl font-medium text-brand-900">收案</h1>
           <p className="mt-1 text-sm text-ink/50">
             研究編號自動產生。建立後會留在這一頁、表單清空，可以直接收下一位；
-            病灶部位與尺寸在個案頁用人形圖登記。
+            接著把平板交給病人自填。病灶部位與尺寸在個案頁用人形圖登記。
           </p>
         </div>
-        <NewCaseForm
-          variant="intake"
-          doctors={doctors ?? []}
-          templates={templates ?? []}
-          icdCodes={icdCodes ?? []}
-        />
+        <NewCaseForm variant="intake" doctors={doctors ?? []} />
       </div>
 
       <aside className="space-y-2 lg:sticky lg:top-4 lg:self-start">
