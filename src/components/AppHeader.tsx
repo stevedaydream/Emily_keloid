@@ -83,6 +83,8 @@ export default function AppHeader({
   // 點裡面的連結導航後 header 不會重新掛載，選單就一直開著；點外面也不會收。
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  // 選單被移出中段（見下方說明），外點關閉要同時排除按鈕與選單兩塊
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const quickLinks = QUICK_LINKS;
   // 精簡模式：核心留在列上，其餘收進「更多」。非精簡模式就是一張攤平的完整導覽列。
   const navLinks = navCompact ? NAV_CORE : [...NAV_CORE, ...NAV_MORE];
@@ -94,7 +96,8 @@ export default function AppHeader({
     if (!moreOpen) return;
     // pointerdown 而不是 click：click 要等到放開才觸發，捲動或拖曳時選單會賴著不走
     const onPointerDown = (e: PointerEvent) => {
-      if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false);
+      const t = e.target as Node;
+      if (!moreRef.current?.contains(t) && !moreMenuRef.current?.contains(t)) setMoreOpen(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setMoreOpen(false);
@@ -110,87 +113,108 @@ export default function AppHeader({
   return (
     <header className="relative bg-paper-raised">
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] bg-gradient-to-r from-brand-600 via-brand-400 to-accent-400" />
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-        <div className="flex items-center gap-4 md:gap-6">
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            aria-label="開啟選單"
-            className="-ml-1 rounded p-1.5 text-brand-700 hover:bg-brand-50 md:hidden"
-          >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7">
-              <path d="M2.5 5h15M2.5 10h15M2.5 15h15" strokeLinecap="round" />
-            </svg>
-          </button>
-          <Link href="/" className="flex items-center gap-2 whitespace-nowrap">
-            <BrandMark size={28} />
-            <span className="font-heading text-sm font-medium text-brand-900">蟹足腫研究平台</span>
-          </Link>
-          <nav className="hidden items-center gap-4 text-sm text-ink/60 md:flex">
-            {navLinks.map((l) => (
-              <Link key={l.href} href={l.href} className="whitespace-nowrap hover:text-brand-700">
-                {l.label}
-              </Link>
-            ))}
-            {collapsed.length > 0 && (
-              <div ref={moreRef} className="relative">
-                <button
-                  type="button"
-                  onClick={() => setMoreOpen((v) => !v)}
-                  aria-expanded={moreOpen}
-                  aria-haspopup="menu"
-                  className="whitespace-nowrap hover:text-brand-700"
-                >
-                  更多 {moreOpen ? "▴" : "▾"}
-                </button>
-                {moreOpen && (
-                  <div
-                    role="menu"
-                    className="absolute left-0 top-full z-40 mt-2 flex min-w-36 flex-col rounded-md border border-brand-100 bg-paper-raised py-1 shadow-lg"
+      {/* 版面分三段：品牌固定在左、導覽「?」固定在右，中間那段左右可捲（2026-08-20）。
+          原本中段是 `hidden md:flex`，於是出現一段死區——平板豎著拿大約 600-950px，
+          既低於「攤平的完整導覽列放得下」的寬度（實測約 950px 才夠），
+          又高於 md（768px）而讓漢堡鈕消失，結果「?」右邊的所有東西被推出畫面外、
+          又沒有側邊選單可以叫回來。改成可捲之後就沒有放不下的寬度了。 */}
+      <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label="開啟選單"
+          className="-ml-1 shrink-0 rounded p-1.5 text-brand-700 hover:bg-brand-50 min-[560px]:hidden"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7">
+            <path d="M2.5 5h15M2.5 10h15M2.5 15h15" strokeLinecap="round" />
+          </svg>
+        </button>
+        <Link href="/" className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+          <BrandMark size={28} />
+          <span className="font-heading text-sm font-medium text-brand-900">蟹足腫研究平台</span>
+        </Link>
+
+        {/* 中段：放不下就左右捲。560px 以下捲動視窗會窄到不能用，那邊交給側邊選單。 */}
+        <div className="relative hidden min-w-0 flex-1 min-[560px]:block">
+          <div className="flex items-center gap-4 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <nav className="flex items-center gap-4 text-sm text-ink/60">
+              {navLinks.map((l) => (
+                <Link key={l.href} href={l.href} className="whitespace-nowrap hover:text-brand-700">
+                  {l.label}
+                </Link>
+              ))}
+              {collapsed.length > 0 && (
+                <div ref={moreRef} className="shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setMoreOpen((v) => !v)}
+                    aria-expanded={moreOpen}
+                    aria-haspopup="menu"
+                    className="whitespace-nowrap hover:text-brand-700"
                   >
-                    {collapsed.map((l) => (
-                      <Link
-                        key={l.href}
-                        href={l.href}
-                        role="menuitem"
-                        onClick={() => setMoreOpen(false)}
-                        className="whitespace-nowrap px-3 py-1.5 text-ink/70 hover:bg-brand-50 hover:text-brand-800"
-                      >
-                        {l.label}
-                      </Link>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </nav>
-        </div>
-        <div className="flex items-center gap-2">
-          <HelpLink />
-          <div className="hidden items-center gap-2 md:flex">
-          <ShowNamesToggle />
-          <Link href={secondary.href} className={buttonClasses("outline", "sm")}>
-            {secondary.label}
-          </Link>
-          <Link href={primary.href} className={buttonClasses("primary", "sm")}>
-            {primary.label}
-          </Link>
-          <span className="ml-2 whitespace-nowrap text-sm text-ink/50">
-            目前操作者：<b className="text-ink/80">{operator}</b>
-          </span>
-          <Link
-            href={`/operator?next=${encodeURIComponent("/")}`}
-            className="whitespace-nowrap text-sm text-brand-700 underline decoration-brand-300 hover:text-brand-900"
-          >
-            切換
-          </Link>
+                    更多 {moreOpen ? "▴" : "▾"}
+                  </button>
+                </div>
+              )}
+            </nav>
+
+            {/* ml-auto：放得下時把操作區推到最右（維持原本的兩端對齊外觀）；
+                放不下時 auto margin 自動歸零，變成接在導覽連結後面一起捲。 */}
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              <ShowNamesToggle />
+              <Link href={secondary.href} className={buttonClasses("outline", "sm")}>
+                {secondary.label}
+              </Link>
+              <Link href={primary.href} className={buttonClasses("primary", "sm")}>
+                {primary.label}
+              </Link>
+              <span className="ml-2 whitespace-nowrap text-sm text-ink/50">
+                目前操作者：<b className="text-ink/80">{operator}</b>
+              </span>
+              <Link
+                href={`/operator?next=${encodeURIComponent("/")}`}
+                className="whitespace-nowrap pr-6 text-sm text-brand-700 underline decoration-brand-300 hover:text-brand-900"
+              >
+                切換
+              </Link>
+            </div>
           </div>
+          {/* 右緣淡出：橫向捲動最大的問題是看不出來「右邊還有東西」。
+              捲到底時它蓋住的是最後一顆按鈕右邊的留白（上面那個 pr-6），不會擋到字。 */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-paper-raised to-transparent"
+          />
         </div>
+
+        <HelpLink />
       </div>
+
+      {/* 「更多」的選單掛在 header 這一層，不放進中段——中段是 overflow-x-auto，
+          依規範另一軸會跟著變成 auto，絕對定位的選單會被裁掉只露出一條。 */}
+      {moreOpen && collapsed.length > 0 && (
+        <div
+          ref={moreMenuRef}
+          role="menu"
+          className="absolute left-4 top-full z-40 mt-1 flex min-w-36 flex-col rounded-md border border-brand-100 bg-paper-raised py-1 shadow-lg"
+        >
+          {collapsed.map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              role="menuitem"
+              onClick={() => setMoreOpen(false)}
+              className="whitespace-nowrap px-3 py-1.5 text-ink/70 hover:bg-brand-50 hover:text-brand-800"
+            >
+              {l.label}
+            </Link>
+          ))}
+        </div>
+      )}
 
       {/* 手機版側邊選單 */}
       {open && (
-        <div className="fixed inset-0 z-50 md:hidden">
+        <div className="fixed inset-0 z-50 min-[560px]:hidden">
           <div className="absolute inset-0 bg-ink/40" onClick={() => setOpen(false)} />
           <div className="absolute left-0 top-0 flex h-full w-64 max-w-[80vw] flex-col bg-paper-raised p-4 shadow-lg">
             <div className="mb-4 flex items-center justify-between">
