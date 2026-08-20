@@ -213,9 +213,13 @@ export async function GET(request: Request) {
   ]);
 
   // 對照組是獨立的表（見下方「對照組」分頁），與 cases 完全不相干，所以單獨撈。
-  const [{ data: controlSubjects }, { data: controlLabResults }] = await Promise.all([
+  // 問卷題目清單：橫向的「問卷逐題作答」要連沒作答的題目都留一欄，
+  // 光靠作答紀錄推不出完整欄位（沒人答過的題目會整欄消失，不同批匯出的欄數就不一樣）。
+  const [{ data: controlSubjects }, { data: controlLabResults }, { data: allTemplates }, { data: allQuestions }] = await Promise.all([
     supabase.from("control_subjects").select("*").eq("active", true).order("subject_code"),
     supabase.from("lab_results").select("control_subject_id, marker_id, value, value_text").not("control_subject_id", "is", null),
+    supabase.from("questionnaire_templates").select("id, name"),
+    supabase.from("questionnaire_questions").select("questionnaire_id, order_no").order("order_no"),
   ]);
 
   const zones = (zonesRaw ?? []) as Zone[];
@@ -262,11 +266,7 @@ export async function GET(request: Request) {
     answersByResponse.set(a.response_id, arr);
   }
 
-  /** 選項題存的是 value（例如 "3"），逐題附表要顯示人看得懂的 label。 */
-  const answerLabel = (row: AnswerRow): string => {
-    const toLabel = (v: unknown) => row.options.find((o) => String(o.value) === String(v))?.label ?? String(v ?? "");
-    return Array.isArray(row.value) ? row.value.map(toLabel).join("、") : toLabel(row.value);
-  };
+  // 逐題分頁只輸出原始作答代碼；代碼對應的選項文字看「編碼對照表」分頁。
   const answerRaw = (row: AnswerRow): string =>
     Array.isArray(row.value) ? row.value.map((v) => String(v)).join(", ") : String(row.value ?? "");
   const vssByCase = new Map<string, Record<number, number>>();
@@ -545,7 +545,6 @@ export async function GET(request: Request) {
   const optionRows: (string | number)[][] = [];
   // 問卷逐題作答（docx 項次 9：「目前 JSS raw data 是給總分、SF-36 是給 8 項指標，附上 raw data 呈現結果」）。
   // 主表與「問卷分數」附表只有計分結果，這裡逐題列出病人實際點了什麼。
-  const answerDetailRows: (string | number)[][] = [];
   const overflowNotes: string[] = [];
 
   // ============ 逐個案填資料 ============
@@ -871,56 +870,94 @@ export async function GET(request: Request) {
     18
   );
 
-  // ---- 問卷逐題作答（docx 項次 9）----
+  // ---- 問卷逐題作答：一份問卷一張分頁（docx 項次 9）----
   // 「目前 JSS raw data 是給總分、SF-36 是給各項 8 項指標的各項總分，附上 raw data 呈現結果」
-  // ＝ 主表與「問卷分數」附表只有計分結果，這裡逐題列出病人實際點了哪個選項。
-  // 一列＝一個案的一份問卷的一題。同時給「作答代碼」（原始值，供統計）與「作答文字」（選項 label，供人看）。
-  // 「第幾次填寫」：同一個案的同一份問卷可能填過很多次（重複施測，或像實測資料那樣相隔幾秒送了三次）。
-  // 只給時間戳分不開（到分鐘還是一樣），給序號才能在分析時把不同次的作答分開比較。
-  const seqCounter = new Map<string, number>();
-  const responseSeq = new Map<string, number>();
-  for (const r of [...(responses ?? [])].sort((a, x) => String(a.submitted_at).localeCompare(String(x.submitted_at)))) {
-    const tmplName = (first(r.questionnaire_templates) as { name?: string } | undefined)?.name ?? "";
-    const key = `${r.case_id}__${tmplName}`;
-    const n = (seqCounter.get(key) ?? 0) + 1;
-    seqCounter.set(key, n);
-    responseSeq.set(r.id, n);
+  // ＝ 主表與「問卷分數」附表只有計分結果，這裡列出病人實際點了哪個選項的**原始代碼**。
+  //
+  // 2026-08-20 改版（原本是長格式，一題一列，一個個案光 SF-36 就佔 36 列，跑統計要先 pivot）：
+  //   · 橫向攤開：一列 ＝ 一個研究編號 × 一個施測次別，題號往右排
+  //   · **一份問卷一張分頁**，不合併成一張大表。合併的話欄數會到 76 欄以上，
+  //     而且四份問卷的施測次數不一樣，同一列常常只有一份有值、其他三份整片空白——
+  //     那些空白是排版產物不是資料，會被誤讀成「沒填」
+  //   · 沒作答的題目留空白，欄位保留；沒填過這份問卷的個案也留一列空白，
+  //     這樣每張分頁的個案數都跟主表一致，一眼看得出誰還沒填
+  const QUESTIONNAIRE_SHEET: Record<string, { sheet: string; order: number }> = {
+    "SF-36 健康調查簡表": { sheet: "SF-36 逐題", order: 1 },
+    "匹茲堡睡眠品質量表（PSQI）": { sheet: "PSQI 逐題", order: 2 },
+    "Vancouver Scar Scale (VSS)": { sheet: "VSS 逐題", order: 3 },
+    "JSS 疤痕診斷分類表": { sheet: "JSS 逐題", order: 4 },
+  };
+
+  const questionOrderNosByTemplate = new Map<string, number[]>();
+  for (const q of allQuestions ?? []) {
+    const arr = questionOrderNosByTemplate.get(q.questionnaire_id) ?? [];
+    if (!arr.includes(q.order_no)) arr.push(q.order_no);
+    questionOrderNosByTemplate.set(q.questionnaire_id, arr);
   }
 
-  for (const r of responses ?? []) {
-    const rid = researchIdById.get(r.case_id);
-    if (!rid) continue; // 被篩選條件排除的個案不出現
-    const tmpl = first(r.questionnaire_templates) as { name?: string } | undefined;
-    const rows = [...(answersByResponse.get(r.id) ?? [])].sort((a, x) => a.order_no - x.order_no);
-    for (const row of rows) {
-      answerDetailRows.push([
-        rid,
-        tmpl?.name ?? "",
-        responseSeq.get(r.id) ?? 1,
-        // 只到「日」會分不出同一天送出的多筆回覆（實測有同一份問卷相隔幾秒送出三次的資料），
-        // 所以帶到分鐘——分析時才能把不同次的作答分開。
-        String(r.submitted_at).replace("T", " ").slice(0, 16),
-        (r as { submitted_via?: string }).submitted_via === "patient" ? "病人自填" : "診間人員",
-        row.order_no,
-        row.text,
-        answerRaw(row),
-        answerLabel(row),
-      ]);
-    }
+  const questionnaireSheets = (allTemplates ?? [])
+    .map((t) => {
+      const meta = QUESTIONNAIRE_SHEET[t.name as string];
+      return {
+        name: t.name as string,
+        // 沒登記在上表的自訂問卷也照樣出一張，用問卷名當分頁名（Excel 分頁上限 31 字）
+        sheet: meta?.sheet ?? `${String(t.name ?? "問卷").slice(0, 24)} 逐題`,
+        order: meta?.order ?? 99,
+        orderNos: (questionOrderNosByTemplate.get(t.id) ?? []).slice().sort((a, b) => a - b),
+      };
+    })
+    .filter((t) => t.orderNos.length > 0)
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+
+  // 每個個案的每份問卷，依送出時間排出第 1、2、3… 次
+  const responsesByCaseTemplate = new Map<string, { id: string; submitted_at: string; via: string }[]>();
+  for (const r of [...(responses ?? [])].sort((a, x) =>
+    String(a.submitted_at).localeCompare(String(x.submitted_at))
+  )) {
+    const tmplName = (first(r.questionnaire_templates) as { name?: string } | undefined)?.name ?? "";
+    const key = `${r.case_id}__${tmplName}`;
+    const arr = responsesByCaseTemplate.get(key) ?? [];
+    arr.push({
+      id: r.id,
+      submitted_at: String(r.submitted_at),
+      via: (r as { submitted_via?: string }).submitted_via === "patient" ? "病人自填" : "診間人員",
+    });
+    responsesByCaseTemplate.set(key, arr);
   }
-  answerDetailRows.sort(
-    (a, x) =>
-      String(a[0]).localeCompare(String(x[0])) ||
-      String(a[1]).localeCompare(String(x[1])) ||
-      Number(a[2]) - Number(x[2]) ||
-      Number(a[5]) - Number(x[5])
-  );
-  addSheet(
-    "問卷逐題作答",
-    ["Subject_ID", "問卷", "第幾次填寫", "填寫時間", "填寫人", "題號", "題目", "作答代碼", "作答文字"],
-    answerDetailRows,
-    18
-  );
+
+  const answerCodeByResponse = new Map<string, Map<number, string>>();
+  for (const [responseId, rows] of answersByResponse) {
+    answerCodeByResponse.set(responseId, new Map(rows.map((row) => [row.order_no, answerRaw(row)])));
+  }
+
+  for (const t of questionnaireSheets) {
+    const rows: (string | number)[][] = [];
+    for (const c of cases) {
+      const responseList = responsesByCaseTemplate.get(`${c.id}__${t.name}`) ?? [];
+      if (responseList.length === 0) {
+        // 沒填過：留一列空白，這張分頁的個案數才跟主表一致
+        rows.push([c.research_id, "", "", "", ...t.orderNos.map(() => "")]);
+        continue;
+      }
+      responseList.forEach((resp, i) => {
+        const codes = answerCodeByResponse.get(resp.id);
+        rows.push([
+          c.research_id,
+          i + 1,
+          // 帶到分鐘：實測有同一份問卷相隔幾秒送出三次的資料，只到「日」分不開
+          resp.submitted_at.replace("T", " ").slice(0, 16),
+          resp.via,
+          ...t.orderNos.map((n) => codes?.get(n) ?? ""),
+        ]);
+      });
+    }
+    addSheet(
+      t.sheet,
+      ["Subject_ID", "第幾次填寫", "填寫時間", "填寫人", ...t.orderNos.map((n) => String(n))],
+      rows,
+      12
+    );
+  }
 
   // ---- 編碼對照表（全部由資料庫產生，後台改選項這裡就跟著變）----
   addSheet(

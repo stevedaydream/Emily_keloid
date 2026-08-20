@@ -81,6 +81,15 @@ export default async function ClinicTodayPage() {
 
   return (
     <div className="space-y-4">
+      {/* 收案是門診當下最常按的動作，放在最上面、做到不可能按錯（2026-08-20 使用者指定） */}
+      <Link
+        href="/intake"
+        className="flex items-center justify-center gap-3 rounded-xl bg-brand-700 px-6 py-6 text-center text-xl font-medium text-white shadow-[0_10px_24px_-12px_rgba(27,35,24,0.55)] transition hover:bg-brand-800 sm:py-8 sm:text-2xl"
+      >
+        <span className="text-3xl leading-none">＋</span>
+        收 案
+      </Link>
+
       <div>
         <h1 className="font-heading text-xl font-medium text-brand-900">今日門診</h1>
         <p className="mt-1 text-sm text-ink/50">

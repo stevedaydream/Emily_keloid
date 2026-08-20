@@ -13,7 +13,7 @@ import EditableListItem from "@/components/admin/EditableListItem";
 
 export default async function OperatorsAdminPage() {
   const supabase = supabaseServer();
-  const { data: operators } = await supabase.from("operators").select("*").order("name");
+  const { data: operators } = await supabase.from("operators").select("*").order("sort_order").order("name");
 
   return (
     <div className="max-w-2xl space-y-4">
@@ -33,6 +33,10 @@ export default async function OperatorsAdminPage() {
         <div>
           <label className="block text-xs font-medium text-ink/60">角色（選填）</label>
           <input name="role" className="mt-1 w-40 rounded-md border border-brand-200 px-2 py-1.5 text-sm" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-ink/60">排序</label>
+          <input name="sort_order" type="number" defaultValue={100} className="mt-1 w-20 rounded-md border border-brand-200 px-2 py-1.5 text-sm" />
         </div>
         <div>
           <label className="block text-xs font-medium text-ink/60">登入後落點</label>
@@ -59,6 +63,7 @@ export default async function OperatorsAdminPage() {
               fields={[
                 { name: "name", label: "姓名", defaultValue: o.name, className: "w-40" },
                 { name: "role", label: "角色", defaultValue: o.role ?? "", className: "w-40" },
+                { name: "sort_order", label: "排序", defaultValue: String(o.sort_order ?? 100), className: "w-20" },
                 {
                   name: "landing_mode",
                   label: "登入後落點",

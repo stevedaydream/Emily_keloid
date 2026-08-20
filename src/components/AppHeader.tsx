@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import BrandMark from "@/components/ui/BrandMark";
 import { buttonClasses } from "@/components/ui/buttonStyles";
@@ -20,13 +20,28 @@ const QUICK_LINKS = [
 /** 精簡模式也留著的核心動線。收案與個案列表是上面那兩顆按鈕，所以這裡只剩今日門診。 */
 const NAV_CORE = [{ href: "/clinic-today", label: "今日門診" }];
 
-/** 精簡模式收進「更多」的其餘功能。 */
+/** 精簡模式收進「更多」的其餘功能。
+ *  導覽（/about）刻意不在這裡——會迷路的人正是不會去翻「更多」的人，
+ *  它改成常駐的「?」圖示（見 HelpLink），所有身分、所有螢幕寬度都看得到。 */
 const NAV_MORE = [
   { href: "/batch-edit", label: "批次編輯" },
   { href: "/admin", label: "後台管理" },
   { href: "/export", label: "資料匯出" },
-  { href: "/about", label: "導覽" },
 ];
+
+/** 平台導覽入口。永遠在導覽列上，不收進任何選單裡。 */
+function HelpLink() {
+  return (
+    <Link
+      href="/about"
+      title="平台導覽：依身分分成三條動線，每一步標出畫面上的落點"
+      aria-label="平台導覽"
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-brand-200 text-sm font-medium text-brand-700 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-900"
+    >
+      ?
+    </Link>
+  );
+}
 
 // 姓名顯示開關：只有掛了本機對照表（linked）才有意義，沒掛的時候整顆隱藏。
 function ShowNamesToggle({ className = "" }: { className?: string }) {
@@ -64,12 +79,33 @@ export default function AppHeader({
   navCompact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // 「更多」下拉。原本用原生 <details>，但它只有點 summary 才切換：
+  // 點裡面的連結導航後 header 不會重新掛載，選單就一直開著；點外面也不會收。
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
   const quickLinks = QUICK_LINKS;
   // 精簡模式：核心留在列上，其餘收進「更多」。非精簡模式就是一張攤平的完整導覽列。
   const navLinks = navCompact ? NAV_CORE : [...NAV_CORE, ...NAV_MORE];
   const collapsed = navCompact ? NAV_MORE : [];
   const primary = quickLinks[quickLinks.length - 1];
   const secondary = quickLinks[0];
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    // pointerdown 而不是 click：click 要等到放開才觸發，捲動或拖曳時選單會賴著不走
+    const onPointerDown = (e: PointerEvent) => {
+      if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMoreOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [moreOpen]);
 
   return (
     <header className="relative bg-paper-raised">
@@ -97,27 +133,41 @@ export default function AppHeader({
               </Link>
             ))}
             {collapsed.length > 0 && (
-              /* 用原生 details 而不是自己管 open state：點外面會自動收起，不必加全域監聽 */
-              <details className="relative">
-                <summary className="cursor-pointer list-none whitespace-nowrap hover:text-brand-700 [&::-webkit-details-marker]:hidden">
-                  更多 ▾
-                </summary>
-                <div className="absolute left-0 top-full z-40 mt-2 flex min-w-36 flex-col rounded-md border border-brand-100 bg-paper-raised py-1 shadow-lg">
-                  {collapsed.map((l) => (
-                    <Link
-                      key={l.href}
-                      href={l.href}
-                      className="whitespace-nowrap px-3 py-1.5 text-ink/70 hover:bg-brand-50 hover:text-brand-800"
-                    >
-                      {l.label}
-                    </Link>
-                  ))}
-                </div>
-              </details>
+              <div ref={moreRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setMoreOpen((v) => !v)}
+                  aria-expanded={moreOpen}
+                  aria-haspopup="menu"
+                  className="whitespace-nowrap hover:text-brand-700"
+                >
+                  更多 {moreOpen ? "▴" : "▾"}
+                </button>
+                {moreOpen && (
+                  <div
+                    role="menu"
+                    className="absolute left-0 top-full z-40 mt-2 flex min-w-36 flex-col rounded-md border border-brand-100 bg-paper-raised py-1 shadow-lg"
+                  >
+                    {collapsed.map((l) => (
+                      <Link
+                        key={l.href}
+                        href={l.href}
+                        role="menuitem"
+                        onClick={() => setMoreOpen(false)}
+                        className="whitespace-nowrap px-3 py-1.5 text-ink/70 hover:bg-brand-50 hover:text-brand-800"
+                      >
+                        {l.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </nav>
         </div>
-        <div className="hidden items-center gap-2 md:flex">
+        <div className="flex items-center gap-2">
+          <HelpLink />
+          <div className="hidden items-center gap-2 md:flex">
           <ShowNamesToggle />
           <Link href={secondary.href} className={buttonClasses("outline", "sm")}>
             {secondary.label}
@@ -134,6 +184,7 @@ export default function AppHeader({
           >
             切換
           </Link>
+          </div>
         </div>
       </div>
 

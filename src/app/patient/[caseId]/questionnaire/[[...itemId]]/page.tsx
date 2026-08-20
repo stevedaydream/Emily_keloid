@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase";
+import { PSQI_QUESTIONNAIRE_NAME, PSQI_CLOCK_ORDERS } from "@/lib/scoring";
 import { submitQuestionnaireAction } from "./actions";
 
 export default async function ClinicQuestionnairePage({
@@ -71,6 +72,9 @@ export default async function ClinicQuestionnairePage({
     supabase.from("questionnaire_templates").select("name, description").eq("id", questionnaireId).single(),
     supabase.from("questionnaire_questions").select("*").eq("questionnaire_id", questionnaireId).order("order_no"),
   ]);
+
+  const isPsqiClockQuestion = (orderNo: number) =>
+    template?.name === PSQI_QUESTIONNAIRE_NAME && PSQI_CLOCK_ORDERS.includes(orderNo);
 
   return (
     <div className="mx-auto max-w-xl space-y-4">
@@ -150,14 +154,24 @@ export default async function ClinicQuestionnairePage({
                 className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
               />
             )}
-            {q.question_type === "text" && (
-              <textarea
-                name={`q_${q.id}`}
-                required={q.required}
-                rows={2}
-                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-              />
-            )}
+            {/* PSQI 的上床／起床時間雖然是 text 型態，但格式必須是 HH:MM 才算得出睡眠效率。
+                放任 textarea 自由打字曾經產生 `23::40`，整筆 PSQI 總分就變成「資料不足」。 */}
+            {q.question_type === "text" &&
+              (isPsqiClockQuestion(q.order_no) ? (
+                <input
+                  type="time"
+                  name={`q_${q.id}`}
+                  required={q.required}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                />
+              ) : (
+                <textarea
+                  name={`q_${q.id}`}
+                  required={q.required}
+                  rows={2}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                />
+              ))}
           </div>
         ))}
 

@@ -8,6 +8,12 @@ import { toLandingMode } from "@/lib/operator";
 // 只是預設落點，不阻擋任何人前往任何頁面——見 20260820020000 migration 的註解。
 const normalizeLandingMode = (raw: FormDataEntryValue | null) => toLandingMode(raw);
 
+// 排序：數字小的排前面。非數字或空白一律當 100（＝排在有明確順序的人後面）。
+const normalizeSortOrder = (raw: FormDataEntryValue | null) => {
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.trunc(n) : 100;
+};
+
 export async function addOperatorAction(formData: FormData) {
   const name = (formData.get("name") as string)?.trim();
   const role = (formData.get("role") as string)?.trim() || null;
@@ -15,7 +21,7 @@ export async function addOperatorAction(formData: FormData) {
   const navCompact = formData.get("nav_compact") === "on";
   if (!name) return;
   const supabase = supabaseServer();
-  await supabase.from("operators").insert({ name, role, landing_mode: landingMode, nav_compact: navCompact });
+  await supabase.from("operators").insert({ name, role, landing_mode: landingMode, nav_compact: navCompact, sort_order: normalizeSortOrder(formData.get("sort_order")) });
   revalidatePath("/admin/operators");
 }
 
@@ -34,7 +40,10 @@ export async function updateOperatorAction(formData: FormData) {
   const landingMode = normalizeLandingMode(formData.get("landing_mode"));
   if (!id || !name) return;
   const supabase = supabaseServer();
-  await supabase.from("operators").update({ name, role, landing_mode: landingMode }).eq("id", id);
+  await supabase
+    .from("operators")
+    .update({ name, role, landing_mode: landingMode, sort_order: normalizeSortOrder(formData.get("sort_order")) })
+    .eq("id", id);
   revalidatePath("/admin/operators");
   revalidatePath("/", "layout");
 }

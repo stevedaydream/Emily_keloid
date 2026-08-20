@@ -63,16 +63,41 @@ export function computeSF36(answers: AnswerMap): { scales: SF36ScaleResult[] } {
 
 // ---------- PSQI ----------
 // 資料來源：Buysse et al. 1989 匹茲堡睡眠品質量表原始計分演算法（7 面向各 0-3 分，總分 0-21 分，>5 分視為睡眠品質不佳）。
-// 限制：本平台第5j題（其他睡眠困擾原因）僅收文字說明，未收 0-3 頻率評分，故「睡眠困擾」面向的加總只涵蓋 5b-5i 共8小題
-// （官方為5b-5j共9小題），會使極少數重度個案的睡眠困擾分數略為低估，其餘6個面向不受影響。
-// 第10、11題（睡伴／室友狀況與睡伴觀察到的情形，order_no 19-24）在原始演算法中就不計分，只作睡眠呼吸中止／
+// 第10、11題（睡伴／室友狀況與睡伴觀察到的情形，order_no 20-25）在原始演算法中就不計分，只作睡眠呼吸中止／
 // 肢動症的篩檢資訊，這裡刻意不取用。
+//
+// order_no 對照（2026-08-20 起）：1-4 = Q1-Q4，5-13 = 5a-5i，14 = 5j 文字說明，15 = 5j 頻率，
+// 16-19 = Q6-Q9，20 = Q10，21-25 = Q11a-11e。
+// 2026-08-20 之前建的回覆沒有 order_no 15（當時 5j 只收文字），C5 會把它當 0 分處理——這正好是官方
+// 對「沒有其他睡眠困擾」的計法，所以舊資料的分數不會因為這次補題而改變。
 
 function parseLeadingNumber(text: unknown): number | null {
   if (typeof text === "number") return Number.isFinite(text) ? text : null;
   if (typeof text !== "string") return null;
   const m = text.match(/(\d+(\.\d+)?)/);
   return m ? Number(m[1]) : null;
+}
+
+export const PSQI_QUESTIONNAIRE_NAME = "匹茲堡睡眠品質量表（PSQI）";
+
+/**
+ * PSQI 的上床（Q1）／起床（Q3）時間題 order_no。這兩題是 text 型態，
+ * 表單要用時間輸入元件保證送出 HH:MM——診間人員曾經手打出 `23::40`，
+ * parseClockMinutes 認不得，睡眠效率面向與整筆總分就會變成 null。
+ */
+export const PSQI_CLOCK_ORDERS = [1, 3];
+
+/**
+ * 把 `23::40`（重複冒號）、`9:5`（未補零）這類手打髒格式正規化成 `HH:MM`。
+ * 認不出來就原樣回傳，讓 parseClockMinutes 照常判定為無效，不要硬猜。
+ */
+export function normalizeClockInput(raw: string): string {
+  const m = raw.trim().match(/^(\d{1,2})\s*:+\s*(\d{1,2})$/);
+  if (!m) return raw;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return raw;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
 function parseClockMinutes(text: unknown): number | null {
@@ -106,8 +131,8 @@ export function computePSQI(answers: AnswerMap): PSQIResult {
     return Number.isFinite(n) ? n : null;
   };
 
-  // C1 主觀睡眠品質：Q6（order_no 15），已是 0-3
-  const c1 = num(15);
+  // C1 主觀睡眠品質：Q6（order_no 16），已是 0-3
+  const c1 = num(16);
 
   // C2 睡眠潛伏期：Q2 入睡分鐘數（order_no 2）分級 + Q5a（order_no 5，0-3），加總後再分級
   const minutesToSleep = num(2);
@@ -134,17 +159,22 @@ export function computePSQI(answers: AnswerMap): PSQIResult {
     }
   }
 
-  // C5 睡眠困擾：Q5b-5i 加總（order_no 6-13，本平台未收 5j 頻率評分，見上方限制說明）
+  // C5 睡眠困擾：Q5b-5j 共9小題加總（order_no 6-13 為 5b-5i，15 為 5j 頻率）。
+  // 5j 未作答視為 0——官方對「沒有其他睡眠困擾」就是計 0 分，也讓補題前的舊回覆維持原分數。
   const disturbanceOrders = [6, 7, 8, 9, 10, 11, 12, 13];
   const disturbanceValues = disturbanceOrders.map(num).filter((v): v is number => v !== null);
-  const c5 = disturbanceValues.length === disturbanceOrders.length ? bucket(disturbanceValues.reduce((s, v) => s + v, 0), [0, 9, 18]) : null;
+  const q5j = num(15) ?? 0;
+  const c5 =
+    disturbanceValues.length === disturbanceOrders.length
+      ? bucket(disturbanceValues.reduce((s, v) => s + v, 0) + q5j, [0, 9, 18])
+      : null;
 
-  // C6 安眠藥物使用：Q7（order_no 16），已是 0-3
-  const c6 = num(16);
+  // C6 安眠藥物使用：Q7（order_no 17），已是 0-3
+  const c6 = num(17);
 
-  // C7 日間功能障礙：Q8 + Q9（order_no 17, 18）加總後分級
-  const q8 = num(17);
-  const q9 = num(18);
+  // C7 日間功能障礙：Q8 + Q9（order_no 18, 19）加總後分級
+  const q8 = num(18);
+  const q9 = num(19);
   const c7 = q8 === null || q9 === null ? null : bucket(q8 + q9, [0, 2, 4]);
 
   const components: PSQIComponentResult[] = [

@@ -10,26 +10,33 @@
 // 就算之後真的中了 XSS，攻擊者頂多能在這個瀏覽器上用它，拿不到通行碼、也帶不走鑰匙。
 // 通行碼在導出金鑰之後就丟掉，從頭到尾沒有以可讀形式落地過。
 //
-// 生命週期（使用者選擇 2026-07-29）：跨重新整理保留，關掉分頁就失效。
-// 作法是 IndexedDB 存金鑰、sessionStorage 存一個隨機標記，兩者對得上才承認。
-// 分頁關閉時 sessionStorage 自動清空 → 標記消失 → 金鑰再也對不上，並於下次載入時刪除。
-// （單用 IndexedDB 會活太久，單用 sessionStorage 又只能存字串＝被迫存通行碼。）
+// 生命週期（2026-08-20 改）：**30 天**，跨分頁、跨重新整理都保留。
+//
+// 原本是「關掉分頁就失效」（sessionStorage 標記 ＋ IndexedDB 金鑰）。改的原因是收案動線要移到平板：
+// 門診中平板開開關關，每次都要重打通行碼，實務上會逼人把通行碼寫在便條紙上——那比放寬期限更危險。
+//
+// 代價要講清楚：平板遺失時，撿到的人在剩餘效期內開得了對照表。緩解有三層——
+//   1. 金鑰是 extractable:false，帶不走、也導不出通行碼
+//   2. 平台本身還有共用密碼那道門
+//   3. 保管庫面板有「立即鎖定」，平板要借人或送修時先按
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 import type { MrnMappingRow } from "./localMrnStore";
-import { encryptWithKey } from "./mrnVault";
-import { saveVaultAction } from "@/app/local-tools/mrn-mapping/vaultActions";
+import { encryptWithKey, decryptWithKey } from "./mrnVault";
+import { saveVaultAction, loadVaultAction } from "@/app/local-tools/mrn-mapping/vaultActions";
 
 const DB_NAME = "keloid-vault-session";
 const STORE_NAME = "session-key";
 const RECORD_KEY = "default";
-const MARKER_KEY = "keloid_vault_marker";
-
 interface StoredKey {
   key: CryptoKey;
   salt: string;
   iterations: number;
-  marker: string;
+  /** epoch ms；過了就當沒解鎖並清掉 */
+  expiresAt: number;
 }
+
+export { SESSION_TTL_MS };
 
 export interface UnlockedVaultKey {
   key: CryptoKey;
@@ -70,22 +77,20 @@ async function readRecord(): Promise<StoredKey | null> {
   });
 }
 
-/** 記住這把金鑰，直到分頁關閉。 */
+/** 記住這把金鑰 30 天。 */
 export async function rememberVaultKey(key: CryptoKey, salt: string, iterations: number): Promise<void> {
-  const marker = crypto.randomUUID();
-  window.sessionStorage.setItem(MARKER_KEY, marker);
-  await putRecord({ key, salt, iterations, marker });
+  await putRecord({ key, salt, iterations, expiresAt: Date.now() + SESSION_TTL_MS });
   notify();
 }
 
-/** 取回本次工作階段的金鑰；標記對不上（＝分頁曾關閉）就順手清掉並回傳 null。 */
+/** 取回金鑰；過期就順手清掉並回傳 null。 */
 export async function getVaultKey(): Promise<UnlockedVaultKey | null> {
   try {
     const record = await readRecord();
     if (!record) return null;
-    const marker = window.sessionStorage.getItem(MARKER_KEY);
-    if (!marker || marker !== record.marker) {
+    if (!record.expiresAt || record.expiresAt <= Date.now()) {
       await putRecord(null);
+      notify();
       return null;
     }
     return { key: record.key, salt: record.salt, iterations: record.iterations };
@@ -94,8 +99,18 @@ export async function getVaultKey(): Promise<UnlockedVaultKey | null> {
   }
 }
 
+/** 解鎖還剩幾天（供畫面提示）；未解鎖回 null。 */
+export async function getVaultKeyDaysLeft(): Promise<number | null> {
+  try {
+    const record = await readRecord();
+    if (!record?.expiresAt || record.expiresAt <= Date.now()) return null;
+    return Math.ceil((record.expiresAt - Date.now()) / 86_400_000);
+  } catch {
+    return null;
+  }
+}
+
 export async function forgetVaultKey(): Promise<void> {
-  window.sessionStorage.removeItem(MARKER_KEY);
   await putRecord(null);
   notify();
 }
@@ -132,5 +147,41 @@ export async function syncVaultIfUnlocked(
     return { status: "synced" };
   } catch (err) {
     return { status: "failed", message: err instanceof Error ? err.message : "同步失敗" };
+  }
+}
+
+/**
+ * 把一筆對照寫進保管庫（決策 2026-08-20：平板收案時，保管庫取代本機 CSV 當權威來源）。
+ *
+ * 保管庫是單一 blob，沒有「只加一筆」這回事——必須整份解密、加一筆、整份重新加密再覆蓋。
+ * 百來筆約 20KB，成本可忽略。同一個研究編號重複寫入時取代舊的，不留重複列。
+ */
+export async function appendRowToVault(
+  row: MrnMappingRow
+): Promise<{ status: "saved" | "locked" | "failed"; message?: string; total?: number }> {
+  const held = await getVaultKey();
+  if (!held) return { status: "locked" };
+  try {
+    const existing = await loadVaultAction();
+    let rows: MrnMappingRow[] = [];
+    if (existing) {
+      if (existing.salt !== held.salt) {
+        // 別台裝置用新的通行碼重建過保管庫，手上這把金鑰已經對不上了。
+        // 硬寫下去會用舊金鑰覆蓋掉別人的內容，所以擋下來要求重新解鎖。
+        return {
+          status: "failed",
+          message: "保管庫已被其他裝置以新的通行碼重建，請先到「病歷號對照維護」重新解鎖再收案",
+        };
+      }
+      rows = await decryptWithKey(existing, held.key);
+    }
+    rows = rows.filter((r) => r.research_id !== row.research_id);
+    rows.push(row);
+    const payload = await encryptWithKey(rows, held.key, held.salt, held.iterations);
+    const result = await saveVaultAction(payload);
+    if (!result.ok) return { status: "failed", message: result.message };
+    return { status: "saved", total: rows.length };
+  } catch (err) {
+    return { status: "failed", message: err instanceof Error ? err.message : "寫入保管庫失敗" };
   }
 }

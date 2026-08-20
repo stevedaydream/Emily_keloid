@@ -14,7 +14,7 @@ import {
   appendMappingRow,
   readAllRows,
 } from "@/lib/localMrnStore";
-import { syncVaultIfUnlocked } from "@/lib/vaultSession";
+import { syncVaultIfUnlocked, appendRowToVault, getVaultKey, subscribeVaultSession } from "@/lib/vaultSession";
 import { loadVaultAction } from "@/app/local-tools/mrn-mapping/vaultActions";
 
 type Doctor = { id: string; code: string; name: string };
@@ -68,6 +68,9 @@ export default function NewCaseForm({
 
   // 保管庫同步狀態：只有在雲端真的有保管庫時才提示，否則沒用過這功能的人會看到莫名其妙的警告
   const [vaultExists, setVaultExists] = useState(false);
+  // 平板沒有 File System Access，改用保管庫當寫入目標（決策 2026-08-20）。
+  // 解鎖狀態會變（面板上可鎖定／解鎖），所以要訂閱而不是只讀一次。
+  const [vaultUnlocked, setVaultUnlocked] = useState(false);
   const [vaultSync, setVaultSync] = useState<"syncing" | "synced" | "locked" | "failed" | null>(null);
   const [vaultSyncMsg, setVaultSyncMsg] = useState<string | null>(null);
 
@@ -77,6 +80,9 @@ export default function NewCaseForm({
     loadVaultAction()
       .then((v) => setVaultExists(!!v))
       .catch(() => setVaultExists(false));
+    const refreshUnlocked = () => void getVaultKey().then((k) => setVaultUnlocked(!!k));
+    refreshUnlocked();
+    return subscribeVaultSession(refreshUnlocked);
   }, []);
 
   // 新的一筆對應寫進本機 CSV 之後，把整份對照表重新加密覆蓋雲端保管庫，
@@ -120,7 +126,28 @@ export default function NewCaseForm({
   }
 
   async function retryPendingMapping() {
-    if (!pendingMapping || !fileHandle) return;
+    if (!pendingMapping) return;
+    // 平板：重試寫保管庫（沒有本機檔案可用）
+    if (!supported) {
+      const r = await appendRowToVault({
+        mrn: pendingMapping.mrn,
+        research_id: pendingMapping.researchId,
+        case_id: pendingMapping.caseId,
+        created_at: new Date().toISOString(),
+        name: pendingMapping.name,
+      });
+      if (r.status !== "saved") {
+        setError(r.message ?? "保管庫仍然鎖定，請先到「病歷號對照維護」解鎖");
+        return;
+      }
+      const created = { caseId: pendingMapping.caseId, researchId: pendingMapping.researchId };
+      setVaultSync("synced");
+      setPendingMapping(null);
+      setError(null);
+      finishCreate(created);
+      return;
+    }
+    if (!fileHandle) return;
     try {
       const ok = await requestHandlePermission(fileHandle);
       if (!ok) throw new Error("本機檔案存取權限被拒絕");
@@ -168,20 +195,23 @@ export default function NewCaseForm({
       const trimmedName = patientName.trim();
       let handle = fileHandle;
 
-      // 有填病歷號或姓名才需要本機檔案：先在這次點擊的使用者操作內取得檔案與寫入權限，
-      // 避免這些資料真的送出前，本機儲存這一步就先失敗。
+      // 有填病歷號或姓名時要先確定寫得進去。桌機走本機 CSV（需在這次點擊的使用者操作內
+      // 取得檔案與寫入權限）；平板沒有 File System Access，改把對照寫進雲端保管庫
+      // （決策 2026-08-20：收案動線移到平板，保管庫取代 CSV 當權威來源）。
       if (trimmedMrn || trimmedName) {
-        if (!supported) {
+        if (!supported && !vaultUnlocked) {
           throw new Error(
-            "這台裝置沒辦法寫入本機對照表：病歷號/姓名要存到你電腦上的 CSV，需要桌機版 Chrome / Edge 的 File System Access API，手機與平板的瀏覽器（含 Android Chrome、iPad Safari）一律沒有這個功能。請改用診間電腦建檔，或先把病歷號與姓名留空、之後在電腦上補對照。"
+            "這台裝置沒有 File System Access（手機與平板一律沒有），要記錄病歷號/姓名得改用雲端保管庫，但它目前是鎖住的。請到「病歷號對照維護」輸入通行碼解鎖（解鎖後 30 天內不用再打），或先把這兩格留空、之後再補對照。"
           );
         }
-        if (!handle) {
-          handle = await pickMappingFile();
-          setFileHandle(handle);
+        if (supported) {
+          if (!handle) {
+            handle = await pickMappingFile();
+            setFileHandle(handle);
+          }
+          const ok = await requestHandlePermission(handle);
+          if (!ok) throw new Error("本機對照表檔案的存取權限被拒絕，請重新選擇檔案");
         }
-        const ok = await requestHandlePermission(handle);
-        if (!ok) throw new Error("本機對照表檔案的存取權限被拒絕，請重新選擇檔案");
       }
 
       const formData = new FormData(formRef.current);
@@ -190,7 +220,29 @@ export default function NewCaseForm({
 
       const { caseId, researchId } = await createCaseAction(formData);
 
-      if ((trimmedMrn || trimmedName) && handle) {
+      // 平板：寫進保管庫。失敗時個案已經建好了，同樣保留下來讓使用者重試。
+      if ((trimmedMrn || trimmedName) && !supported) {
+        const r = await appendRowToVault({
+          mrn: trimmedMrn,
+          research_id: researchId,
+          case_id: caseId,
+          created_at: new Date().toISOString(),
+          name: trimmedName,
+        });
+        if (r.status === "saved") {
+          setVaultSync("synced");
+        } else {
+          setPendingMapping({ caseId, researchId, mrn: trimmedMrn, name: trimmedName });
+          setError(
+            `個案已建立成功（研究編號：${researchId}），但對照寫入保管庫失敗：${
+              r.message ?? "保管庫已鎖定"
+            }。請解鎖後再試，或自行記下這筆對應。`
+          );
+          return;
+        }
+      }
+
+      if ((trimmedMrn || trimmedName) && supported && handle) {
         try {
           await appendMappingRow(handle, {
             mrn: trimmedMrn,
@@ -220,8 +272,51 @@ export default function NewCaseForm({
     }
   }
 
+  // 第 2 步：建檔完成，唯一該做的事是把平板交給病人（決策 2026-08-20）。
+  // 刻意整頁換掉而不是在表單下面加一條橫幅——護理師手上拿著平板，
+  // 這一刻要按的東西必須大到不可能按錯，也不該和上一位的表單混在同一個畫面。
+  if (isIntake && lastCreated) {
+    return (
+      <div className="space-y-4 rounded-lg border border-brand-100 bg-paper-raised p-6">
+        <StepHeader step={2} />
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          ✓ 已建立 <b className="font-data">{lastCreated.researchId}</b>
+        </div>
+
+        <Link
+          href={`/patient/${lastCreated.caseId}/intake`}
+          className="flex flex-col items-center justify-center gap-1 rounded-xl bg-brand-700 px-6 py-8 text-center text-white shadow-[0_10px_24px_-12px_rgba(27,35,24,0.55)] transition hover:bg-brand-800"
+        >
+          <span className="text-2xl font-medium">交給病人填</span>
+          <span className="text-xs text-white/70">基本資料・過去病史・就診資訊・SF-36・睡眠品質</span>
+        </Link>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+          <button
+            type="button"
+            onClick={() => {
+              setLastCreated(null);
+              mrnRef.current?.focus();
+            }}
+            className="whitespace-nowrap rounded-md border border-brand-200 px-3 py-2 text-sm text-brand-800 hover:bg-brand-50"
+          >
+            ＋ 再收一位
+          </button>
+          <Link href={`/cases/${lastCreated.caseId}`} className="whitespace-nowrap text-sm text-brand-800 underline">
+            直接開個案頁 →
+          </Link>
+        </div>
+
+        <p className="text-xs text-ink/40">
+          平板交出去之後這一頁可以按「再收一位」繼續。病人填到哪一段，右側「今日收案」看得到。
+        </p>
+      </div>
+    );
+  }
+
   return (
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-brand-100 bg-paper-raised p-6">
+      {isIntake && <StepHeader step={1} />}
       <div>
         <label className="block text-sm font-medium text-ink/80">負責醫師</label>
         <select
@@ -242,28 +337,47 @@ export default function NewCaseForm({
 
       <div className="rounded-md border border-accent-200 bg-accent-50 p-3">
         <label className="block text-sm font-medium text-ink/80">病歷號與姓名（僅存本機，不上雲端）</label>
+        {/* 平板／手機沒有 File System Access API，寫不了本機對照表。與其等到送出才擋，
+            不如一開始就停用這兩格並講清楚後續怎麼補（2026-08-20：未來會用平板收案）。 */}
+        {!supported && !vaultUnlocked && (
+          <p className="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+            <b>保管庫鎖定中，這兩格停用。</b>
+            這台裝置沒有 File System Access（手機／平板一律沒有），病歷號與姓名要寫進雲端保管庫，
+            但它目前鎖著。請到<b>「病歷號對照維護」</b>輸入通行碼解鎖——解鎖後 30 天內不用再打。
+            也可以先留空照常建檔並交給病人填，之後再補對照。
+          </p>
+        )}
+        {!supported && vaultUnlocked && (
+          <p className="mt-1 rounded border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-xs text-emerald-800">
+            保管庫已解鎖，這兩格會<b>加密後寫進雲端保管庫</b>（不經過伺服器解密，也不會存進這台裝置）。
+          </p>
+        )}
         <div className="mt-1 grid gap-2 sm:grid-cols-2">
           <input
             name="mrn"
             ref={mrnRef}
-            autoFocus={isIntake}
+            autoFocus={isIntake && (supported || vaultUnlocked)}
+            disabled={!supported && !vaultUnlocked}
             value={mrn}
             onChange={(e) => setMrn(e.target.value)}
-            placeholder="病歷號（留空則不建立對照）"
-            className="w-full rounded-md border border-accent-300 px-3 py-2 text-sm outline-none focus:border-accent-500"
+            placeholder={supported || vaultUnlocked ? "病歷號（留空則不建立對照）" : "保管庫鎖定中"}
+            className="w-full rounded-md border border-accent-300 px-3 py-2 text-sm outline-none focus:border-accent-500 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-paper-sunken disabled:text-ink/30"
           />
           <input
             name="patient_name"
+            disabled={!supported && !vaultUnlocked}
             value={patientName}
             onChange={(e) => setPatientName(e.target.value)}
-            placeholder="姓名（僅寫入本機對照表）"
-            className="w-full rounded-md border border-accent-300 px-3 py-2 text-sm outline-none focus:border-accent-500"
+            placeholder={supported || vaultUnlocked ? "姓名" : "保管庫鎖定中"}
+            className="w-full rounded-md border border-accent-300 px-3 py-2 text-sm outline-none focus:border-accent-500 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-paper-sunken disabled:text-ink/30"
           />
         </div>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-ink/50">
           <span>
             {!supported
-              ? "手機／平板無法寫入本機對照表（需桌機版 Chrome/Edge）。這兩欄請留空，改在診間電腦補。"
+              ? vaultUnlocked
+                ? "寫入目標：雲端保管庫（已解鎖）"
+                : "寫入目標：雲端保管庫（鎖定中）"
               : fileHandle
               ? "已設定本機對照表檔案"
               : "尚未設定本機對照表檔案（送出時會請你選擇）"}
@@ -322,33 +436,62 @@ export default function NewCaseForm({
               onClick={retryPendingMapping}
               className="mt-2 block whitespace-nowrap rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs text-red-700 hover:bg-red-100"
             >
-              重試寫入本機對照表
+              {supported ? "重試寫入本機對照表" : "重試寫入保管庫"}
             </button>
           )}
         </div>
       )}
 
-      {/* 連續收案模式：建完留在原頁，這條橫幅是唯一的「真的存進去了」回饋 */}
-      {lastCreated && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-          <span>
-            ✓ 已建立 <b className="font-data">{lastCreated.researchId}</b>
-          </span>
-          <Link
-            href={`/patient/${lastCreated.caseId}/intake`}
-            className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
-          >
-            交給病人填
-          </Link>
-          <Link href={`/cases/${lastCreated.caseId}`} className="whitespace-nowrap text-xs text-brand-800 underline">
-            開個案頁
-          </Link>
-        </div>
-      )}
-
       <Button type="submit" pending={submitting} pendingText="建立中…" className="w-full">
-        {isIntake ? "建立並繼續收下一位" : "建立個案"}
+        {isIntake ? "建立，下一步交給病人" : "建立個案"}
       </Button>
     </form>
+  );
+}
+
+/** 收案只有兩步：填三格 → 交給病人。步數少，所以用一條橫的指示而不是側邊的進度條。 */
+function StepHeader({ step }: { step: 1 | 2 }) {
+  const steps = [
+    { n: 1 as const, label: "護理師填寫", hint: "病歷號・姓名・負責醫師" },
+    { n: 2 as const, label: "交給病人", hint: "其餘資料由病人自填" },
+  ];
+  return (
+    <ol className="flex items-stretch gap-2">
+      {steps.map((s) => {
+        const state = s.n === step ? "current" : s.n < step ? "done" : "todo";
+        return (
+          <li
+            key={s.n}
+            className={`flex flex-1 items-center gap-2 rounded-md border px-3 py-2 ${
+              state === "current"
+                ? "border-brand-300 bg-brand-50"
+                : state === "done"
+                ? "border-emerald-200 bg-emerald-50"
+                : "border-brand-100 bg-paper-sunken"
+            }`}
+          >
+            <span
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
+                state === "current"
+                  ? "bg-brand-700 text-white"
+                  : state === "done"
+                  ? "bg-emerald-600 text-white"
+                  : "bg-brand-100 text-ink/40"
+              }`}
+            >
+              {state === "done" ? "✓" : s.n}
+            </span>
+            <span className="min-w-0">
+              <span
+                className={`block text-sm font-medium ${state === "todo" ? "text-ink/40" : "text-ink/80"}`}
+              >
+                {s.label}
+              </span>
+              <span className="block truncate text-xs text-ink/40">{s.hint}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }

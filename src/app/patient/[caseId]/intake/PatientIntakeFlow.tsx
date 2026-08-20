@@ -42,11 +42,14 @@ const PSQI_SLEEP_LATENCY: BigChoiceOption[] = [
   { value: "45", label: "31 到 60 分鐘" },
   { value: "90", label: "超過 60 分鐘" },
 ];
-/** 5j、11e 是自由文字補充、且不列入 PSQI 計分，病人版直接略過。 */
-const PSQI_SKIP_ORDERS = [14, 24];
+/**
+ * 5j 說明、11e 說明是自由文字補充、且不列入 PSQI 計分，病人版直接略過
+ * （5j 的 0-3 頻率題在 order_no 15，那題有計分，要留著）。
+ */
+const PSQI_SKIP_ORDERS = [14, 25];
 /** 第10題（睡伴／室友）答「沒有睡伴或室友」時，第11題（睡伴觀察到的情形）整組跳過。 */
-const PSQI_BED_PARTNER_ORDER = 19;
-const PSQI_PARTNER_ONLY_ORDERS = [20, 21, 22, 23, 24];
+const PSQI_BED_PARTNER_ORDER = 20;
+const PSQI_PARTNER_ONLY_ORDERS = [21, 22, 23, 24, 25];
 
 type Screen = {
   segment: PatientIntakeSegmentKey;

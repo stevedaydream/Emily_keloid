@@ -16,6 +16,7 @@ import {
 import { useLocalNames } from "@/components/LocalNameProvider";
 import { lookupCaseIdByResearchId } from "./actions";
 import VaultPanel from "./VaultPanel";
+import VaultRowsEditor from "./VaultRowsEditor";
 
 export default function MrnMappingPage() {
   const { devMobileMapping, mountFromFile } = useLocalNames();
@@ -190,19 +191,25 @@ export default function MrnMappingPage() {
         {/* 行動裝置掛不上本機檔案，但可以用通行碼解開雲端保管庫（密文才上雲端，見 lib/mrnVault.ts） */}
         <VaultPanel localRows={null} />
 
-        <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-        <p className="font-medium">這一頁的完整功能需要在桌機上開啟</p>
-        <p>
-          病歷號對照表是直接讀寫你電腦上的 CSV 檔，用的是瀏覽器的 File System Access API，
-          <b>只有桌機版的 Chrome / Edge 有實作</b>。
-        </p>
-        <p>
-          <b>手機與平板一律不支援</b>——包含 Android 版 Chrome 與 iPad 版 Safari/Chrome。
-          這不是權限沒開，是行動版瀏覽器根本沒有這個功能，開啟任何設定都沒有用。
-        </p>
-        <p className="text-amber-700">
-          請改用診間電腦開啟本頁。平板／公務機的用途是拍照與交給病人填寫問卷，那些都不需要對照表。
-        </p>
+        {/* 解鎖後直接編輯保管庫：平板上這是唯一的維護面（決策 2026-08-20） */}
+        <VaultRowsEditor />
+
+        <div className="space-y-2 rounded-lg border border-brand-200 bg-paper-sunken p-4 text-sm text-ink/70">
+          <p className="font-medium text-ink/80">這台裝置寫不了本機 CSV，改用雲端保管庫</p>
+          <p>
+            病歷號對照表原本是直接讀寫你電腦上的 CSV，用的是瀏覽器的 File System Access API，
+            <b>只有桌機版 Chrome / Edge 有實作</b>；手機與平板一律沒有（含 Android Chrome、iPad Safari），
+            那不是權限沒開，是根本沒有這個功能。
+          </p>
+          <p>
+            所以在這台裝置上，<b>雲端保管庫就是病歷號對照的來源</b>：用通行碼解鎖之後，
+            上面可以新增／修改／刪除對照，收案時填的病歷號與姓名也會直接加密寫進來。
+            解鎖記 30 天，裝置要借人或送修時請先按「鎖定」。
+          </p>
+          <p className="text-ink/50">
+            保管庫每次寫入都會自動留一份版本快照，可防損毀或覆蓋錯；
+            但<b>防不了忘記通行碼</b>——伺服器沒有通行碼，忘了就再也解不開。
+          </p>
         </div>
       </div>
     );

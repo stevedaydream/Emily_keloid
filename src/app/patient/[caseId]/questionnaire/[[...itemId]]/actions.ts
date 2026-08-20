@@ -4,7 +4,12 @@ import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase";
 import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
-import { computeJSSClassification } from "@/lib/scoring";
+import {
+  computeJSSClassification,
+  normalizeClockInput,
+  PSQI_CLOCK_ORDERS,
+  PSQI_QUESTIONNAIRE_NAME,
+} from "@/lib/scoring";
 
 export async function submitQuestionnaireAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
@@ -36,7 +41,14 @@ export async function submitQuestionnaireAction(formData: FormData) {
       if (raw !== null && raw !== "") {
         // 量表評分題的選項 value 就是分數，跟 number 一樣存成數字（計分/匯出都當數值用）。
         const isNumeric = q.question_type === "number" || (q.question_type === "scale" && !Number.isNaN(Number(raw)));
-        const value = isNumeric ? Number(raw) : raw;
+        // PSQI 上床／起床時間表單已改用 <input type="time">，這裡再擋一層：
+        // 舊瀏覽器或直接 POST 進來的 `23::40` 之類格式先正規化成 HH:MM，
+        // 免得 scoring.ts 解析不出來、整筆總分變成 null。
+        const needsClockNormalize =
+          template?.name === PSQI_QUESTIONNAIRE_NAME &&
+          PSQI_CLOCK_ORDERS.includes(q.order_no) &&
+          typeof raw === "string";
+        const value = isNumeric ? Number(raw) : needsClockNormalize ? normalizeClockInput(raw as string) : raw;
         answerRows.push({ response_id: response.id, question_id: q.id, answer_value: value });
         answersByOrder[q.order_no] = value;
       }
