@@ -21,6 +21,11 @@ const GROUPS = [
     label: "問卷與衛教",
     items: [
       { href: "/admin/questionnaires", title: "問卷產生器", desc: "自訂問卷與題目（量表、飲食運動習慣等）" },
+      {
+        href: "/admin/scoring-check",
+        title: "量表計分驗算",
+        desc: "SF-36／PSQI 逐步計算過程攤開來核對，可載入既有回覆或手動試算",
+      },
     ],
   },
   {

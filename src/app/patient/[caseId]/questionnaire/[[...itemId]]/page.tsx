@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase";
+import SubmitButton from "@/components/ui/SubmitButton";
 import { PSQI_QUESTIONNAIRE_NAME, PSQI_CLOCK_ORDERS } from "@/lib/scoring";
 import { submitQuestionnaireAction } from "./actions";
 
@@ -175,12 +176,11 @@ export default async function ClinicQuestionnairePage({
           </div>
         ))}
 
-        <button
-          type="submit"
-          className="w-full whitespace-nowrap rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
-        >
+        {/* 用 SubmitButton 而非裸 <button>：送出中會自動停用，擋掉連點兩下送出兩筆一模一樣的回覆
+            （2026-08-20 PU-2026-001 的 PSQI 就是這樣多出一筆，相隔 4 秒、答案完全相同）。 */}
+        <SubmitButton className="w-full" pendingText="送出中…">
           送出
-        </button>
+        </SubmitButton>
       </form>
     </div>
   );
