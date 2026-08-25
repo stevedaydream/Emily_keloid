@@ -87,13 +87,36 @@ export type IntakePrefill = {
   weight: string;
   phone: string;
   onsetYear: string;
+  // ── 以下是「這位已經答過的」（2026-08-25）。填完之後回頭檢視時要原樣帶回畫面：
+  //    空白畫面往前走一次，每跨一段就把空的答案存回去，等於把上次的資料洗掉。
+  familyOptionIds: string[];
+  /** family_history 存的是「無」＝當初勾了「以上都沒有」，跟「跳過沒答」不同 */
+  familyNone: boolean;
+  familyUnknown: boolean;
+  visitReasonIds: string[];
+  visitReasonUnknown: boolean;
+  onsetCauseIds: string[];
+  onsetCauseUnknown: boolean;
+  referralIds: string[];
+  referralUnknown: boolean;
+  symptomIds: string[];
+  priorTreated: Prior | "";
+  priorDoctor: string;
+  priors: Record<string, Prior>;
+  /** 兩份量表的最新一筆回覆：逐題答案帶回畫面，responseId 供重存時取代（不要多長一筆 Baseline） */
+  sf36: { responseId: string | null; answers: Record<string, string | string[]> };
+  psqi: { responseId: string | null; answers: Record<string, string | string[]> };
 };
+
+/** 某一段還沒答的項目（來源是存檔當下寫進去的待補清單） */
+export type PendingItem = { segment: PatientIntakeSegmentKey; label: string; reason: string };
 
 export default function PatientIntakeFlow({
   caseId,
   researchId,
   completedSegments,
   prefill,
+  pendingBySegment,
   birthDateMax,
   familyDiseaseOptions,
   visitReasonOptions,
@@ -109,6 +132,8 @@ export default function PatientIntakeFlow({
   researchId: string;
   completedSegments: string[];
   prefill: IntakePrefill;
+  /** 每一段還有哪幾題沒答。回頭檢視的入口畫面要標出來，人員才知道要補哪裡 */
+  pendingBySegment: PendingItem[];
   /** 台北時區的今天（`YYYY-MM-DD`），出生日期的上界。由伺服器算好傳進來——
       伺服器跑 UTC、平板是 UTC+8，各自算會差一天而讓 hydration 對不起來。 */
   birthDateMax: string;
@@ -134,21 +159,36 @@ export default function PatientIntakeFlow({
   const [weight, setWeight] = useState(prefill.weight);
   const [phone, setPhone] = useState(prefill.phone);
 
-  const [family, setFamily] = useState<string[]>([]);
-  const [visitReason, setVisitReason] = useState<string[]>([]);
-  const [onsetYear, setOnsetYear] = useState(prefill.onsetYear);
-  const [priors, setPriors] = useState<Record<string, Prior>>({});
+  // 複選題的初始值：已勾的選項；當初答「以上都沒有」／「我不知道」時要還原成那顆哨兵鍵，
+  // 否則畫面會顯示成「什麼都沒選」，往前走一次就把有效答案洗成跳過。
+  const seedMulti = (ids: string[], none: boolean, unknown: boolean) =>
+    ids.length > 0 ? ids : none ? [NONE] : unknown ? [UNKNOWN] : [];
 
-  const [onsetCause, setOnsetCause] = useState<string[]>([]);
-  const [referral, setReferral] = useState<string[]>([]);
-  const [symptoms, setSymptoms] = useState<string[]>([]);
+  const [family, setFamily] = useState<string[]>(
+    seedMulti(prefill.familyOptionIds, prefill.familyNone, prefill.familyUnknown)
+  );
+  const [visitReason, setVisitReason] = useState<string[]>(
+    seedMulti(prefill.visitReasonIds, false, prefill.visitReasonUnknown)
+  );
+  const [onsetYear, setOnsetYear] = useState(prefill.onsetYear);
+  const [priors, setPriors] = useState<Record<string, Prior>>(prefill.priors);
+
+  const [onsetCause, setOnsetCause] = useState<string[]>(
+    seedMulti(prefill.onsetCauseIds, false, prefill.onsetCauseUnknown)
+  );
+  const [referral, setReferral] = useState<string[]>(seedMulti(prefill.referralIds, false, prefill.referralUnknown));
+  const [symptoms, setSymptoms] = useState<string[]>(prefill.symptomIds);
 
   // 治療史的總開關（2026-08-20）。答「沒有治療過」就不再逐題問類固醇／中醫／貼布／放射線，
   // 那四題由伺服器一律帶「無」；答「不記得」則一律帶「不知道」。
-  const [priorTreated, setPriorTreated] = useState<Prior | "">("");
-  const [priorDoctor, setPriorDoctor] = useState("");
+  const [priorTreated, setPriorTreated] = useState<Prior | "">(prefill.priorTreated);
+  const [priorDoctor, setPriorDoctor] = useState(prefill.priorDoctor);
 
-  const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
+  // 兩份量表的答案共用同一個 map（key 是題目 id，不會撞）
+  const [answers, setAnswers] = useState<Record<string, string | string[]>>({
+    ...prefill.sf36.answers,
+    ...prefill.psqi.answers,
+  });
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -161,7 +201,15 @@ export default function PatientIntakeFlow({
     intakeOptions: (string | null)[];
     sf36: string | null;
     psqi: string | null;
-  }>({ history: null, intakeOptions: [], sf36: null, psqi: null });
+  }>({
+    history: null,
+    intakeOptions: [],
+    // 量表用既有那筆當起點：回頭重填時取代它，而不是多長一筆同時間點的回覆。
+    // 選單類刻意不帶（留 null）——那幾類是 append-only 的歷史，重存一筆是正常的，
+    // 帶進來反而會把上次那筆（可能是人員在個案頁補的）刪掉。
+    sf36: prefill.sf36.responseId,
+    psqi: prefill.psqi.responseId,
+  });
 
   const setAnswer = (qid: string, value: string | string[]) => setAnswers((a) => ({ ...a, [qid]: value }));
 
@@ -523,7 +571,13 @@ export default function PatientIntakeFlow({
   }
 
   // ── 歡迎 / 完成畫面 ──────────────────────────────────────────
-  if (finished || (index === null && allDone)) {
+  //
+  // ⚠️ 這裡原本是 `finished || (index === null && allDone)`：五段都填完之後，
+  // 這條路徑就再也回不去題目了——個案頁與收案動線的「重新填寫」按鈕指到這個網址，
+  // 點下去只會看到「已經填完了」，沒有任何入口。2026-08-25 使用者回報。
+  // 現在只有「這一輪剛走到底」（finished）才是完成畫面；已填完的個案回到入口畫面，
+  // 由那裡提供逐段檢視與從頭重看兩條路。
+  if (finished) {
     return (
       <Shell caseId={caseId}>
         <div className="text-center">
@@ -566,24 +620,35 @@ export default function PatientIntakeFlow({
 
   if (index === null) {
     const resuming = completedSegments.length > 0;
+    // 該段的第一個畫面在第幾格——按段落跳進去用（找不到就從頭）
+    const segmentStart = (key: PatientIntakeSegmentKey) => Math.max(0, screens.findIndex((s) => s.segment === key));
     return (
       <Shell caseId={caseId}>
         <div>
           <h1 className="text-3xl font-semibold leading-snug text-ink">
-            {resuming ? "接著填寫" : "請您填寫幾個問題"}
+            {allDone ? "已經全部填完" : resuming ? "接著填寫" : "請您填寫幾個問題"}
           </h1>
-          <p className="mt-4 text-xl leading-relaxed text-ink/70">
-            這些問題只有您自己知道答案，會幫助醫師了解您的狀況。
-            <br />
-            一頁一個問題，選好會自動跳下一頁。
-            <br />
-            不確定的可以跳過，護理師之後會再問您。
-          </p>
+          {allDone ? (
+            <p className="mt-4 text-xl leading-relaxed text-ink/70">
+              要修改或補答的話，點下面任何一段就從那一段的第一題開始，
+              <br />
+              先前答過的都會帶在畫面上。
+            </p>
+          ) : (
+            <p className="mt-4 text-xl leading-relaxed text-ink/70">
+              這些問題只有您自己知道答案，會幫助醫師了解您的狀況。
+              <br />
+              一頁一個問題，選好會自動跳下一頁。
+              <br />
+              不確定的可以跳過，護理師之後會再問您。
+            </p>
+          )}
           <ol className="mt-6 space-y-2">
             {PATIENT_INTAKE_SEGMENTS.map((s) => {
               const done = completedSegments.includes(s.key);
-              return (
-                <li key={s.key} className="flex items-center gap-3 text-lg text-ink/80">
+              const pending = pendingBySegment.filter((p) => p.segment === s.key);
+              const row = (
+                <>
                   <span
                     className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-base ${
                       done ? "bg-emerald-500 text-white" : "border-2 border-brand-200 text-ink/40"
@@ -591,7 +656,33 @@ export default function PatientIntakeFlow({
                   >
                     {done ? "✓" : ""}
                   </span>
-                  <span className={done ? "text-ink/40 line-through" : ""}>{s.label}</span>
+                  <span className="min-w-0 flex-1">
+                    {/* 填完的段落原本畫刪除線，但現在點得進去重看，刪除線會讓人以為不能動了 */}
+                    <span className={done && !allDone ? "text-ink/40 line-through" : ""}>{s.label}</span>
+                    {pending.length > 0 && (
+                      <span className="mt-0.5 block text-base text-amber-700">
+                        {pending.length} 項未填：{pending.map((p) => p.label).join("、")}
+                      </span>
+                    )}
+                  </span>
+                  {allDone && <span className="shrink-0 text-base text-brand-700">重看 →</span>}
+                </>
+              );
+              // 全部填完之後每一段都點得進去；還在填的時候維持單純的進度清單，
+              // 免得病人在流程中途自己跳段而漏掉題目。
+              return allDone ? (
+                <li key={s.key}>
+                  <button
+                    type="button"
+                    onClick={() => setIndex(segmentStart(s.key))}
+                    className="flex w-full items-center gap-3 rounded-xl border-2 border-brand-100 px-3 py-3 text-left text-lg text-ink/80 hover:border-brand-300"
+                  >
+                    {row}
+                  </button>
+                </li>
+              ) : (
+                <li key={s.key} className="flex items-center gap-3 px-3 text-lg text-ink/80">
+                  {row}
                 </li>
               );
             })}
@@ -601,8 +692,18 @@ export default function PatientIntakeFlow({
             onClick={() => setIndex(firstUnfinished >= screens.length ? 0 : firstUnfinished)}
             className="mt-8 min-h-16 w-full rounded-xl bg-brand-700 px-6 text-2xl font-medium text-white hover:bg-brand-800"
           >
-            {resuming ? "繼續" : "開始"}
+            {allDone ? "從第一題重新檢視" : resuming ? "繼續" : "開始"}
           </button>
+          {allDone && (
+            // 完成畫面有綁 LINE 的 QR code 與「接續量測病灶」，不重看題目時直接過去
+            <button
+              type="button"
+              onClick={() => setFinished(true)}
+              className="mt-3 min-h-14 w-full rounded-xl border-2 border-brand-200 px-6 text-lg text-ink/70"
+            >
+              不用改，到完成畫面（綁 LINE／接續量測）
+            </button>
+          )}
         </div>
       </Shell>
     );

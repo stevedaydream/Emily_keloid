@@ -25,6 +25,34 @@ export const SEGMENT_QUESTIONNAIRE_NAME: Partial<Record<PatientIntakeSegmentKey,
 };
 
 /**
+ * 待補項目（case_intake_followups.field_key）屬於哪一段（2026-08-25）。
+ *
+ * 填完之後回頭檢視時，要能一段一段告訴人員「這一段還有哪幾題沒答」——
+ * 而「沒答」這件事在存檔當下就已經算好、寫進待補清單了，不必再推導一次。
+ * 沒列在這裡的 field_key（例如診間免除的 lesion_*）不屬於病人自填流程，不顯示。
+ */
+export const FOLLOWUP_SEGMENT: Record<string, PatientIntakeSegmentKey> = {
+  sex: "basic",
+  age: "basic",
+  height: "basic",
+  weight: "basic",
+  phone: "basic",
+  family_history: "history",
+  keloid_onset_date: "history",
+  visit_reason: "history",
+  prior_treatment_physician: "history",
+  prior_steroid_treatment: "history",
+  prior_tcm_treatment: "history",
+  prior_ogawa_patch: "history",
+  prior_radiation_treatment: "history",
+  onset_cause: "intake_options",
+  referral_source: "intake_options",
+  keloid_symptom: "intake_options",
+  questionnaire_sf36: "sf36",
+  questionnaire_psqi: "psqi",
+};
+
+/**
  * 每頁的「按鈕預算」。6 選項題配上 56px 大按鈕加題目，一頁就滿了；
  * 是／否題一頁只放一題則會變成二十幾頁空白畫面。用總按鈕數當預算兩邊都顧到。
  */
