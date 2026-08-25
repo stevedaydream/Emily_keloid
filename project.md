@@ -1500,3 +1500,30 @@ pending.md E6 的三個選項裡等於選 (B)，但語意從「先不做時間�
 
 - `PipelineProgress` 的「資料完整」燈號永遠連到 `#section-completeness`，但那個區塊只有
   舊資料回溯建檔的個案才會渲染，一般個案點了不會動。與本次的問卷↔資料頁對齊無關，未動。
+
+### 2026-08-25 追加：收案一條龍的「資料完整」燈號
+
+原本回報的是「點了沒反應」（錨點 `#section-completeness` 只有回溯建檔的個案才會渲染），
+追下去發現死連結只是表象——**那個燈號根本不可能亮**。
+
+`v_case_pipeline_progress.step_complete` 對非回溯個案檢查的是 `cases.keloid_history`、
+`cases.keloid_size`、`cases.body_part_zone_id` 三個欄位，而現行介面一個都不會寫：
+部位與尺寸在 2026-07-27 多部位整合時就搬到 `case_keloid_lesions`（每顆病灶各自帶），
+`keloid_history` 換成選單紀錄。實測 10 筆個案這三欄都是 0/10 有值，
+於是進度條上限固定在 7/8（88%）。
+
+**修法**（migration `20260825020000`）：同一個判定搬到今天的欄位，不改嚴格程度——
+性別／年齡／JSS 分數／家族史不變，個案層的部位分類改看**主病灶**的 `body_part_zone_id`，
+`keloid_size` 改看主病灶有長寬高或勾了「無法量測」免除。主病灶取 `is_primary`，
+舊資料沒勾時退回 `site_no` 最小的那顆（與個案頁、匯出同一套慣例）。
+回溯建檔那一支（看 `case_data_completeness` 有沒有 pending）不動。
+
+- ⚠️ **`keloid_history` 沒有接班人**：它本來該對應 `keloid_history_type` 的勾選紀錄，
+  但那個類別的**選項清單是空的**（`case_intake_option_lists` 一筆都沒有），個案頁那個表單
+  現在顯示「後台尚未設定選項」，紀錄根本建不出來。把它列進條件等於再造一次同樣的死結，
+  所以整條拿掉。要收這一項的話，先到 `/admin/intake-options` 建好選項再把條件加回來。
+- **錨點改成依來源決定**（`stageAnchor()`，`lib/pipeline.ts`）：回溯建檔→`#section-completeness`，
+  一般個案→`#section-demographics`（新判定的七項全在那一段裡，病灶清單也嵌在同一段）。
+  個案頁與首頁的一條龍表格兩處共用同一支，不然又會各寫一份。
+- 實測 10 筆：5 筆亮燈、5 筆不亮（缺尺寸／缺病灶／缺 JSS 與家族史），燈號終於分得出差別；
+  頁面上所有 `#` 連結都掃過一遍，沒有指不到目標的。

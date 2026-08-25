@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase";
-import { PIPELINE_STAGES, type CasePipelineRow, progressTone } from "@/lib/pipeline";
+import { PIPELINE_STAGES, stageAnchor, type CasePipelineRow, progressTone } from "@/lib/pipeline";
 import InfoTooltip from "@/components/InfoTooltip";
 import CaseSearchBox from "@/components/CaseSearchBox";
 
@@ -352,10 +352,12 @@ export default async function DashboardPage({
                         {row[s.key] ? "●" : inProgress ? "◐" : "○"}
                       </span>
                     );
+                    // 「資料完整」的落點依個案來源而不同（回溯建檔才有欄位盤點區塊），見 stageAnchor()
+                    const anchor = stageAnchor(s, row);
                     return (
                       <td key={s.key} className="whitespace-nowrap px-2 py-2 text-center">
-                        {s.anchor ? (
-                          <Link href={`/cases/${row.case_id}#${s.anchor}`} className="hover:opacity-70">
+                        {anchor ? (
+                          <Link href={`/cases/${row.case_id}#${anchor}`} className="hover:opacity-70">
                             {dot}
                           </Link>
                         ) : (

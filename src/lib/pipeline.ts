@@ -10,10 +10,30 @@ export const PIPELINE_STAGES = [
   { key: "step_treatment", label: "治療紀錄", en: "Treatment", anchor: "section-treatment" },
   { key: "step_schedule", label: "追蹤時程", en: "Schedule", anchor: "section-schedule" },
   { key: "step_followup", label: "治療後追蹤", en: "Follow-up", anchor: "section-schedule" },
+  // 「資料完整」的落點依個案來源而不同，見下方 stageAnchor()——這裡放回溯建檔那一支。
   { key: "step_complete", label: "資料完整", en: "Complete", anchor: "section-completeness" },
 ] as const;
 
 export type PipelineStageKey = (typeof PIPELINE_STAGES)[number]["key"];
+
+/**
+ * 這一階段該跳到頁面上的哪個區塊（2026-08-25）。
+ *
+ * 「資料完整」的判定本來就有兩支（見 v_case_pipeline_progress.step_complete）：
+ *   · 回溯建檔（legacy_import）看的是欄位盤點清單 case_data_completeness → #section-completeness
+ *   · 一般個案看的是性別／年齡／JSS／家族史／主病灶的部位與尺寸／keloid 病史勾選，
+ *     這些全都在「病人基本資料」那一段裡（病灶清單與 Keloid history 也嵌在同一段）→ #section-demographics
+ *
+ * 而 #section-completeness 那個區塊**只有回溯建檔的個案才會渲染**，所以一般個案點下去
+ * 是一個沒有目標的錨點，畫面完全不動——看起來就像燈號壞了。
+ */
+export function stageAnchor(
+  stage: (typeof PIPELINE_STAGES)[number],
+  row: Pick<CasePipelineRow, "data_source">
+): string | null {
+  if (stage.key === "step_complete" && row.data_source !== "legacy_import") return "section-demographics";
+  return stage.anchor;
+}
 
 // v_case_pipeline_progress 每列的型別。
 export type CasePipelineRow = {

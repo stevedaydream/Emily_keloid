@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PIPELINE_STAGES, type CasePipelineRow, progressTone } from "@/lib/pipeline";
+import { PIPELINE_STAGES, stageAnchor, type CasePipelineRow, progressTone } from "@/lib/pipeline";
 
 // 單一個案的「收案一條龍」進度條 + 階段點。純伺服器端渲染，無互動。
 export default function PipelineProgress({ row }: { row: CasePipelineRow }) {
@@ -45,10 +45,11 @@ export default function PipelineProgress({ row }: { row: CasePipelineRow }) {
               </span>
             </>
           );
+          const anchor = stageAnchor(stage, row);
           return (
             <li key={stage.key}>
-              {stage.anchor ? (
-                <Link href={`#${stage.anchor}`} className="flex items-center gap-2 hover:opacity-75">
+              {anchor ? (
+                <Link href={`#${anchor}`} className="flex items-center gap-2 hover:opacity-75">
                   {dot}
                 </Link>
               ) : (
