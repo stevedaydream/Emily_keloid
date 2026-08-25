@@ -48,7 +48,9 @@ export default function MrnMappingPage() {
     setError(null);
     try {
       const ok = await requestHandlePermission(h);
-      if (!ok) throw new Error("本機檔案存取權限被拒絕");
+      // 頁面剛載入時沒有使用者手勢，瀏覽器不讓我們跳授權視窗（見 ensurePermission）。
+      // 這不是「被拒絕」，講成被拒絕會讓人以為要重選檔案。
+      if (!ok) throw new Error("需要重新授權才能讀取本機對照表——請按上方「重新載入」（授權視窗必須由你主動點擊才會出現）");
       setRows(await readAllRows(h));
     } catch (err) {
       setError(err instanceof Error ? err.message : "讀取本機對照表失敗");

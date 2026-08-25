@@ -1635,3 +1635,30 @@ null，於是**保管庫只生得出來自桌機**，而且那台桌機還得先
 
 ⚠️ 仍未解：**通行碼遺失無法還原**（版本快照是同一把金鑰加密的）。這是行政面的事——
 誰保管通行碼、怎麼交接，建議寫進 SOP 後再考慮要不要做第二把管理員金鑰。
+
+### 2026-08-25 追加：兩則修正（建立保管庫的條件寫反、行動裝置的授權例外）
+
+**① 條件寫反**：上一則的「任何裝置都能建立保管庫」實際上線後在手機上是**空的**——
+判斷式寫成 `meta || (localRows && localRows.length > 0)`，意思變成「已經有保管庫，或有本機
+對照表」才給輸入通行碼，正好把「還沒建立」那一支排除掉。應該是 `!meta || (...)`。
+（使用者用手機截圖回報，畫面只剩「需要先掛上本機對照表」那句死路文字。）
+
+**② 行動裝置其實有 requestPermission，而且沒有手勢時會丟例外**：
+`ensurePermission()` 原本的註解假設「Android Chrome 沒有 queryPermission／requestPermission」，
+實機證明是錯的——那台手機兩支都有。於是頁面一載入自動重讀對照表時（沒有使用者手勢）
+`requestPermission` 直接丟
+`Failed to execute 'requestPermission' on 'FileSystemHandle': User activation is required…`，
+整串英文例外原樣顯示在護理師眼前。
+
+改法：查到不是 `granted` 時，先看 `navigator.userActivation.isActive`——沒有手勢就回 false
+（**「現在不能問」不等於「被拒絕」**），並且 `requestPermission` 外面包 try/catch。
+對照表頁的錯誤訊息也改成「需要重新授權⋯請按上方『重新載入』（授權視窗必須由你主動點擊才會出現）」。
+
+**順帶更正一則稍早的判斷**：先前推論「手機一定落在 `!supported` 分支、病歷號欄位停用」，
+截圖顯示那台 Android Chrome 的 `isFileSystemAccessSupported()` 是 **true**（畫面走的是桌機分支、
+已連結本機檔案）。所以那台手機的病歷號欄位其實沒有停用；重複收案的成因要重新查，
+目前唯一確定的是保管庫從未建立、跨裝置沒有共同的對照來源。
+
+實測（本機 dev）：建立區塊出現通行碼欄位與「建立保管庫」按鈕；實際建立成功
+（`mrn_vault` 1 筆、row_count 0、PBKDF2 310k、版本快照 1 筆），驗證後已刪除，
+讓使用者用自己的通行碼建立。

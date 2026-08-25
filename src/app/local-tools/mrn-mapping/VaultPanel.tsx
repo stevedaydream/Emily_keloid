@@ -255,7 +255,10 @@ export default function VaultPanel({ localRows }: { localRows: MrnMappingRow[] |
             <b>遺失就無法還原</b>（伺服器沒有備份，版本快照也是用同一把金鑰加密的）。
           </p>
         )}
-        {meta || (localRows && localRows.length > 0) ? (
+        {/* 沒有保管庫 → 任何裝置都能建立（內容可以是空的）；已經有 → 只有掛著本機對照表才給覆蓋。
+            ⚠️ 這個條件曾經寫反成 `meta || (...)`，結果「尚未建立保管庫」時反而不給輸入通行碼，
+            手機上只看得到「需要先掛上本機對照表」——正是這次要修掉的死路。 */}
+        {!meta || (localRows && localRows.length > 0) ? (
           <>
             {meta && localRows && (
               <p className="text-[11px] text-ink/50">將加密上傳目前掛著的 {localRows.length} 筆對照。</p>

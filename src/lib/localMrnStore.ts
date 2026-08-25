@@ -70,12 +70,26 @@ async function loadHandle(): Promise<FileSystemFileHandle | null> {
 
 async function ensurePermission(handle: FileSystemFileHandle): Promise<boolean> {
   const opts = { mode: "readwrite" as const };
-  // Android Chrome 的實作沒有 queryPermission／requestPermission（那是桌機才有的權限持久化機制）。
+  // 有些行動裝置的實作沒有 queryPermission／requestPermission（權限持久化機制）。
   // 少了這兩支不代表沒權限——剛從選擇器拿到的 handle 本來就是可讀寫的，直接放行，
   // 真的不能寫時 createWritable() 會自己丟錯，錯誤訊息也比「權限被拒絕」精確。
   if (typeof handle.queryPermission !== "function" || typeof handle.requestPermission !== "function") return true;
   if ((await handle.queryPermission(opts)) === "granted") return true;
-  return (await handle.requestPermission(opts)) === "granted";
+
+  // requestPermission 規定要在使用者手勢裡呼叫。頁面一載入就自動重讀對照表時沒有手勢，
+  // Android Chrome 會直接丟 "Failed to execute 'requestPermission' on 'FileSystemHandle':
+  // User activation is required to request permissions."（實機證實：那台手機是有這兩支 API 的，
+  // 原本註解假設行動裝置沒有，錯了）。
+  // 這種情況**不是「被拒絕」**，是「現在還不能問」——回 false 讓呼叫端顯示一個可以按的重試，
+  // 別把瀏覽器的英文例外原樣丟到護理師眼前。
+  if (typeof navigator !== "undefined" && navigator.userActivation && !navigator.userActivation.isActive) {
+    return false;
+  }
+  try {
+    return (await handle.requestPermission(opts)) === "granted";
+  } catch {
+    return false;
+  }
 }
 
 // 建立一份新的本機對照表檔案（存檔對話框），並記住這次選擇供之後的瀏覽器工作階段重用。
