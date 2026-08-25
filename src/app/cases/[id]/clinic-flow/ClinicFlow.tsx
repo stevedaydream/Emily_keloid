@@ -48,7 +48,16 @@ export default function ClinicFlow({
 
   const steps = [
     { n: 1, title: "病人自填", done: intakeAllDone, hint: `${intakeDone}/${PATIENT_INTAKE_SEGMENTS.length} 段` },
-    { n: 2, title: "病灶量測與拍照", done: measureAllDone, hint: `${lesions.length} 個部位` },
+    {
+      n: 2,
+      title: "病灶量測與拍照",
+      done: measureAllDone,
+      hint: `${lesions.length} 個部位`,
+      // 收折成一行綠字之後，看起來就像「這一步結束了」——但一個病人可以有多顆病灶
+      // （最多 5 顆），第二顆得再點開這一步、在人形圖上點下一個部位才拍得到。
+      // 沒有這句提示，護理師沒有理由知道還能繼續（2026-08-25 使用者要求）。
+      collapsedCta: lesions.length > 0 ? "還有其他部位要拍？點我展開，在人形圖上點下一個部位" : undefined,
+    },
     {
       n: 3,
       title: "醫師評分",
@@ -108,6 +117,10 @@ export default function ClinicFlow({
                 <span className="flex-1">
                   <span className="block text-lg font-medium text-ink">{s.title}</span>
                   <span className="block text-sm text-ink/50">{s.hint}</span>
+                  {/* 只在收折時出現：展開後人形圖就在眼前，再講一次是雜訊 */}
+                  {s.collapsedCta && s.done && !expanded && (
+                    <span className="mt-1 block text-base font-medium text-brand-700">↓ {s.collapsedCta}</span>
+                  )}
                 </span>
                 <span className="text-ink/30">{expanded ? "▲" : "▼"}</span>
               </button>
