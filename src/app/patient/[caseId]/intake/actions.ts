@@ -272,7 +272,8 @@ export async function savePatientHistoryAction(
       : []),
     // 原本這裡會依「病人勾了蟹足腫病史類型」推出一筆待補（提醒人員補部位/時間/治療方式）。
     // 2026-08-12 docx 項次 2 把那題換成「此次就診主要原因」後，這個推導不再成立，故移除。
-    // 蟹足腫病史類型仍可由診間人員在個案頁記錄（category='keloid_history_type'），不受影響。
+    // 蟹足腫病史類型（keloid_history_type）已於 2026-08-25 整個移除——匯出沒有對應欄位、
+    // 語意又與「發生原因 (KC)」重疊，留著只會讓人以為是回填壞了。
   ]);
 
   await markSegmentDone(caseId, "history");

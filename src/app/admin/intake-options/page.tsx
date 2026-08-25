@@ -9,7 +9,11 @@ const CATEGORIES = [
   { key: "onset_cause", label: "發生原因" },
   { key: "referral_source", label: "如何得知看診資訊" },
   { key: "family_disease", label: "家族病史（常見疾病）" },
-  { key: "keloid_history_type", label: "Keloid history 類型" },
+  // keloid_history_type（Keloid history 類型）已於 2026-08-25 移除：
+  //   · 病人自填 2026-08-12 起就不問了（docx 項次 2 換成「此次就診主要原因」）
+  //   · 部長編碼簿的 4 張主表與所有附表都沒有對應欄位，填了也不會進匯出檔
+  //   · 語意與「發生原因 (KC)」重疊，兩者都在問「怎麼來的」
+  // 選項列與既有紀錄（0 筆）留在資料庫，只是不再從後台與個案頁出現。
 ] as const;
 
 export default async function IntakeOptionsAdminPage() {
@@ -19,9 +23,9 @@ export default async function IntakeOptionsAdminPage() {
   return (
     <div className="max-w-2xl space-y-8">
       <div>
-        <h1 className="font-heading text-xl font-medium text-brand-900">發生原因 / 得知看診 / 家族病史 / Keloid history 選單</h1>
+        <h1 className="font-heading text-xl font-medium text-brand-900">發生原因 / 得知看診 / 家族病史 選單</h1>
         <p className="mt-1 text-sm text-ink/50">
-          個案頁面的「發生原因」「如何得知看診資訊」「家族病史」「Keloid history」都是複選這裡維護的清單，不是單純打勾。
+          個案頁面的「發生原因」「如何得知看診資訊」「家族病史」都是複選這裡維護的清單，不是單純打勾。
           衛教內容不在這裡維護，請至「衛教資料庫」（供 LINE 衛教機器人回答參考）。
         </p>
       </div>

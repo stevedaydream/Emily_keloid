@@ -305,8 +305,6 @@ export default async function CaseDetailPage({
   const pendingFollowups = (intakeFollowups ?? []).filter((f) => f.status === "pending");
 
   const familyDiseaseOptions = (intakeOptions ?? []).filter((o) => o.category === "family_disease");
-  const keloidHistoryTypeOptions = (intakeOptions ?? []).filter((o) => o.category === "keloid_history_type");
-  const keloidHistoryRecords = (intakeRecords ?? []).filter((r) => r.category === "keloid_history_type");
 
   /**
    * 每一類選單的「目前值」＝最新一筆紀錄勾了哪些（intakeRecords 已依 recorded_at 由新到舊排序）。
@@ -795,45 +793,6 @@ export default async function CaseDetailPage({
             更新基本資料
           </SubmitButton>
         </form>
-
-        <div className="mt-4 border-t border-brand-50 pt-3">
-          <label className="block text-xs font-medium text-ink/70">
-            Keloid history（勾選病史類型，並填寫部位/時間/治療等詳細內容）
-          </label>
-          <div className="mt-1">
-            {(() => {
-              const current = latestOptionRecord("keloid_history_type");
-              return (
-                <IntakeOptionForm
-                  // key＝最新一筆紀錄的 id：存檔後帶入值會變，要讓表單重新掛載才吃得到新的預設勾選
-                  key={current.recordId ?? "empty"}
-                  caseId={id}
-                  category="keloid_history_type"
-                  options={keloidHistoryTypeOptions}
-                  defaultOptionIds={current.optionIds}
-                  alwaysShowNotes
-                  notesPlaceholder="請描述部位、時間、治療方式等詳細內容"
-                />
-              );
-            })()}
-          </div>
-          <ul className="space-y-1">
-            <CollapsedList listClassName="space-y-1" label="病史紀錄">
-              {keloidHistoryRecords.map((r) => (
-                <li key={r.id} className="break-words text-xs text-ink/50">
-                  {new Date(r.recorded_at).toLocaleDateString("zh-TW")} ・ {r.recorded_by} ・{" "}
-                  {(r.case_intake_option_record_items ?? [])
-                    .map((it: { case_intake_option_lists: { label: string } | { label: string }[] }) =>
-                      Array.isArray(it.case_intake_option_lists) ? it.case_intake_option_lists[0]?.label : it.case_intake_option_lists?.label
-                    )
-                    .join("、") || "（無勾選項目）"}
-                  {r.notes && <span className="text-ink/40">（{r.notes}）</span>}
-                </li>
-              ))}
-            </CollapsedList>
-            {keloidHistoryRecords.length === 0 && <li className="text-xs text-ink/30">尚無紀錄</li>}
-          </ul>
-        </div>
 
         <div id="section-lesions" className="mt-4 scroll-mt-4 border-t border-brand-50 pt-3">
           <div className="mb-2 flex items-center justify-between">
