@@ -3,6 +3,7 @@ import { Noto_Serif_TC, Noto_Sans_TC, IBM_Plex_Mono } from "next/font/google";
 import { cookies, headers } from "next/headers";
 import AppChrome from "@/components/AppChrome";
 import { getCurrentOperatorContext } from "@/lib/operator";
+import { isTestMode } from "@/lib/appSettings";
 import { LocalNameProvider } from "@/components/LocalNameProvider";
 import "./globals.css";
 
@@ -44,6 +45,8 @@ export default async function RootLayout({
   // root layout 在客戶端導航時不會重新渲染，把判斷留在這裡會導致導覽列該消失時沒消失。
   const operatorContext = signedIn ? await getCurrentOperatorContext() : null;
   const pathname = (await headers()).get("x-pathname") ?? "";
+  // 測試模式全站掛橫幅：正式與測試資料混在同一套系統裡，唯一能防呆的就是隨時看得見現在是哪一種
+  const testMode = signedIn ? await isTestMode() : false;
 
   return (
     <html
@@ -57,6 +60,7 @@ export default async function RootLayout({
             operator={operatorContext?.name ?? null}
             navCompact={operatorContext?.navCompact ?? false}
             initialPathname={pathname}
+            testMode={testMode}
           >
             {children}
           </AppChrome>

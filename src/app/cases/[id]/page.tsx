@@ -468,6 +468,10 @@ export default async function CaseDetailPage({
           <h1 className="text-xl font-semibold">{caseRow.research_id}</h1>
           {/* 姓名由瀏覽器端從本機對照表注入 */}
           <PatientName researchId={caseRow.research_id} className="text-lg text-ink/70" />
+          {/* 測試個案（2026-08-25）：正式與測試資料混在同一套系統裡，要在最顯眼的地方講清楚 */}
+          {caseRow.is_test && (
+            <span className="rounded bg-amber-500 px-2 py-0.5 text-xs font-medium text-white">測試個案</span>
+          )}
           {caseRow.data_source === "legacy_import" && (
             <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700">舊資料回溯建檔</span>
           )}
@@ -840,7 +844,7 @@ export default async function CaseDetailPage({
           <KeloidLesionSection
             caseId={id}
             lesions={lesionList}
-            zones={bodyZones ?? []}
+            zones={bodyZones ?? []}
             photosByLesion={photosByLesion}
             unassignedPhotos={unassignedPhotos}
           />

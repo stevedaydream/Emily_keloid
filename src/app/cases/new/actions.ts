@@ -5,6 +5,7 @@ import { generateResearchId } from "@/lib/researchId";
 import { getCurrentOperator } from "@/lib/operator";
 import { logAudit } from "@/lib/audit";
 import { BIOBANK_ITEM_LABEL } from "@/lib/biobank";
+import { isTestMode } from "@/lib/appSettings";
 
 export async function createCaseAction(formData: FormData): Promise<{ caseId: string; researchId: string }> {
   const supabase = supabaseServer();
@@ -38,6 +39,9 @@ export async function createCaseAction(formData: FormData): Promise<{ caseId: st
       enrollment_year: year,
       sequence_no: sequenceNo,
       created_by: operator,
+      // 測試模式的章在建檔當下蓋（2026-08-25）。之後把開關關掉，這一筆仍然是測試個案——
+      // 標記屬於這筆資料，不是屬於當下的開關。
+      is_test: await isTestMode(),
     })
     .select("id")
     .single();

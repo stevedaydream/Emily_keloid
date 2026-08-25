@@ -26,11 +26,14 @@ export default function AppChrome({
   operator,
   navCompact,
   initialPathname,
+  testMode,
   children,
 }: {
   operator: string | null;
   navCompact: boolean;
   initialPathname: string;
+  /** 測試模式開啟中：全站掛一條橫幅（病人自填的全螢幕頁除外） */
+  testMode: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname() ?? initialPathname;
@@ -38,6 +41,11 @@ export default function AppChrome({
 
   return (
     <>
+      {testMode && !kiosk && (
+        <div className="sticky top-0 z-50 bg-amber-500 px-4 py-1 text-center text-xs font-medium text-white">
+          測試模式進行中 — 現在建立的個案會被標記為「測試」，不會進匯出檔
+        </div>
+      )}
       {operator && !kiosk && <AppHeader operator={operator} navCompact={navCompact} />}
       <main className={kiosk ? "flex-1" : "mx-auto w-full max-w-6xl flex-1 px-4 py-6"}>{children}</main>
       {!kiosk && <BackToTopButton />}

@@ -111,6 +111,8 @@ type CaseRow = {
   enrollment_year: number | null;
   doctor_id: string | null;
   data_source: string | null;
+  /** demo／教育訓練期間建立的測試個案，預設不進匯出檔（2026-08-25） */
+  is_test: boolean | null;
   sex: string | null;
   phone_number: string | null;
   age_at_enrollment: number | null;
@@ -168,6 +170,9 @@ export async function GET(request: Request) {
   const sort = sp.get("sort") || "created"; // created | research_id | surgery
   // 同意書：預設只匯出已簽署的（決策 2026-08-20 F-C2）。consent=all 才會把未簽的一起帶出來。
   const includeUnconsented = sp.get("consent") === "all";
+  // 測試個案：預設排除（2026-08-25）。測試列混進部長的分析檔比缺幾列難發現得多——
+  // 缺列看得出來，多列會被當成真的病人算進去。test=all 才會一起帶出來。
+  const includeTestCases = sp.get("test") === "all";
 
   const [
     { data: casesRaw },
@@ -438,6 +443,7 @@ export async function GET(request: Request) {
   if (filterOperated === "yes") cases = cases.filter((c) => surgeryDateOf(c.id) !== null);
   if (filterOperated === "no") cases = cases.filter((c) => surgeryDateOf(c.id) === null);
   if (!includeUnconsented) cases = cases.filter((c) => Boolean(c.consent_signed_at));
+  if (!includeTestCases) cases = cases.filter((c) => !c.is_test);
 
   // ---- 排序（預設＝收案建檔順序，即部長說的「收案點選先後順序」）----
   if (sort === "research_id") {

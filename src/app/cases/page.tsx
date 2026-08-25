@@ -32,7 +32,7 @@ export default async function HomePage({
   let query = supabase
     .from("cases")
     .select(
-      "id, research_id, body_site, consent_signed_at, data_source, line_bound, enrollment_year, recurrence_status, created_at, doctors(code, name)"
+      "id, research_id, body_site, consent_signed_at, data_source, line_bound, enrollment_year, recurrence_status, created_at, is_test, doctors(code, name)"
     )
     .order("created_at", { ascending: false });
 
@@ -120,6 +120,12 @@ export default async function HomePage({
                     <Link href={`/cases/${c.id}`} className="font-medium text-brand-800 underline">
                       {c.research_id}
                     </Link>
+                    {/* 測試個案要在列表就看得出來，不然清理時分不清哪些能刪（2026-08-25） */}
+                    {c.is_test && (
+                      <span className="ml-1.5 rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                        測試
+                      </span>
+                    )}
                   </td>
                   {/* 姓名由瀏覽器端從本機對照表注入，伺服器渲染的內容不含姓名 */}
                   <td className="whitespace-nowrap px-4 py-2 text-ink/80">
