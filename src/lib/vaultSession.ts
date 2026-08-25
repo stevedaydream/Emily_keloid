@@ -22,16 +22,21 @@
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 import type { MrnMappingRow } from "./localMrnStore";
-import { encryptWithKey, decryptWithKey } from "./mrnVault";
+import { encryptRowsWithDek, decryptRowsWithDek, isV2, type AnyVault } from "./mrnVault";
 import { saveVaultAction, loadVaultAction } from "@/app/local-tools/mrn-mapping/vaultActions";
 
 const DB_NAME = "keloid-vault-session";
 const STORE_NAME = "session-key";
 const RECORD_KEY = "default";
 interface StoredKey {
+  /** v2 起存的是 DEK（資料金鑰），不再是通行碼導出的金鑰——換通行碼不必重新解鎖每台裝置 */
   key: CryptoKey;
-  salt: string;
-  iterations: number;
+  /**
+   * 這把 DEK 對應的是哪一份保管庫：取 `wraps.passphrase.salt`。
+   * 一般的收案同步只換內容與 IV，wraps 不動，所以這個值穩定；
+   * 只有「建立」或「重設通行碼」會換掉它——那兩件事本來就必須重新解鎖。
+   */
+  fingerprint: string;
   /** epoch ms；過了就當沒解鎖並清掉 */
   expiresAt: number;
 }
@@ -40,8 +45,12 @@ export { SESSION_TTL_MS };
 
 export interface UnlockedVaultKey {
   key: CryptoKey;
-  salt: string;
-  iterations: number;
+  fingerprint: string;
+}
+
+/** 保管庫的身分指紋：手上的金鑰還對不對得上雲端那一份。 */
+export function vaultFingerprint(vault: AnyVault): string {
+  return isV2(vault) ? vault.wraps.passphrase.salt : (vault as { salt: string }).salt;
 }
 
 // 刻意用獨立的資料庫，不併進 localMrnStore 的 keloid-local-tools：
@@ -78,8 +87,8 @@ async function readRecord(): Promise<StoredKey | null> {
 }
 
 /** 記住這把金鑰 30 天。 */
-export async function rememberVaultKey(key: CryptoKey, salt: string, iterations: number): Promise<void> {
-  await putRecord({ key, salt, iterations, expiresAt: Date.now() + SESSION_TTL_MS });
+export async function rememberVaultKey(key: CryptoKey, fingerprint: string): Promise<void> {
+  await putRecord({ key, fingerprint, expiresAt: Date.now() + SESSION_TTL_MS });
   notify();
 }
 
@@ -93,7 +102,7 @@ export async function getVaultKey(): Promise<UnlockedVaultKey | null> {
       notify();
       return null;
     }
-    return { key: record.key, salt: record.salt, iterations: record.iterations };
+    return { key: record.key, fingerprint: record.fingerprint };
   } catch {
     return null;
   }
@@ -127,12 +136,28 @@ export function subscribeVaultSession(listener: Listener): () => void {
 }
 
 /**
+ * 寫回雲端時要把既有的 `wraps` 原樣帶著——那兩份被包住的 DEK 是保管庫的鑰匙孔，
+ * 掉了就等於把通行碼與救援碼一起作廢。內容每次都換新的 IV（AES-GCM 的要求）。
+ */
+function v2Payload(existing: AnyVault, content: { ciphertext: string; iv: string; row_count: number }) {
+  // 舊格式沒有 wraps，寫不回去。這裡不自作主張升級——升級要有通行碼，而收案當下沒有。
+  // 使用者到對照表頁解鎖一次就會自動升級（見 VaultPanel.handleUnlock），所以訊息直接指路。
+  if (!isV2(existing)) {
+    throw new Error("保管庫是舊格式，請到「病歷號對照維護」用通行碼解鎖一次（會自動升級並產生救援碼），之後就會正常寫入");
+  }
+  return { ...content, format: 2 as const, wraps: existing.wraps };
+}
+
+/** 手上的金鑰對不對得上雲端那一份；對不上就不能寫，否則會蓋掉別人的內容。 */
+function staleKeyMessage(existing: AnyVault, held: UnlockedVaultKey): string | null {
+  if (vaultFingerprint(existing) === held.fingerprint) return null;
+  return "保管庫已被其他裝置重新建立或重設通行碼，請先到「病歷號對照維護」重新解鎖再收案";
+}
+
+/**
  * 若保管庫已解鎖，就用整份對照表重新加密覆蓋雲端。
  *
  * 保管庫是單一 blob，沒有「只上傳一筆」這回事——每次同步都是整包重寫（百來筆約 20KB，成本可忽略）。
- * 重複使用同一組 salt（金鑰是綁著 salt 導出的，換 salt 就要重打通行碼），但**每次都換新的 IV**，
- * 這正是 AES-GCM 的要求；salt 的作用是擋 KDF 的預先計算，不需要每次更換。
- *
  * 沒解鎖就回 "locked"，呼叫端據此顯示待同步提示，不擋收案動線。
  */
 export async function syncVaultIfUnlocked(
@@ -141,8 +166,12 @@ export async function syncVaultIfUnlocked(
   const held = await getVaultKey();
   if (!held) return { status: "locked" };
   try {
-    const payload = await encryptWithKey(rows, held.key, held.salt, held.iterations);
-    const result = await saveVaultAction(payload);
+    const existing = (await loadVaultAction()) as AnyVault | null;
+    if (!existing) return { status: "failed", message: "雲端還沒有保管庫，請先建立" };
+    const stale = staleKeyMessage(existing, held);
+    if (stale) return { status: "failed", message: stale };
+    const content = await encryptRowsWithDek(rows, held.key);
+    const result = await saveVaultAction(v2Payload(existing, content));
     if (!result.ok) return { status: "failed", message: result.message };
     return { status: "synced" };
   } catch (err) {
@@ -162,23 +191,16 @@ export async function appendRowToVault(
   const held = await getVaultKey();
   if (!held) return { status: "locked" };
   try {
-    const existing = await loadVaultAction();
-    let rows: MrnMappingRow[] = [];
-    if (existing) {
-      if (existing.salt !== held.salt) {
-        // 別台裝置用新的通行碼重建過保管庫，手上這把金鑰已經對不上了。
-        // 硬寫下去會用舊金鑰覆蓋掉別人的內容，所以擋下來要求重新解鎖。
-        return {
-          status: "failed",
-          message: "保管庫已被其他裝置以新的通行碼重建，請先到「病歷號對照維護」重新解鎖再收案",
-        };
-      }
-      rows = await decryptWithKey(existing, held.key);
-    }
+    const existing = (await loadVaultAction()) as AnyVault | null;
+    if (!existing) return { status: "failed", message: "雲端還沒有保管庫，請先建立" };
+    const stale = staleKeyMessage(existing, held);
+    if (stale) return { status: "failed", message: stale };
+
+    let rows = await decryptRowsWithDek(existing, held.key);
     rows = rows.filter((r) => r.research_id !== row.research_id);
     rows.push(row);
-    const payload = await encryptWithKey(rows, held.key, held.salt, held.iterations);
-    const result = await saveVaultAction(payload);
+    const content = await encryptRowsWithDek(rows, held.key);
+    const result = await saveVaultAction(v2Payload(existing, content));
     if (!result.ok) return { status: "failed", message: result.message };
     return { status: "saved", total: rows.length };
   } catch (err) {
@@ -196,8 +218,13 @@ export async function appendRowToVault(
 export async function readVaultRows(): Promise<MrnMappingRow[] | null> {
   const held = await getVaultKey();
   if (!held) return null;
-  const existing = await loadVaultAction();
+  const existing = (await loadVaultAction()) as AnyVault | null;
   if (!existing) return [];
-  if (existing.salt !== held.salt) return null; // 別台裝置用新通行碼重建過，手上的金鑰對不上
-  return decryptWithKey(existing, held.key);
+  // 別台裝置重新建立或重設過通行碼，手上的金鑰對不上——回 null＝「查不到」，不是「確定沒有」
+  if (vaultFingerprint(existing) !== held.fingerprint) return null;
+  try {
+    return await decryptRowsWithDek(existing, held.key);
+  } catch {
+    return null;
+  }
 }

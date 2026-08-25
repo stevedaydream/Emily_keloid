@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { MrnMappingRow } from "@/lib/localMrnStore";
-import { decryptWithKey } from "@/lib/mrnVault";
+import { decryptRowsWithDek } from "@/lib/mrnVault";
 import { getVaultKey, subscribeVaultSession, syncVaultIfUnlocked } from "@/lib/vaultSession";
 import { loadVaultAction } from "./vaultActions";
 import { useLocalNames } from "@/components/LocalNameProvider";
@@ -36,7 +36,7 @@ export default function VaultRowsEditor() {
     }
     try {
       const payload = await loadVaultAction();
-      const decrypted = payload ? await decryptWithKey(payload, held.key) : [];
+      const decrypted = payload ? await decryptRowsWithDek(payload, held.key) : [];
       setRows(decrypted);
       setError(null);
     } catch (err) {

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Button from "@/components/ui/Button";
 import { getConfiguredHandle, requestHandlePermission, readAllRows, type MrnMappingRow } from "@/lib/localMrnStore";
-import { decryptRows } from "@/lib/mrnVault";
+import { openVaultWithPassphrase, type AnyVault } from "@/lib/mrnVault";
 import { loadVaultAction } from "@/app/local-tools/mrn-mapping/vaultActions";
 
 // 匯出檔為了去識別化，「受試者」與「病歷號」兩欄是空的——但部長要對照病人時就需要它們。
@@ -58,7 +58,7 @@ export default function IdentifiedExport({ query = "" }: { query?: string }) {
     }
     const vault = await loadVaultAction();
     if (!vault) throw new Error("雲端尚未建立保管庫，請先在診間電腦上傳一次");
-    return decryptRows(vault, passphrase);
+    return (await openVaultWithPassphrase(vault as unknown as AnyVault, passphrase)).rows;
   }
 
   async function run() {

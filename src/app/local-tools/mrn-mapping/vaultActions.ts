@@ -9,17 +9,22 @@ import { logAudit } from "@/lib/audit";
 
 export interface VaultPayload {
   ciphertext: string;
-  salt: string;
   iv: string;
-  iterations: number;
   row_count: number;
+  /** 1=舊格式（通行碼直接加密內容）；2=雙金鑰（DEK 分別被通行碼與救援碼包住） */
+  format?: number;
+  /** v1 專用：通行碼導出金鑰的參數。v2 改放進 wraps，兩份各有自己一組。 */
+  salt?: string | null;
+  iterations?: number | null;
+  /** v2 專用：{ passphrase: {...}, recovery: {...} }。裡面只有被包住的 DEK，沒有任何祕密本身。 */
+  wraps?: unknown;
 }
 
 export async function loadVaultAction(): Promise<(VaultPayload & { updated_at: string; updated_by: string | null }) | null> {
   const supabase = supabaseServer();
   const { data } = await supabase
     .from("mrn_vault")
-    .select("ciphertext, salt, iv, iterations, row_count, updated_at, updated_by")
+    .select("ciphertext, salt, iv, iterations, row_count, format, wraps, updated_at, updated_by")
     .eq("id", "default")
     .maybeSingle();
   return data ?? null;
@@ -27,7 +32,16 @@ export async function loadVaultAction(): Promise<(VaultPayload & { updated_at: s
 
 export async function saveVaultAction(payload: VaultPayload): Promise<{ ok: boolean; message: string }> {
   // 基本形狀檢查：確保存進去的真的是密文欄位，而不是誰誤傳了明文。
-  if (!payload?.ciphertext || !payload.salt || !payload.iv) {
+  // v2 沒有頂層 salt（每份 wrap 各有自己的），改檢查 wraps 兩份都在。
+  if (!payload?.ciphertext || !payload.iv) {
+    return { ok: false, message: "保管庫內容不完整，未寫入" };
+  }
+  if (payload.format === 2) {
+    const w = payload.wraps as { passphrase?: unknown; recovery?: unknown } | null;
+    if (!w?.passphrase || !w?.recovery) {
+      return { ok: false, message: "保管庫缺少通行碼或救援碼的金鑰包，未寫入" };
+    }
+  } else if (!payload.salt) {
     return { ok: false, message: "保管庫內容不完整，未寫入" };
   }
 
@@ -38,10 +52,12 @@ export async function saveVaultAction(payload: VaultPayload): Promise<{ ok: bool
     {
       id: "default",
       ciphertext: payload.ciphertext,
-      salt: payload.salt,
+      salt: payload.salt ?? null,
       iv: payload.iv,
-      iterations: payload.iterations,
+      iterations: payload.iterations ?? null,
       row_count: payload.row_count,
+      format: payload.format ?? 1,
+      wraps: payload.wraps ?? null,
       updated_at: new Date().toISOString(),
       updated_by: operator,
     },
@@ -55,10 +71,12 @@ export async function saveVaultAction(payload: VaultPayload): Promise<{ ok: bool
   try {
     await supabase.from("mrn_vault_versions").insert({
       ciphertext: payload.ciphertext,
-      salt: payload.salt,
+      salt: payload.salt ?? null,
       iv: payload.iv,
-      iterations: payload.iterations,
+      iterations: payload.iterations ?? null,
       row_count: payload.row_count,
+      format: payload.format ?? 1,
+      wraps: payload.wraps ?? null,
       created_by: operator,
     });
     const { data: keep } = await supabase
