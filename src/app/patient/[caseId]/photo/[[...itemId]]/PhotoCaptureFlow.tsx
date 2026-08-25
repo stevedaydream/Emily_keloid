@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import BodyDiagram from "@/components/BodyDiagram";
 import CameraCapture from "./CameraCapture";
@@ -103,6 +104,16 @@ export default function PhotoCaptureFlow({
 
   return (
     <div className="mx-auto max-w-sm space-y-3">
+      {/* 進來之後決定不拍了，要有路可以回去（2026-08-25 使用者回報）。
+          相機那一步有 onBack 回到這裡，但這一頁原本什麼出口都沒有——
+          而 /patient/* 這條路徑的導覽列是關掉的（全螢幕交給病人用），
+          結果只剩瀏覽器的上一頁可按，平板上根本看不到。 */}
+      <Link
+        href={backTo}
+        className="flex min-h-11 items-center rounded-lg px-1 text-sm text-slate-500 hover:text-slate-800"
+      >
+        ← {next ? "回到收案動線（不拍了）" : "回個案頁面（不拍了）"}
+      </Link>
       <h1 className="text-center text-lg font-semibold text-slate-800">部位標記與拍照</h1>
 
       {caseSites.length > 0 && (
