@@ -126,6 +126,10 @@ export function jswNumber(raw?: string | null): number | "" {
 // ===== 4 張主表的欄名與第 1 列說明 =====
 // 匯出（產生資料）與匯入範本（產生空白表）必須用同一份定義，
 // 否則助理填好的範本會對不上匯入解析——這正是最容易在改了一邊、忘了另一邊時炸掉的地方。
+//
+// Name／Chart No. 兩欄的說明對兩邊的意思不同（2026-08-25 改）：
+//   · 匯出：預設留空，勾「含病歷號與姓名」並輸入匯出金鑰才會有值（見 lib/exportKey.ts）
+//   · 匯入範本：一律留空——雲端匯入只收去識別化的檔案（決策 #13），有值會整份擋掉
 
 // 2026-08-13 依助理回覆改版（Keloid Operation treat＿1150813.xlsx）：
 //   · 病灶區塊從 6 欄變 9 欄：KC 移到尺寸前面，尺寸拆成 長/寬/高/總面積 四格
@@ -171,7 +175,7 @@ export const BASIC_INFO_SHEET: SheetDef = {
     "paraffin blocks No.", "Cryotube      Location",
   ],
   legends: [
-    null, "（去識別化：伺服器留空，於瀏覽器端回填）", "（去識別化：伺服器留空，於瀏覽器端回填）", LEGEND.gender, null,
+    null, "（匯出：勾選並輸入匯出金鑰才會有值／匯入範本：請留空）", "（匯出：勾選並輸入匯出金鑰才會有值／匯入範本：請留空）", LEGEND.gender, null,
     LEGEND.birthday, null, LEGEND.height, LEGEND.weight, LEGEND.BMI,
     LEGEND.Doctor_ID, LEGEND.Diagnosis, LEGEND.Medical_history_self, LEGEND.Fmaily_history,
     LEGEND["time of occurrence"], LEGEND.visit_reason,
@@ -194,7 +198,7 @@ export const OPERATION_SHEET: SheetDef = {
     "Treatment Response", "Acute Reactions",
   ],
   legends: [
-    null, "（伺服器留空）", "（伺服器留空）", LEGEND.gender, null,
+    null, "（匯出：勾選並輸入匯出金鑰才會有值／匯入範本：請留空）", "（匯出：勾選並輸入匯出金鑰才會有值／匯入範本：請留空）", LEGEND.gender, null,
     ...Array.from({ length: MAX_OP_SITES }, (_, i) => [i === 0 ? LEGEND.KeloidLo : null, i === 0 ? LEGEND.surgical_procedure : null]).flat(),
     null, LEGEND.RT_Doctor, null, null, null,
     ...Array.from({ length: MAX_RT_SITES }, (_, i) => [i === 0 ? LEGEND.KeloidLo : null, i === 0 ? LEGEND.TotalDose : null]).flat(),
@@ -209,7 +213,7 @@ export const YEAR1_SHEET: SheetDef = {
     ...Array.from({ length: MAX_FW_YEAR1 }, (_, i) => fwBlock(i + 1)).flat(),
   ],
   legends: [
-    null, "（伺服器留空）", "（伺服器留空）", LEGEND.gender, null, LEGEND.FW_k_symptom,
+    null, "（匯出：勾選並輸入匯出金鑰才會有值／匯入範本：請留空）", "（匯出：勾選並輸入匯出金鑰才會有值／匯入範本：請留空）", LEGEND.gender, null, LEGEND.FW_k_symptom,
     ...Array.from({ length: MAX_FW_YEAR1 }, (_, i) => fwLegends(i + 1)).flat(),
   ],
 };
@@ -225,7 +229,7 @@ export const YEAR2_SHEET: SheetDef = {
     }).flat(),
   ],
   legends: [
-    null, "（伺服器留空）", "（伺服器留空）", LEGEND.gender, null,
+    null, "（匯出：勾選並輸入匯出金鑰才會有值／匯入範本：請留空）", "（匯出：勾選並輸入匯出金鑰才會有值／匯入範本：請留空）", LEGEND.gender, null,
     ...Array.from({ length: MAX_FW_YEAR2 }, (_, i) => [
       `${MAX_FW_YEAR1 + 1 + i}　未回診請直接填 0`,
       i === 0 ? "距手術日天數" : null,

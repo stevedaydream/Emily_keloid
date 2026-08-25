@@ -1082,8 +1082,12 @@ export async function GET(request: Request) {
     ],
     ["Basic Info.", "height / weight / BMI", "已可填寫（個案頁「病人基本資料」）；未填時輸出 9999", "舊資料沒有這兩項，需人員回頭補"],
     ["Basic Info.", "Medical_history_self / Fmaily_history", "已可編碼：勾選常見疾病後自動對到 1-8", "舊資料的自由文字對不到清單的片段會落到「其他」(8)"],
-    ["Basic Info.", "KC_1..5（發生原因）", "系統只有個案層級的發生原因，拆不到每個病灶", "待助理確認舊病歷能否拆到病灶層級（pending.md D5）"],
-    ["Basic Info.", "KOST_1..5（藥膏/貼片）", "系統尚無藥膏/貼片的 1-12 清單", "新增可維護清單並在治療紀錄可複選"],
+    [
+      "Basic Info.",
+      `KC_1..${MAX_LESIONS}（發生原因）／KOST_1..${MAX_LESIONS}（藥膏、貼片）`,
+      "已填值：記在個案層級，各病灶填同一個值",
+      "助理 2026-08-13 回覆：手術多半只做 1-2 處，其他疤痕治療各處大多一致，因此不做病灶層級輸入（pending.md D5）",
+    ],
     identified
       ? ["全部主表", "Name / Chart No.", "已帶出（本次匯出有輸入金鑰）", "含可識別資料，請依 IRB 規範保管"]
       : ["全部主表", "Name / Chart No.", "留空", "要帶出病歷號與姓名，請在匯出頁勾選並輸入金鑰"],
