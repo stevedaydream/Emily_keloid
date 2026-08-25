@@ -36,6 +36,10 @@ export default function ExportKeyPanel({ alreadySet }: { alreadySet: boolean }) 
           recoveryCode: useRecovery ? recoveryInput : undefined,
           alreadySet,
         });
+        if (!r.ok) {
+          setError(r.error);
+          return;
+        }
         setIssued(r.recoveryCode);
         setAck(false);
         setNewKey("");

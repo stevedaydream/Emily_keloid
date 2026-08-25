@@ -1806,3 +1806,23 @@ VaultRowsEditor、`/export` 的 IdentifiedExport（瀏覽器端回填姓名）�
 ⚠️ **已知且必須寫進 IRB 的取捨**：這把金鑰保護的是匯出檔，不是資料庫。資料庫層目前對 anon
 開放（見安全性備忘），Phase 1 上線前應改用 service_role + 收回 anon 權限，否則 anon key 外洩
 等同姓名與病歷號外洩。
+
+### 2026-08-25 追加：server action 的驗證訊息一律用「回傳值」
+
+使用者在手機上設定匯出金鑰，畫面出現一整段英文：
+「An error occurred in the Server Components render. The specific message is omitted in
+production builds…」。從 Vercel runtime logs 撈到真正的錯誤是**我自己的驗證訊息**——
+「不要只用數字，請混合英文字母或符號」（使用者輸入了純數字的金鑰）。
+
+**Next.js 在正式環境會把 server action 丟出的錯誤訊息整段抹掉**（只留一個 digest），
+所以任何「可預期的驗證結果」用 throw 傳遞，到了正式環境就變成那段沒有資訊量的英文。
+dev 環境看得到訊息，因此本機測起來完全正常——這是最容易漏掉的地方。
+
+同一個錯誤這一天犯了兩次（先是 `createCaseAction` 的撞號訊息，再來是這裡），所以寫成規則：
+
+> **可預期的驗證結果 → 回傳 `{ ok: false, error }`；throw 只留給真正的意外。**
+
+已改：`setExportKeyAction`（三處驗證）、`createCaseAction`（撞號）。
+仍待檢視（多為後台匯入路徑，且部分是 `<form action>` 直接送出、需要改用 useActionState 才接得到
+回傳值）：`admin/import/actions.ts`、`admin/import-keloid/actions.ts`、
+`cases/[id]/actions.ts` 的「請至少選擇一種治療方式」與「無明顯不適」互斥檢查。

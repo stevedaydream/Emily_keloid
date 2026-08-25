@@ -24,26 +24,32 @@ function keyIssue(key: string): string | null {
  * - 已經設定過：必須提供**舊金鑰**或**救援碼**其中之一，否則任何登入者都能把金鑰換掉，
  *   那這道門就形同虛設。
  *
- * 回傳新的救援碼——只有這一次拿得到，平台只留雜湊。
+ * ⚠️ 驗證結果一律用**回傳值**，不要 throw：Next.js 在正式環境會把 server action 丟出的訊息
+ * 抹掉（畫面只顯示「An error occurred in the Server Components render…」）。實測踩過兩次——
+ * 一次在 createCaseAction 的撞號訊息，一次就是這裡的「不要只用數字」。
+ *
+ * 成功時回傳新的救援碼——只有這一次拿得到，平台只留雜湊。
  */
+export type SetExportKeyResult = { ok: true; recoveryCode: string } | { ok: false; error: string };
+
 export async function setExportKeyAction(input: {
   newKey: string;
   confirmKey: string;
   currentKey?: string;
   recoveryCode?: string;
   alreadySet: boolean;
-}): Promise<{ recoveryCode: string }> {
+}): Promise<SetExportKeyResult> {
   const operator = await operatorOrThrow();
 
-  if (input.newKey !== input.confirmKey) throw new Error("兩次輸入的金鑰不一致");
+  if (input.newKey !== input.confirmKey) return { ok: false, error: "兩次輸入的金鑰不一致" };
   const issue = keyIssue(input.newKey);
-  if (issue) throw new Error(issue);
+  if (issue) return { ok: false, error: issue };
 
   if (input.alreadySet) {
     const okByKey = input.currentKey ? await verifyExportKey(input.currentKey) : false;
     const okByCode = input.recoveryCode ? await verifyExportRecoveryCode(input.recoveryCode) : false;
     if (!okByKey && !okByCode) {
-      throw new Error("舊金鑰或救援碼不正確——要更換金鑰必須先證明你有其中之一");
+      return { ok: false, error: "舊金鑰或救援碼不正確——要更換金鑰必須先證明你有其中之一" };
     }
   }
 
@@ -54,5 +60,5 @@ export async function setExportKeyAction(input: {
     entity: "app_settings",
   });
   revalidatePath("/admin/export-key");
-  return { recoveryCode };
+  return { ok: true, recoveryCode };
 }
