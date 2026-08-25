@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase";
 import { getCurrentOperator } from "@/lib/operator";
 import { measureBlockers } from "@/lib/clinicFlow";
-import { monthsSinceSurgery, visitLesionTodos } from "@/lib/visitFlow";
+import { monthsSinceSurgery, timepointForVisit, visitLesionTodos } from "@/lib/visitFlow";
 import { logAudit } from "@/lib/audit";
 import { addTreatmentRecordAction } from "@/app/cases/[id]/actions";
 
@@ -24,7 +24,7 @@ export async function getClinicCaseAction(caseId: string) {
     supabase
       .from("case_keloid_lesions")
       .select(
-        "id, site_no, body_site, body_part_zone_id, length_cm, width_cm, height_cm, measured_at, measure_waived, photo_waived, body_part_zones(display_name, dose_category)"
+        "id, site_no, body_site, is_primary, body_part_zone_id, length_cm, width_cm, height_cm, measured_at, measure_waived, photo_waived, body_part_zones(display_name, dose_category)"
       )
       .eq("case_id", caseId)
       .order("site_no"),
@@ -53,6 +53,7 @@ export async function getClinicCaseAction(caseId: string) {
       id: l.id,
       site_no: l.site_no,
       body_site: l.body_site,
+      is_primary: l.is_primary ?? false,
       length_cm: l.length_cm,
       width_cm: l.width_cm,
       height_cm: l.height_cm,
@@ -83,11 +84,17 @@ export async function getClinicCaseAction(caseId: string) {
       id: l.id,
       site_no: l.site_no,
       body_site: l.body_site,
+      is_primary: l.is_primary ?? false,
       measured_at: l.measured_at,
       hasSize: l.length_cm !== null && l.width_cm !== null && l.height_cm !== null,
+      length_cm: l.length_cm,
+      width_cm: l.width_cm,
+      height_cm: l.height_cm,
       photoCountToday: photoTodayCount.get(l.id) ?? 0,
     })),
-    today
+    today,
+    // 已登記手術就不再要求重新量測——尺寸只收術前 baseline（助理 2026-08-24）
+    surgeryDate !== null && today >= surgeryDate
   );
 
   return {
@@ -97,6 +104,10 @@ export async function getClinicCaseAction(caseId: string) {
     visitRegistered,
     visitTodos,
     monthIndex: monthsSinceSurgery(surgeryDate, today),
+    /** 已登記手術＝術後不再要求量測，卡片的文字要跟著改 */
+    postOp: surgeryDate !== null && today >= surgeryDate,
+    /** 本次回診落在哪個追蹤時間點（術後滿 1／6／12 個月 ±10 天）；null ＝ 本次不用測量表 */
+    timepointLabel: timepointForVisit(surgeryDate, today)?.label ?? null,
     id: caseRow?.id ?? caseId,
     research_id: caseRow?.research_id ?? "",
     doctor: doctor ? `${doctor.code} ${doctor.name}` : "",

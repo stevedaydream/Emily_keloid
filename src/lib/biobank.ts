@@ -8,6 +8,10 @@
 // 與手術日的差距遠小於該次本身的 ±14 天窗期，誤差被窗期吸收，
 // 不必多一個半年前要填對、半年後才會發現沒填的「治療完成日」欄位。
 
+// 日期加減與追蹤時間點窗期（lib/visitFlow.ts）共用同一份，避免月底那幾天兩邊算出不同的錨點。
+import { addDays, addMonths } from "@/lib/dates";
+import { FOLLOWUP_TIMEPOINT_MONTHS } from "@/lib/visitFlow";
+
 export type BiobankGroup = "組織" | "血液";
 
 export const BIOBANK_ITEMS = [
@@ -36,23 +40,6 @@ export const POST_OP_BLOOD_DRAWS: DrawWindowSpec[] = [
   { key: "blood_post_op_d28_35", label: "第 3 次抽血（術後 28–35 天）", kind: "days", startDay: 28, endDay: 35 },
   { key: "blood_month6", label: "第 4 次抽血（術後 6 個月 ±14 天）", kind: "months", months: 6, toleranceDays: 14 },
 ];
-
-const addDays = (iso: string, days: number): string => {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-};
-
-const addMonths = (iso: string, months: number): string => {
-  const d = new Date(`${iso}T00:00:00Z`);
-  const day = d.getUTCDate();
-  d.setUTCDate(1);
-  d.setUTCMonth(d.getUTCMonth() + months);
-  // 例：8/31 + 6 個月沒有 2/31，夾到當月最後一天
-  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
-  d.setUTCDate(Math.min(day, lastDay));
-  return d.toISOString().slice(0, 10);
-};
 
 export interface DrawWindow {
   key: BiobankItemKey;
@@ -91,9 +78,16 @@ export function isOutOfWindow(
 export const FOLLOWUP_MONTHS = 24;
 
 export function followupSchedule(surgeryDate: string): { month: number; label: string; dueDate: string }[] {
-  return Array.from({ length: FOLLOWUP_MONTHS }, (_, i) => ({
-    month: i + 1,
-    label: `術後第 ${i + 1} 個月追蹤`,
-    dueDate: addMonths(surgeryDate, i + 1),
-  }));
+  return Array.from({ length: FOLLOWUP_MONTHS }, (_, i) => {
+    const month = i + 1;
+    // 滿 1／6／12 個月那三次要加測三份量表（助理 2026-08-24）。寫進 label 而不是 actions，
+    // 是因為 actions 的 "questionnaire" 只掛得住一份問卷（`questionnaire_id` 是單一欄），
+    // 掛一份會讓另外兩份看起來不用測。實際的三份清單由回診動線依窗期算出來。
+    const withScales = (FOLLOWUP_TIMEPOINT_MONTHS as readonly number[]).includes(month);
+    return {
+      month,
+      label: `術後第 ${month} 個月追蹤${withScales ? "（含 JSS／SF-36／PSQI）" : ""}`,
+      dueDate: addMonths(surgeryDate, month),
+    };
+  });
 }

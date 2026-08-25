@@ -527,7 +527,7 @@ export default async function CaseDetailPage({
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-ink/80">
             病人自填
-            <InfoTooltip text="把平板交給病人，依序填寫只有他自己知道答案的部分（性別／出生日期／身高體重／電話、病史、發生原因、SF-36、PSQI）。臨床評分（VSS/JSS）、病灶尺寸、拍照仍由診間人員操作。病人答「不知道」或答「有」但問不到細節的項目，會列在下方待補清單。" />
+            <InfoTooltip text="把平板交給病人，依序填寫只有他自己知道答案的部分（性別／出生日期／身高體重／電話、病史、發生原因、SF-36、PSQI）。臨床評分（JSS，評主病灶）、病灶尺寸、拍照仍由診間人員操作。病人答「不知道」或答「有」但問不到細節的項目，會列在下方待補清單。" />
           </h2>
           <span className="flex flex-wrap gap-2">
             <Link

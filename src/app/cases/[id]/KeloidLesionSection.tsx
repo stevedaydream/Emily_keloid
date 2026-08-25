@@ -10,6 +10,7 @@ import {
   addKeloidLesionAction,
   deleteKeloidLesionAction,
   moveKeloidLesionAction,
+  setPrimaryLesionAction,
   updateKeloidLesionAction,
   updateKeloidLesionZoneAction,
 } from "./actions";
@@ -30,6 +31,8 @@ type Lesion = {
   id: string;
   site_no: number | null;
   body_site: string;
+  /** 主病灶＝要開刀那一顆，也是 JSS 疤痕診斷分類表評的那一顆（助理 2026-08-24） */
+  is_primary?: boolean | null;
   body_part_zone_id: string | null;
   length_cm: number | null;
   width_cm: number | null;
@@ -123,6 +126,7 @@ export default function KeloidLesionSection({
       {lesions.length > 1 && (
         <p className="mt-2 text-[11px] text-ink/40">
           順序有意義：請把<b>最嚴重、需要開刀的部位排在第一個</b>，匯出時的「部位1」就是它。用 ▲▼ 調整。
+          另外請確認<b>主病灶</b>勾在要開刀那一顆——JSS 疤痕診斷分類表評的就是它（助理 2026-08-24 決議）。
         </p>
       )}
       <ul className="mt-2 space-y-1">
@@ -139,6 +143,14 @@ export default function KeloidLesionSection({
                 <span>
                   <b className="mr-1 text-brand-700">部位{l.site_no}</b>
                   <b>{l.body_site}</b>
+                  {l.is_primary && (
+                    <span
+                      className="ml-1.5 rounded bg-accent-100 px-1.5 py-0.5 text-[11px] font-medium text-accent-800"
+                      title="JSS 疤痕診斷分類表評的就是這一顆"
+                    >
+                      主病灶
+                    </span>
+                  )}
                   <span className="ml-2 font-data text-ink/60">{formatSize(l)}</span>
                   {l.note && <span className="ml-2 text-xs text-ink/40">（{l.note}）</span>}
                 </span>
@@ -166,6 +178,22 @@ export default function KeloidLesionSection({
                         );
                       })}
                     </span>
+                  )}
+                  {/* 多病灶才需要挑：只有一顆時它必然就是主病灶，多一顆按鈕只是雜訊 */}
+                  {lesions.length > 1 && !l.is_primary && (
+                    <form action={setPrimaryLesionAction}>
+                      <input type="hidden" name="case_id" value={caseId} />
+                      <input type="hidden" name="lesion_id" value={l.id} />
+                      <SubmitButton
+                        variant="ghost"
+                        size="sm"
+                        title="把 JSS 評分的對象改成這一顆"
+                        className="!px-1.5 !py-0.5 text-xs text-ink/50 underline hover:!bg-brand-50"
+                        pendingText="設定中…"
+                      >
+                        設為主病灶
+                      </SubmitButton>
+                    </form>
                   )}
                   {l.measure_waived && (
                     <span className="whitespace-nowrap rounded bg-sky-100 px-1.5 py-0.5 text-sky-700" title={l.measure_waived_reason ?? ""}>

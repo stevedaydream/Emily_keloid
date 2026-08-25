@@ -963,6 +963,8 @@ export async function addKeloidLesionAction(formData: FormData) {
       site_no: nextSiteNo,
       body_site: bodySite,
       body_part_zone_id: bodyPartZoneId,
+      // 第一顆自動成為主病灶（JSS 評的那一顆）；多病灶時人員可在病灶清單改指定
+      is_primary: nextSiteNo === 1,
       length_cm: lengthRaw ? Number(lengthRaw) : null,
       width_cm: widthRaw ? Number(widthRaw) : null,
       height_cm: heightRaw ? Number(heightRaw) : null,
@@ -1023,6 +1025,32 @@ export async function updateKeloidLesionAction(formData: FormData) {
   revalidatePath(`/cases/${caseId}`);
 }
 
+/**
+ * 指定主病灶（助理 2026-08-24）。JSS 疤痕診斷分類表只評「主要手術的那一顆」，
+ * 12 題裡有 6 題是描述單一顆疤的，多病灶個案不指定就無法解讀那份量表。
+ *
+ * 一個個案只能有一顆：先把同個案的其他病灶取消，再設這一顆
+ * （資料庫另有 partial unique index 兜底，見 migration 20260824020000）。
+ */
+export async function setPrimaryLesionAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const lesionId = formData.get("lesion_id") as string;
+  const operator = await operatorOrThrow();
+  const supabase = supabaseServer();
+
+  await supabase.from("case_keloid_lesions").update({ is_primary: false }).eq("case_id", caseId).neq("id", lesionId);
+  await supabase.from("case_keloid_lesions").update({ is_primary: true }).eq("id", lesionId);
+
+  await logAudit({
+    caseId,
+    operatorName: operator,
+    action: "set_primary_lesion",
+    entity: "case_keloid_lesions",
+    entityId: lesionId,
+  });
+  revalidatePath(`/cases/${caseId}`);
+}
+
 export async function updateKeloidLesionZoneAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
   const lesionId = formData.get("lesion_id") as string;
@@ -1042,7 +1070,25 @@ export async function deleteKeloidLesionAction(formData: FormData) {
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
 
+  const { data: removed } = await supabase
+    .from("case_keloid_lesions")
+    .select("is_primary")
+    .eq("id", lesionId)
+    .maybeSingle();
+
   await supabase.from("case_keloid_lesions").delete().eq("id", lesionId);
+
+  // 刪掉的是主病灶時，把剩下編號最小的那顆補上——JSS 沒有主病灶就無從解讀
+  if (removed?.is_primary) {
+    const { data: next } = await supabase
+      .from("case_keloid_lesions")
+      .select("id")
+      .eq("case_id", caseId)
+      .order("site_no", { nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+    if (next) await supabase.from("case_keloid_lesions").update({ is_primary: true }).eq("id", next.id);
+  }
 
   await syncCaseBodySite(supabase, caseId);
   await logAudit({ caseId, operatorName: operator, action: "delete_keloid_lesion", entity: "case_keloid_lesions", entityId: lesionId });

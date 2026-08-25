@@ -14,9 +14,12 @@ export type DoctorOption = { id: string; code: string; name: string };
 export default function StructuredExportPanel({
   doctors,
   caseCount,
+  controlCount,
 }: {
   doctors: DoctorOption[];
   caseCount: number;
+  /** 對照組人數（健康受試者）。他們是另一個檔，不進實驗組的匯出檔 */
+  controlCount: number;
 }) {
   const [yearFrom, setYearFrom] = useState("");
   const [yearTo, setYearTo] = useState("");
@@ -38,6 +41,9 @@ export default function StructuredExportPanel({
   if (sort && sort !== "created") params.set("sort", sort);
   const query = params.toString();
   const href = `/api/export/structured-data${query ? `?${query}` : ""}`;
+  // 對照組是另一個檔（助理 2026-08-24）。只有同意書那個條件對它有意義——
+  // 健康受試者沒有收案年份、沒有主治醫師、沒有手術，其餘篩選傳過去也沒有東西可篩。
+  const controlHref = `/api/export/control-subjects${consentOnly ? "" : "?consent=all"}`;
   const filtered = [yearFrom, yearTo, doctor, operated, source].some(Boolean) || consentOnly;
 
   const field = "mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm";
@@ -49,8 +55,8 @@ export default function StructuredExportPanel({
         目前共 {caseCount} 筆個案。格式為部長 2026-08 版 Excel 編碼簿的 4 張主表
         （Basic Info. 56 欄 / Operation 26 欄 / Year 1 follow-up 42 欄 / Year 2 follow-up 41 欄），
         欄位順序與數量完全一致，儲存格只放數字碼，可直接貼進統計軟體。
-        平台多出來的資料（病灶數字化測量、追蹤逐筆、問卷分數、Lab、編碼對照表、未能對應清單、欄位缺口清單）
-        放在附表，不污染主表。
+        平台多出來的資料（病灶數字化測量、追蹤逐筆、問卷分數、術前術後比較、Lab、編碼對照表、未能對應清單、欄位缺口清單）
+        放在附表，不污染主表。<b>這個檔只有實驗組</b>，對照組見下方另一個下載。
       </p>
 
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -139,6 +145,20 @@ export default function StructuredExportPanel({
       </a>
 
       <IdentifiedExport query={query} />
+
+      {/* 對照組獨立成另一個檔（助理 2026-08-24），不再是主檔裡的一張分頁 */}
+      <div className="mt-4 rounded-md border border-brand-100 bg-paper-sunken p-3">
+        <p className="text-xs font-medium text-brand-900">對照組（健康受試者）＝另一個檔</p>
+        <p className="mt-1 text-[11px] text-ink/50">
+          目前共 {controlCount} 位。欄位為編號、性別、年齡、同意書日期、抽血日期、備註＋Lab 數值，
+          另附「Lab 生物標記逐筆」與「說明」兩張分頁。Lab 數值與實驗組存在同一張表、單位一致，
+          可直接跑組間比較。上方的年份／醫師／手術等篩選對他們沒有意義，只有同意書那個條件會跟著套用。
+        </p>
+        <a href={controlHref} className={`${buttonClasses("outline")} mt-2`}>
+          下載對照組（.xlsx）
+          {!consentOnly && <span className="ml-1 text-xs opacity-80">・含未簽同意書</span>}
+        </a>
+      </div>
     </div>
   );
 }

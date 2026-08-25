@@ -47,6 +47,7 @@ export default function PhotoCaptureFlow({
   initialLesionId,
   initialZoneKey,
   next,
+  sizeLocked = false,
 }: {
   caseId: string;
   itemId: string;
@@ -59,6 +60,8 @@ export default function PhotoCaptureFlow({
   initialLesionId?: string | null;
   /** 從個案頁面的人形圖點選部位後直接進來拍照時帶的區塊代碼 */
   initialZoneKey?: string | null;
+  /** 已登記手術：尺寸只留術前 baseline，相機頁不再收長寬高（助理 2026-08-24） */
+  sizeLocked?: boolean;
 }) {
   const initialSite = initialLesionId ? (sites ?? []).find((s) => s.id === initialLesionId) : undefined;
   // 人形圖帶進來的區塊：該個案已有同區塊的部位就直接對上，否則以區塊本身當目標
@@ -88,6 +91,7 @@ export default function PhotoCaptureFlow({
         doseCategory={target.doseCategory}
         lesionId={target.lesionId}
         initialSize={target.size}
+        sizeLocked={sizeLocked}
         doneLabel={next ? "回到收案動線" : "回個案頁面"}
         onBack={() => setTarget(null)}
         onDone={() => router.push(backTo)}

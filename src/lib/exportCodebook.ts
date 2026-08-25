@@ -176,7 +176,10 @@ export const BASIC_INFO_SHEET: SheetDef = {
     LEGEND.Doctor_ID, LEGEND.Diagnosis, LEGEND.Medical_history_self, LEGEND.Fmaily_history,
     LEGEND["time of occurrence"], LEGEND.visit_reason,
     ...Array.from({ length: MAX_LESIONS }, (_, i) => lesionBlockLegends(i + 1)).flat(),
-    "0-13", null, "8 分量表分數（順序見「編碼對照表」）", "PSQI 總分 0-21", LEGEND["F/W_photo"],
+    // VSS score：2026-08-24 起停收（助理裁決疤痕評分只留 JSS）。欄位保留、永遠留空，
+    // 是為了維持與部長 Excel 的欄位順序一致——抽掉一欄會讓他既有的分析公式整排位移。
+    "已停收（2026-08-24 起不再收 VSS）", null, "8 分量表分數（順序見「編碼對照表」）・主表放 Baseline 那一份",
+    "PSQI 總分 0-21・主表放 Baseline 那一份", LEGEND["F/W_photo"],
     LEGEND.Keloid_symptom, LEGEND.BioBank, "無=0, 有=1", LEGEND["paraffin blocks No."], LEGEND["Cryotube      Location"],
   ],
 };

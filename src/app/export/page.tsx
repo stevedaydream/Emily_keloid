@@ -4,10 +4,11 @@ import { buttonClasses } from "@/components/ui/buttonStyles";
 
 export default async function ExportPage() {
   const supabase = supabaseServer();
-  const [{ count: caseCount }, { count: photoCount }, { data: doctors }] = await Promise.all([
+  const [{ count: caseCount }, { count: photoCount }, { data: doctors }, { count: controlCount }] = await Promise.all([
     supabase.from("cases").select("id", { count: "exact", head: true }),
     supabase.from("photos").select("id", { count: "exact", head: true }),
     supabase.from("doctors").select("id, code, name").eq("active", true).order("code"),
+    supabase.from("control_subjects").select("id", { count: "exact", head: true }).eq("active", true),
   ]);
 
   return (
@@ -19,7 +20,7 @@ export default async function ExportPage() {
         </p>
       </div>
 
-      <StructuredExportPanel doctors={doctors ?? []} caseCount={caseCount ?? 0} />
+      <StructuredExportPanel doctors={doctors ?? []} caseCount={caseCount ?? 0} controlCount={controlCount ?? 0} />
 
       <div className="rounded-lg border border-brand-100 bg-paper-raised p-4">
         <h2 className="text-sm font-semibold text-brand-900">② 傷口照片</h2>

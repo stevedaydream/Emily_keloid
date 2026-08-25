@@ -73,6 +73,8 @@ export async function uploadPhotoAction(formData: FormData) {
           site_no: (lastSite?.site_no ?? 0) + 1,
           body_site: zone.display_name,
           body_part_zone_id: zone.id,
+          // 第一顆自動成為主病灶（JSS 評的那一顆，助理 2026-08-24）
+          is_primary: (lastSite?.site_no ?? 0) === 0,
           note: "拍照時自動建立",
         })
         .select("id, body_site, site_no")

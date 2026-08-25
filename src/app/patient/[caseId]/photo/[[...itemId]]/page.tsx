@@ -14,7 +14,7 @@ export default async function CasePhotoCapturePage({
   const itemId = itemIdParam?.[0] ?? "";
   const supabase = supabaseServer();
 
-  const [{ data: caseRow }, { data: zones }, { data: lesions }, { data: casePhotos }] = await Promise.all([
+  const [{ data: caseRow }, { data: zones }, { data: lesions }, { data: casePhotos }, { data: surgeries }] = await Promise.all([
     supabase.from("cases").select("id, sex").eq("id", caseId).single(),
     supabase
       .from("body_part_zones")
@@ -27,6 +27,13 @@ export default async function CasePhotoCapturePage({
       .eq("case_id", caseId)
       .order("site_no"),
     supabase.from("photos").select("lesion_id").eq("case_id", caseId),
+    // 已登記手術＝病灶已切除，尺寸只留術前 baseline，相機頁不再出現長寬高（助理 2026-08-24）
+    supabase
+      .from("treatment_records")
+      .select("id, treatment_types!inner(name)")
+      .eq("case_id", caseId)
+      .eq("treatment_types.name", "手術切除")
+      .limit(1),
   ]);
 
   if (!caseRow) return notFound();
@@ -63,6 +70,7 @@ export default async function CasePhotoCapturePage({
       initialLesionId={lesionIdParam ?? null}
       initialZoneKey={zoneKeyParam ?? null}
       next={nextParam ?? null}
+      sizeLocked={(surgeries ?? []).length > 0}
     />
   );
 }

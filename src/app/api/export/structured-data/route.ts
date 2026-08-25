@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { supabaseServer } from "@/lib/supabase";
 import { computeSF36, computePSQI, SF36_SCALES, computeJSSClassification } from "@/lib/scoring";
+import { timepointLabelFor, FOLLOWUP_TIMEPOINT_MONTHS, TIMEPOINT_TOLERANCE_DAYS } from "@/lib/visitFlow";
 import {
   SEX_CODE,
   DOSE_CODE,
@@ -38,6 +39,12 @@ import {
 
 export const dynamic = "force-dynamic";
 
+// 三份追蹤量表的名稱。跟 lib/visitFlow.ts 的 FOLLOWUP_SCALE_NAMES 是同一批，
+// 但這裡各自要獨立的計分函式，所以分開列出而不是迴圈跑。
+const JSS_NAME = "JSS 疤痕診斷分類表";
+const SF36_NAME = "SF-36 健康調查簡表";
+const PSQI_NAME = "匹茲堡睡眠品質量表（PSQI）";
+
 const first = <T>(v: T | T[] | null | undefined): T | undefined => (Array.isArray(v) ? v[0] : v ?? undefined);
 
 type Zone = {
@@ -56,6 +63,8 @@ type Lesion = {
   case_id: string;
   site_no: number | null;
   body_site: string;
+  is_primary: boolean;
+  measured_at: string | null;
   length_cm: number | null;
   width_cm: number | null;
   height_cm: number | null;
@@ -185,7 +194,7 @@ export async function GET(request: Request) {
     supabase.from("body_part_zones").select("id, zone_key, display_name, export_label, export_code, dose_category, view, active"),
     supabase
       .from("case_keloid_lesions")
-      .select("id, case_id, site_no, body_site, length_cm, width_cm, height_cm, note, body_part_zone_id")
+      .select("id, case_id, site_no, body_site, is_primary, length_cm, width_cm, height_cm, note, body_part_zone_id, measured_at")
       .order("site_no", { nullsFirst: false }),
     supabase.from("case_diagnoses").select("case_id, is_primary, icd_codes(code, description_full, export_code)"),
     supabase
@@ -212,12 +221,9 @@ export async function GET(request: Request) {
     supabase.from("radiotherapy_doctors").select("name, export_code"),
   ]);
 
-  // 對照組是獨立的表（見下方「對照組」分頁），與 cases 完全不相干，所以單獨撈。
   // 問卷題目清單：橫向的「問卷逐題作答」要連沒作答的題目都留一欄，
   // 光靠作答紀錄推不出完整欄位（沒人答過的題目會整欄消失，不同批匯出的欄數就不一樣）。
-  const [{ data: controlSubjects }, { data: controlLabResults }, { data: allTemplates }, { data: allQuestions }] = await Promise.all([
-    supabase.from("control_subjects").select("*").eq("active", true).order("subject_code"),
-    supabase.from("lab_results").select("control_subject_id, marker_id, value, value_text").not("control_subject_id", "is", null),
+  const [{ data: allTemplates }, { data: allQuestions }] = await Promise.all([
     supabase.from("questionnaire_templates").select("id, name"),
     supabase.from("questionnaire_questions").select("questionnaire_id, order_no").order("order_no"),
   ]);
@@ -269,42 +275,28 @@ export async function GET(request: Request) {
   // 逐題分頁只輸出原始作答代碼；代碼對應的選項文字看「編碼對照表」分頁。
   const answerRaw = (row: AnswerRow): string =>
     Array.isArray(row.value) ? row.value.map((v) => String(v)).join(", ") : String(row.value ?? "");
-  const vssByCase = new Map<string, Record<number, number>>();
-  const sf36ByCase = new Map<string, Record<number, unknown>>();
-  const psqiByCase = new Map<string, Record<number, unknown>>();
-  const jssEntriesByCase = new Map<string, { submitted_at: string; total: number }[]>();
+  // 每一份回覆都留著，不再「一個個案只留一筆」（pending.md E2）。
+  // 助理 2026-08-24 定案追蹤時間點＝術後滿 1／6／12 個月（±10 天），所以同一份問卷
+  // 一個個案會有 Baseline ＋ 3 次共 4 筆；壓成一筆會把「術前 vs 術後一年」整個抹掉。
+  type ScaleEntry = { date: string; submittedAt: string; byOrder: Record<number, unknown> };
+  const entriesByCaseScale = new Map<string, ScaleEntry[]>();
+  const scaleKey = (caseId: string, scale: string) => `${caseId}__${scale}`;
   for (const r of responses ?? []) {
     const q = first(r.questionnaire_templates) as { name?: string; category?: string } | undefined;
+    if (!q?.name) continue;
     const ans = answersByResponse.get(r.id) ?? [];
     const byOrder: Record<number, unknown> = {};
     for (const a of ans) byOrder[a.order_no] = a.value;
-    if (q?.category === "scale") {
-      const numOrder: Record<number, number> = {};
-      for (const a of ans) numOrder[a.order_no] = Number(a.value);
-      vssByCase.set(r.case_id, numOrder);
-    } else if (q?.name === "SF-36 健康調查簡表") {
-      sf36ByCase.set(r.case_id, byOrder);
-    } else if (q?.name === "匹茲堡睡眠品質量表（PSQI）") {
-      psqiByCase.set(r.case_id, byOrder);
-      // （逐題 raw data 在下方統一累積，不分問卷種類）
-    } else if (q?.name === "JSS 疤痕診斷分類表") {
-      const total = computeJSSClassification(byOrder)?.total;
-      if (total !== undefined) {
-        const arr = jssEntriesByCase.get(r.case_id) ?? [];
-        arr.push({ submitted_at: r.submitted_at, total });
-        jssEntriesByCase.set(r.case_id, arr);
-      }
-    }
+    const key = scaleKey(r.case_id, q.name);
+    const arr = entriesByCaseScale.get(key) ?? [];
+    arr.push({ date: String(r.submitted_at).slice(0, 10), submittedAt: String(r.submitted_at), byOrder });
+    entriesByCaseScale.set(key, arr);
   }
-  const jssByCase = new Map<string, { baseline: number; latest: number; delta: number }>();
-  for (const [caseId, entries] of jssEntriesByCase) {
-    const sorted = [...entries].sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime());
-    jssByCase.set(caseId, {
-      baseline: sorted[0].total,
-      latest: sorted[sorted.length - 1].total,
-      delta: sorted[0].total - sorted[sorted.length - 1].total,
-    });
-  }
+  for (const arr of entriesByCaseScale.values()) arr.sort((a, b) => a.submittedAt.localeCompare(b.submittedAt));
+
+  const entriesOf = (caseId: string, scale: string): ScaleEntry[] => entriesByCaseScale.get(scaleKey(caseId, scale)) ?? [];
+  /** 主表（Basic Info.）＝收案當下那一份，所以取最早的一筆，不是隨機留下的一筆。 */
+  const baselineOf = (caseId: string, scale: string): ScaleEntry | undefined => entriesOf(caseId, scale)[0];
 
   // ---- 每個個案的衍生資料 ----
   const typeNameOf = (t: TreatmentRow) => first(t.treatment_types)?.name ?? "";
@@ -540,6 +532,8 @@ export async function GET(request: Request) {
   const lesionMeasureRows: (string | number)[][] = [];
   const visitRows: (string | number)[][] = [];
   const scoreRows: (string | number)[][] = [];
+  // 術前 vs 術後一年的配對比較（助理 2026-08-24 指定的主要分析）
+  const compareRows: (string | number)[][] = [];
   // 部長 4 張主表沒有位置、但平台有收的選項類資料（此次就診原因、得知看診資訊）。
   // 主表不能加欄（欄位順序必須與他的檔一致），所以獨立成附表——否則這些資料匯出時會整個消失。
   const optionRows: (string | number)[][] = [];
@@ -590,11 +584,12 @@ export async function GET(request: Request) {
       const L = l.length_cm, W = l.width_cm, H = l.height_cm;
       const dims = [L, W, H].filter((d): d is number => typeof d === "number");
       lesionMeasureRows.push([
-        rid, l.site_no ?? "", z?.export_code ?? "", z?.display_name ?? "", l.body_site,
+        rid, l.site_no ?? "", l.is_primary ? 1 : 0, z?.export_code ?? "", z?.display_name ?? "", l.body_site,
         L ?? "", W ?? "", H ?? "",
         dims.length ? Math.max(...dims) : "",
         L !== null && W !== null ? Number((L * W).toFixed(2)) : "",
         L !== null && W !== null && H !== null ? Number((L * W * H).toFixed(2)) : "",
+        l.measured_at ?? "",
         (l.site_no ?? 99) > MAX_LESIONS ? "超出主表上限" : "",
         l.note ?? "",
       ]);
@@ -604,11 +599,11 @@ export async function GET(request: Request) {
     const primaryIcd = (diagnosesByCase.get(c.id) ?? [])
       .sort((a, b) => Number(b.is_primary) - Number(a.is_primary))
       .map((d) => first(d.icd_codes) as { export_code?: number } | undefined)[0];
-    const vss = vssByCase.get(c.id);
-    const vssTotal = vss ? Object.values(vss).reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0) : "";
-    const sf36 = sf36ByCase.get(c.id) ? computeSF36(sf36ByCase.get(c.id)!).scales : null;
-    const psqi = psqiByCase.get(c.id) ? computePSQI(psqiByCase.get(c.id)!) : null;
-    const jss = jssByCase.get(c.id);
+    // 主表只放 Baseline（收案當下）那一份；歷次施測在「問卷分數」與「術前術後比較」兩張附表。
+    const sf36Base = baselineOf(c.id, SF36_NAME);
+    const psqiBase = baselineOf(c.id, PSQI_NAME);
+    const sf36 = sf36Base ? computeSF36(sf36Base.byOrder).scales : null;
+    const psqi = psqiBase ? computePSQI(psqiBase.byOrder) : null;
     const bioMap = new Map((biobankByCase.get(c.id) ?? []).map((b) => [b.item_key, b]));
     const legacyBio = (legacyBioByCase.get(c.id) ?? [])[0] as Record<string, string | number | null> | undefined;
     const anyBiobank = [...bioMap.values()].some((b) => b.collected) || !!legacyBio?.tissue_bank_status;
@@ -630,7 +625,9 @@ export async function GET(request: Request) {
       monthsBetween(c.keloid_onset_date, String(c.created_at).slice(0, 10)) ?? "",
       optionCodesFor(c.id, "visit_reason"),
       ...lesionCells,
-      vssTotal,
+      // VSS score：2026-08-24 起不再收 VSS（助理裁決只評 JSS），欄位保留留白以維持
+      // 與部長 Excel 的欄位對齊，說明見「欄位缺口清單」附表。
+      "",
       jswNumber(c.jsw_score),
       sf36 ? SF36_SCALES.map((s) => sf36.find((r) => r.key === s.key)?.score ?? "").join("/") : "",
       psqi?.global ?? "",
@@ -778,16 +775,76 @@ export async function GET(request: Request) {
       }
     }
 
-    // ---- 問卷分數附表 ----
-    if (vss || sf36 || psqi || jss) {
+    // ---- 問卷分數附表：一列＝一個研究編號 × 一個時間點 ----
+    //
+    // 2026-08-24 改版（原本一個個案只有一列，多次施測互相覆蓋且不保證留下哪一筆，pending.md E2）。
+    // 助理同日定案追蹤時間點：術前 Baseline ＋ 術後滿 1／6／12 個月（前後 10 天都算），
+    // 三份量表（JSS／SF-36／PSQI）在每個時間點一起測。所以時間點是這張表的主鍵之一。
+    //
+    // 分組鍵是 timepointLabelFor()，跟回診動線判定「本次要不要測量表」用的是同一個函式——
+    // 兩邊各寫一次「什麼叫滿一個月」，畫面說要測、匯出卻歸成窗期外，就沒有人說得清哪邊對。
+    const opDateForScales = surgeryDateOf(c.id);
+    const buckets = new Map<string, { jss?: ScaleEntry; sf36?: ScaleEntry; psqi?: ScaleEntry; order: string }>();
+    for (const [scale, slot] of [
+      [JSS_NAME, "jss"],
+      [SF36_NAME, "sf36"],
+      [PSQI_NAME, "psqi"],
+    ] as const) {
+      for (const e of entriesOf(c.id, scale)) {
+        const label = timepointLabelFor(opDateForScales, e.date);
+        const bucket = buckets.get(label) ?? { order: e.date };
+        // 同一時間點內重複施測（實測有相隔幾秒送三次的資料）取最後一筆；每一筆的逐題原始碼
+        // 都還在「◯◯ 逐題」分頁，這裡只是計分結果。
+        bucket[slot] = e;
+        if (e.date < bucket.order) bucket.order = e.date;
+        buckets.set(label, bucket);
+      }
+    }
+    for (const [label, b] of [...buckets].sort((x, y) => x[1].order.localeCompare(y[1].order))) {
+      const jssTotal = b.jss ? computeJSSClassification(b.jss.byOrder)?.total ?? "" : "";
+      const s = b.sf36 ? computeSF36(b.sf36.byOrder).scales : null;
+      const p = b.psqi ? computePSQI(b.psqi.byOrder) : null;
       scoreRows.push([
         rid,
-        vssTotal, vss?.[1] ?? "", vss?.[2] ?? "", vss?.[3] ?? "", vss?.[4] ?? "",
-        ...SF36_SCALES.map((s) => sf36?.find((r) => r.key === s.key)?.score ?? ""),
-        ...(psqi ? psqi.components.map((x) => x.score ?? "") : Array(7).fill("")),
-        psqi?.global ?? "",
-        psqi?.global === null || psqi === null ? "" : psqi.poorSleep ? "睡眠品質不佳" : "睡眠品質尚可",
-        jss?.baseline ?? "", jss?.latest ?? "", jss?.delta ?? "",
+        label,
+        opDateForScales ?? "",
+        b.jss?.date ?? "", jssTotal,
+        b.sf36?.date ?? "",
+        ...SF36_SCALES.map((sc) => s?.find((r) => r.key === sc.key)?.score ?? ""),
+        b.psqi?.date ?? "",
+        ...(p ? p.components.map((x) => x.score ?? "") : Array(7).fill("")),
+        p?.global ?? "",
+        p === null || p?.global === null ? "" : p.poorSleep ? "睡眠品質不佳" : "睡眠品質尚可",
+      ]);
+    }
+
+    // ---- 術前術後比較附表（助理 2026-08-24 指定的主要分析）----
+    // Baseline 與術後 12 個月各一組分數＋差值，直接跑配對檢定不用先 pivot。
+    const pick = (scale: string, want: string) =>
+      entriesOf(c.id, scale).find((e) => timepointLabelFor(opDateForScales, e.date) === want);
+    const baseLabel = opDateForScales ? "Baseline（術前）" : "Baseline（未手術）";
+    const jssB = pick(JSS_NAME, baseLabel), jssY = pick(JSS_NAME, "術後 12 個月");
+    const sfB = pick(SF36_NAME, baseLabel), sfY = pick(SF36_NAME, "術後 12 個月");
+    const pqB = pick(PSQI_NAME, baseLabel), pqY = pick(PSQI_NAME, "術後 12 個月");
+    if (jssB || jssY || sfB || sfY || pqB || pqY) {
+      const jssBt = jssB ? computeJSSClassification(jssB.byOrder)?.total ?? null : null;
+      const jssYt = jssY ? computeJSSClassification(jssY.byOrder)?.total ?? null : null;
+      const sfBs = sfB ? computeSF36(sfB.byOrder).scales : null;
+      const sfYs = sfY ? computeSF36(sfY.byOrder).scales : null;
+      const pqBs = pqB ? computePSQI(pqB.byOrder) : null;
+      const pqYs = pqY ? computePSQI(pqY.byOrder) : null;
+      const diff = (a: number | null | undefined, b: number | null | undefined) =>
+        typeof a === "number" && typeof b === "number" ? Number((b - a).toFixed(1)) : "";
+      const sfScore = (list: typeof sfBs, key: string) => list?.find((r) => r.key === key)?.score ?? null;
+      compareRows.push([
+        rid,
+        jssBt ?? "", jssYt ?? "", diff(jssBt, jssYt),
+        pqBs?.global ?? "", pqYs?.global ?? "", diff(pqBs?.global, pqYs?.global),
+        ...SF36_SCALES.flatMap((sc) => [
+          sfScore(sfBs, sc.key) ?? "",
+          sfScore(sfYs, sc.key) ?? "",
+          diff(sfScore(sfBs, sc.key), sfScore(sfYs, sc.key)),
+        ]),
       ]);
     }
   }
@@ -803,22 +860,36 @@ export async function GET(request: Request) {
     return ws;
   }
 
-  addSheet("病灶測量", [
-    "Subject_ID", "病灶序", "部位碼", "部位名稱", "原始部位文字",
-    "長cm", "寬cm", "高cm", "最大徑cm", "面積cm²", "體積cm³", "備註", "登記備註",
+  // 尺寸是**術前 baseline**（助理 2026-08-24：手術把病灶切掉了，術後不再量），
+  // 所以「量測日」與「主病灶」兩欄是解讀這張表的必要條件：前者說明這組數字是哪一天量的，
+  // 後者標出 JSS 疤痕診斷分類表評的是哪一顆。
+  addSheet("病灶測量（術前 baseline）", [
+    "Subject_ID", "病灶序", "主病灶(0/1)", "部位碼", "部位名稱", "原始部位文字",
+    "長cm", "寬cm", "高cm", "最大徑cm", "面積cm²", "體積cm³", "量測日", "備註", "登記備註",
   ], lesionMeasureRows);
 
   addSheet("追蹤逐筆", ["Subject_ID", "第幾次回診", "回診日期", "距手術日天數", "第幾個月", "復發(0/1)", "症狀變化碼", "歸屬"], visitRows);
 
   addSheet("收案選項紀錄", ["Subject_ID", "類別", "代碼", "選項"], optionRows, 26);
 
+  // 一列＝一個研究編號 × 一個時間點（Baseline／術後 1、6、12 個月／窗期外）。
+  // 原本是一個個案一列、多次施測互相覆蓋（pending.md E2），追蹤時間點定案後改成長格式。
   addSheet("問卷分數", [
-    "Subject_ID", "VSS總分", "VSS-血管分布", "VSS-色素沉澱", "VSS-柔軟度", "VSS-高度",
-    ...SF36_SCALES.map((s) => `SF36-${s.label}`),
+    "Subject_ID", "時間點", "手術日",
+    "JSS填寫日", "JSS總分",
+    "SF36填寫日", ...SF36_SCALES.map((s) => `SF36-${s.label}`),
+    "PSQI填寫日",
     "PSQI-主觀睡眠品質", "PSQI-睡眠潛伏期", "PSQI-睡眠時數", "PSQI-睡眠效率", "PSQI-睡眠困擾",
     "PSQI-安眠藥物使用", "PSQI-日間功能障礙", "PSQI總分", "PSQI判定",
-    "JSS-初次總分", "JSS-最近總分", "JSS-Delta Score",
   ], scoreRows);
+
+  // 主要分析用的寬表：一列一個人，Baseline 與術後 12 個月並排＋差值（術後 − 術前）。
+  addSheet("術前術後比較", [
+    "Subject_ID",
+    "JSS-Baseline", "JSS-12個月", "JSS-差值",
+    "PSQI-Baseline", "PSQI-12個月", "PSQI-差值",
+    ...SF36_SCALES.flatMap((s) => [`SF36-${s.label}-Baseline`, `SF36-${s.label}-12個月`, `SF36-${s.label}-差值`]),
+  ], compareRows, 18);
 
   // Lab 逐筆（沿用既有做法：同一個案多標記×多次採檢，wide table 攤不平）
   const labMarkerById = new Map((labMarkers ?? []).map((m) => [m.id, m]));
@@ -837,38 +908,9 @@ export async function GET(request: Request) {
     ]);
   addSheet("Lab 生物標記逐筆", ["Subject_ID", "標記", "單位", "採檢日期", "數值", "原始字串", "備註", "記錄者"], labRows);
 
-  // ---- 對照組（健康受試者）----
-  // 獨立一張分頁（決策 2026-08-20 F-F3）：他們不在 cases 裡，也不該進 Basic Info.——
-  // 一個人一次抽血，其餘兩百多欄對他們永遠是空的。Lab 數值與實驗組共用同一張表，
-  // 所以下面把該受試者的生物標記一併攤平在同一列後面，跑組間比較不用再合併兩個來源。
-  const controlMarkers = labMarkers ?? [];
-  const controlLabBySubject = new Map<string, Map<string, string | number>>();
-  for (const r of controlLabResults ?? []) {
-    if (!r.control_subject_id) continue;
-    const row = controlLabBySubject.get(r.control_subject_id) ?? new Map();
-    row.set(r.marker_id, r.value ?? r.value_text ?? "");
-    controlLabBySubject.set(r.control_subject_id, row);
-  }
-  const controlRows = (controlSubjects ?? [])
-    .filter((cs) => includeUnconsented || Boolean(cs.consent_signed_at))
-    .map((cs) => {
-      const markers = controlLabBySubject.get(cs.id);
-      return [
-        cs.subject_code ?? "",
-        cs.sex === "male" ? 1 : cs.sex === "female" ? 2 : "",
-        cs.age_at_enrollment ?? "",
-        cs.consent_signed_at ?? "",
-        cs.blood_draw_date ?? "",
-        cs.notes ?? "",
-        ...controlMarkers.map((m) => markers?.get(m.id) ?? ""),
-      ];
-    });
-  addSheet(
-    "對照組",
-    ["Subject_ID", "gender", "Age", "同意書簽署日", "抽血日期", "備註", ...controlMarkers.map((m) => m.display_name)],
-    controlRows,
-    18
-  );
+  // ---- 對照組不在這個檔裡 ----
+  // 助理 2026-08-24：對照組與實驗組**分成兩個檔**（原本是本檔的一張分頁）。
+  // 對照組走 /api/export/control-subjects，篩選條件（同意書）兩支共用同一組查詢字串。
 
   // ---- 問卷逐題作答：一份問卷一張分頁（docx 項次 9）----
   // 「目前 JSS raw data 是給總分、SF-36 是給各項 8 項指標的各項總分，附上 raw data 呈現結果」
@@ -884,8 +926,7 @@ export async function GET(request: Request) {
   const QUESTIONNAIRE_SHEET: Record<string, { sheet: string; order: number }> = {
     "SF-36 健康調查簡表": { sheet: "SF-36 逐題", order: 1 },
     "匹茲堡睡眠品質量表（PSQI）": { sheet: "PSQI 逐題", order: 2 },
-    "Vancouver Scar Scale (VSS)": { sheet: "VSS 逐題", order: 3 },
-    "JSS 疤痕診斷分類表": { sheet: "JSS 逐題", order: 4 },
+    "JSS 疤痕診斷分類表": { sheet: "JSS 逐題", order: 3 },
   };
 
   const questionOrderNosByTemplate = new Map<string, number[]>();
@@ -936,14 +977,18 @@ export async function GET(request: Request) {
       const responseList = responsesByCaseTemplate.get(`${c.id}__${t.name}`) ?? [];
       if (responseList.length === 0) {
         // 沒填過：留一列空白，這張分頁的個案數才跟主表一致
-        rows.push([c.research_id, "", "", "", ...t.orderNos.map(() => "")]);
+        rows.push([c.research_id, "", "", "", "", ...t.orderNos.map(() => "")]);
         continue;
       }
+      // 時間點與「問卷分數」分頁用同一個判定（Baseline／術後 1、6、12 個月／窗期外），
+      // 這樣逐題原始碼要跟計分結果對起來時，兩張表的分組是一致的。
+      const surgeryForCase = surgeryDateOf(c.id);
       responseList.forEach((resp, i) => {
         const codes = answerCodeByResponse.get(resp.id);
         rows.push([
           c.research_id,
           i + 1,
+          timepointLabelFor(surgeryForCase, resp.submitted_at.slice(0, 10)),
           // 帶到分鐘：實測有同一份問卷相隔幾秒送出三次的資料，只到「日」分不開
           resp.submitted_at.replace("T", " ").slice(0, 16),
           resp.via,
@@ -953,7 +998,7 @@ export async function GET(request: Request) {
     }
     addSheet(
       t.sheet,
-      ["Subject_ID", "第幾次填寫", "填寫時間", "填寫人", ...t.orderNos.map((n) => String(n))],
+      ["Subject_ID", "第幾次填寫", "時間點", "填寫時間", "填寫人", ...t.orderNos.map((n) => String(n))],
       rows,
       12
     );
@@ -999,6 +1044,24 @@ export async function GET(request: Request) {
 
   // ---- 欄位缺口清單 ----
   const gaps: string[][] = [
+    [
+      "Basic Info.",
+      "VSS score",
+      "永遠留空：2026-08-24 起不再收 VSS（助理裁決疤痕評分只留 JSS）",
+      "不需要補。欄位保留只是為了與部長 Excel 的欄位順序對齊；疤痕評分看「問卷分數」分頁的 JSS 總分",
+    ],
+    [
+      "Basic Info.",
+      "SF-36 / PSQI",
+      "只放 Baseline（收案當下）那一份",
+      `歷次施測看「問卷分數」分頁（Baseline ＋ 術後 ${FOLLOWUP_TIMEPOINT_MONTHS.join("／")} 個月，窗期 ±${TIMEPOINT_TOLERANCE_DAYS} 天）`,
+    ],
+    [
+      "病灶測量（術前 baseline）",
+      "長 / 寬 / 高",
+      "只有術前 baseline 一組，術後不再量測（助理 2026-08-24：手術已切除病灶）",
+      "不需要補。術後的病灶外觀變化看照片與 JSS 總分",
+    ],
     ["Basic Info.", "height / weight / BMI", "已可填寫（個案頁「病人基本資料」）；未填時輸出 9999", "舊資料沒有這兩項，需人員回頭補"],
     ["Basic Info.", "Medical_history_self / Fmaily_history", "已可編碼：勾選常見疾病後自動對到 1-8", "舊資料的自由文字對不到清單的片段會落到「其他」(8)"],
     ["Basic Info.", "KC_1..5（發生原因）", "系統只有個案層級的發生原因，拆不到每個病灶", "待助理確認舊病歷能否拆到病灶層級（pending.md D5）"],

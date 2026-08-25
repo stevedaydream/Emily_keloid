@@ -12,6 +12,7 @@ export default function CameraCapture({
   doseCategory,
   lesionId,
   initialSize,
+  sizeLocked = false,
   doneLabel = "回個案頁面",
   onBack,
   onDone,
@@ -24,6 +25,8 @@ export default function CameraCapture({
   lesionId?: string | null;
   /** 這個部位已經量過的長寬高，帶進來讓人員只補缺的那一格 */
   initialSize?: { length: string; width: string; height: string };
+  /** 已登記手術：病灶已切除，不再收長寬高，避免把術前 baseline 蓋掉（助理 2026-08-24） */
+  sizeLocked?: boolean;
   doneLabel?: string;
   onBack: () => void;
   onDone: () => void;
@@ -97,9 +100,13 @@ export default function CameraCapture({
     formData.append("item_id", itemId);
     formData.append("zone_key", zoneKey);
     if (lesionId) formData.append("lesion_id", lesionId);
-    formData.append("length_cm", size.length);
-    formData.append("width_cm", size.width);
-    formData.append("height_cm", size.height);
+    // 已手術就一個尺寸欄位都不送：帶進來的 initialSize 原封不動送回去也會把 measured_at
+    // 蓋成今天，讓術前的 baseline 看起來像術後才量的。
+    if (!sizeLocked) {
+      formData.append("length_cm", size.length);
+      formData.append("width_cm", size.width);
+      formData.append("height_cm", size.height);
+    }
     formData.append("file", blob, "photo.jpg");
     if (thumbBlob) formData.append("thumb", thumbBlob, "thumb.jpg");
     const result = await uploadPhotoAction(formData);
@@ -161,7 +168,20 @@ export default function CameraCapture({
         {/* 尺寸就在相機下方：拍完不用再回上一頁找輸入格，量完拍完一次送出。
             這裡用原生數字鍵盤而不是大鍵盤——相機預覽已經吃掉大半個畫面，
             再放一組 3×4 的大鍵盤就要一直捲。 */}
-        {status !== "done" && (
+        {status !== "done" && sizeLocked && (
+          <div className="border-t border-slate-200 px-3 pt-3">
+            <p className="text-xs text-slate-500">
+              已手術，術後不再量尺寸。術前 baseline：
+              <b className="tabular-nums">
+                {initialSize && (initialSize.length || initialSize.width || initialSize.height)
+                  ? `${initialSize.length || "—"}×${initialSize.width || "—"}×${initialSize.height || "—"} cm`
+                  : "無"}
+              </b>
+            </p>
+          </div>
+        )}
+
+        {status !== "done" && !sizeLocked && (
           <div className="border-t border-slate-200 px-3 pt-3">
             <p className="text-xs text-slate-500">病灶尺寸（可留空，之後再補）</p>
             <div className="mt-1 grid grid-cols-3 gap-2">

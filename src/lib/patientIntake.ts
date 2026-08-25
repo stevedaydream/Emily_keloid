@@ -1,6 +1,6 @@
 // 病人自助填寫流程（決策 2026-07-29）。
 //
-// 範圍原則：只放「病人自己才知道答案」的東西。臨床評分（VSS、JSS）、病灶尺寸、
+// 範圍原則：只放「病人自己才知道答案」的東西。臨床評分（JSS）、病灶尺寸、
 // ICD 診斷、醫學術語、治療紀錄、拍照一律留給診間人員——那些不是病人答得出來的。
 //
 // 老年友善原則（同日決策）：
@@ -18,7 +18,7 @@ export const PATIENT_INTAKE_SEGMENTS = [
 
 export type PatientIntakeSegmentKey = (typeof PATIENT_INTAKE_SEGMENTS)[number]["key"];
 
-/** 這兩份問卷是病人自評量表，放進病人流程；VSS 與 JSS 是醫師評分，刻意不放。 */
+/** 這兩份問卷是病人自評量表，放進病人流程；JSS 是醫師評分，刻意不放。 */
 export const SEGMENT_QUESTIONNAIRE_NAME: Partial<Record<PatientIntakeSegmentKey, string>> = {
   sf36: "SF-36 健康調查簡表",
   psqi: "匹茲堡睡眠品質量表（PSQI）",

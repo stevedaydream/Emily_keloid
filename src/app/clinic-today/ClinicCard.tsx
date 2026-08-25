@@ -145,7 +145,14 @@ export default function ClinicCard({
                 ☐ {t}
               </li>
             ))}
-            {data.visitRegistered && data.visitTodos.length === 0 && <li className="text-emerald-700">✓ 量測與拍照已完成</li>}
+            {data.visitRegistered && data.visitTodos.length === 0 && (
+              <li className="text-emerald-700">✓ {data.postOp ? "拍照已完成" : "量測與拍照已完成"}</li>
+            )}
+            {/* 追蹤時間點（助理 2026-08-24）：只有滿 1／6／12 個月那三次要測量表，
+                不講出來的話人員會以為每次回診都要測（或每次都不用測）。 */}
+            {data.timepointLabel && (
+              <li className="text-amber-800">☐ 本次是{data.timepointLabel}：要測 JSS ＋ SF-36 ＋ PSQI</li>
+            )}
           </ul>
           <Link
             href={`/cases/${caseId}/visit-flow`}

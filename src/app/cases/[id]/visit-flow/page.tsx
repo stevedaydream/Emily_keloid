@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase";
 import VisitFlow from "./VisitFlow";
-import { monthsSinceSurgery, scaleNamesForVisit, type VisitLesion } from "@/lib/visitFlow";
+import { monthsSinceSurgery, scaleNamesForVisit, timepointForVisit, type VisitLesion } from "@/lib/visitFlow";
 import type { ClinicianScale } from "@/lib/clinicFlow";
 
 const taipeiDate = (d: Date) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(d);
@@ -23,7 +23,7 @@ export default async function VisitFlowPage({ params }: { params: Promise<{ id: 
         .order("sort_order"),
       supabase
         .from("case_keloid_lesions")
-        .select("id, site_no, body_site, length_cm, width_cm, height_cm, measured_at")
+        .select("id, site_no, body_site, is_primary, length_cm, width_cm, height_cm, measured_at")
         .eq("case_id", id)
         .order("site_no"),
       supabase
@@ -49,6 +49,9 @@ export default async function VisitFlowPage({ params }: { params: Promise<{ id: 
   };
   const surgeryDate = (treatments ?? []).find((t) => typeNameOf(t) === "手術切除")?.treatment_date ?? null;
   const monthIndex = monthsSinceSurgery(surgeryDate, today);
+  // 本次回診落在哪個追蹤時間點的窗期（術後滿 1 / 6 / 12 個月 ±10 天，助理 2026-08-24）。
+  // null ＝ 一般回診，不用重測量表。
+  const timepoint = timepointForVisit(surgeryDate, today);
 
   // 本次回診已登記＝今天有任何一筆治療紀錄（含「追蹤（無治療）」）。
   const visitRegistered = (treatments ?? []).some((t) => t.treatment_date === today);
@@ -69,13 +72,17 @@ export default async function VisitFlowPage({ params }: { params: Promise<{ id: 
     id: l.id,
     site_no: l.site_no,
     body_site: l.body_site,
+    is_primary: l.is_primary ?? false,
     measured_at: l.measured_at,
     hasSize: l.length_cm !== null && l.width_cm !== null && l.height_cm !== null,
+    length_cm: l.length_cm,
+    width_cm: l.width_cm,
+    height_cm: l.height_cm,
     photoCountToday: photoToday.get(l.id) ?? 0,
   }));
 
-  // 本次要重測的量表：VSS 每次，術後 12 / 24 個月加 SF-36 與 PSQI。
-  const wantedNames = scaleNamesForVisit(monthIndex);
+  // 本次要重測的量表：只有落在時間點窗期時才測，三份一起（JSS ＋ SF-36 ＋ PSQI）。
+  const wantedNames = scaleNamesForVisit(timepoint);
   const { data: templates } = await supabase.from("questionnaire_templates").select("id, name").in("name", wantedNames);
   const templateIds = (templates ?? []).map((t) => t.id);
   const { data: scaleResponses } = templateIds.length
@@ -111,6 +118,7 @@ export default async function VisitFlowPage({ params }: { params: Promise<{ id: 
       today={today}
       surgeryDate={surgeryDate}
       monthIndex={monthIndex}
+      timepoint={timepoint}
       visitRegistered={visitRegistered}
       lesions={lesions}
       zones={zones ?? []}

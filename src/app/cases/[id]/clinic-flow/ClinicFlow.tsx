@@ -8,7 +8,7 @@ import { PATIENT_INTAKE_SEGMENTS } from "@/lib/patientIntake";
 import type { BodyView } from "@/lib/bodyZones";
 
 // 診間收案動線（決策 2026-08-20）。三步一頁，一次只展開一步：
-//   1 病人自填（平板交出去）→ 2 量測長寬高＋拍照 → 3 醫師評分（JSS ＋ VSS）
+//   1 病人自填（平板交出去）→ 2 量測長寬高＋拍照 → 3 醫師評分（JSS，評主病灶）
 // 做完的步驟收成一行綠字，沒做完的自動展開。任何一步都點得回去——
 // 門診會被打斷，硬性的精靈式流程反而讓人卡在中間出不來。
 
@@ -30,16 +30,19 @@ export default function ClinicFlow({
   lesions: LesionCheck[];
   zones: Zone[];
   sex: string | null;
-  /** 步驟 3 要填的醫師評分量表（JSS ＋ VSS），依 CLINICIAN_SCALE_NAMES 的順序 */
+  /** 步驟 3 要填的醫師評分量表（JSS），依 CLINICIAN_SCALE_NAMES 的順序 */
   scales: ClinicianScale[];
   /** 後台找不到的量表名稱。缺了要講出來，不然那一份會靜悄悄地整個消失 */
   missingScaleNames: readonly string[];
 }) {
   const intakeAllDone = intakeDone >= PATIENT_INTAKE_SEGMENTS.length;
+  // JSS 評的是主病灶。沒勾的話（舊資料）退回「部位1」的慣例，但畫面上要講清楚是哪一顆。
+  const primary = lesions.find((l) => l.is_primary) ?? lesions[0];
+  const primaryLabel = primary ? `部位${primary.site_no ?? "?"} ${primary.body_site}` : "尚未登記病灶";
   const blockers = measureBlockers(lesions);
   const measureAllDone = blockers.length === 0;
-  // 兩份量表都要填完才算走完這一步：它們測的是不同東西（JSS 定性、VSS 定嚴重度），
-  // 只填一份等於這次門診少收一半的臨床評分，而下次回診時的病灶狀態已經不一樣了。
+  // 清單裡的量表都填完才算走完這一步。scales 為空是「後台找不到量表」的異常狀況
+  // （missingScaleNames 會把它講出來），不能當成完成。
   const scalesDone = scales.length > 0 && scales.every((s) => s.done);
   const allDone = intakeAllDone && measureAllDone && scalesDone;
 
@@ -50,7 +53,7 @@ export default function ClinicFlow({
       n: 3,
       title: "醫師評分",
       done: scalesDone,
-      hint: `JSS ＋ VSS，共 ${scales.length} 份 ・ 已完成 ${scales.filter((s) => s.done).length} 份`,
+      hint: `JSS 疤痕診斷分類表（評主病灶）・ 已完成 ${scales.filter((s) => s.done).length}/${scales.length} 份`,
     },
   ];
   const firstOpen = steps.find((s) => !s.done)?.n ?? 3;
@@ -147,6 +150,10 @@ export default function ClinicFlow({
         <div className="space-y-3">
           {/* 這一步做不完就走人，長寬高再也補不回來——照片裡的尺沒有被程式讀出來過（決策 #3）。
               所以缺什麼要直接列在眼前，不是藏在一個灰色的提示裡。 */}
+          <p className="rounded-lg border-2 border-amber-200 bg-amber-50/60 px-3 py-2 text-base text-amber-900">
+            這組長寬高就是<b>術前 baseline</b>，手術之後不會再量（病灶已切除）。
+            現在沒量到，這位病人就永遠沒有病灶尺寸。
+          </p>
           {blockers.length > 0 && (
             <div className="rounded-lg border-2 border-amber-300 bg-amber-50 p-3">
               <p className="text-base font-medium text-amber-900">病人離開前要完成：</p>
@@ -165,8 +172,9 @@ export default function ClinicFlow({
     return (
       <div className="space-y-3">
         <p className="text-base text-ink/60">
-          兩份都由醫師看同一顆病灶後填寫，擺在同一關是因為它們的判讀重疊——
-          JSS 定性（是不是蟹足腫），VSS 定嚴重度（追蹤治療成效）。送出後會回到這一頁。
+          由醫師觸診後填寫，評的是<b className="text-ink">主病灶（{primaryLabel}）</b>——
+          JSS 有一半的題目在描述單一顆疤，多病灶的病人請確認主病灶勾對了（在個案頁的病灶清單改）。
+          送出後會回到這一頁。
         </p>
 
         {missingScaleNames.length > 0 && (
@@ -200,7 +208,7 @@ export default function ClinicFlow({
               請先完成步驟 2
             </button>
             <p className="text-base text-ink/50">
-              兩份量表都要量完才填得準：JSS 有「大小」「垂直生長」，VSS 的高度直接用 mm 分級。
+              量完才填得準：JSS 有「7. 大小」「8. 垂直生長」，沒量長寬高那幾題只能用猜的。
               量不到或病人拒絕拍照時，可以在步驟 2 的該部位勾「無法量測／拒絕拍照」並填原因，就會放行，
               同時留一筆待補提醒。
             </p>

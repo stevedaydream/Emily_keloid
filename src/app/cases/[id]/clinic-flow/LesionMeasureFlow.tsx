@@ -39,11 +39,21 @@ export default function LesionMeasureFlow({
   lesions,
   zones,
   sex,
+  photoOnly = false,
+  backTo,
 }: {
   caseId: string;
   lesions: LesionCheck[];
   zones: Zone[];
   sex?: string | null;
+  /**
+   * 只拍照、不量尺寸（術後回診）。尺寸只收術前 baseline——病灶已經切掉了，
+   * 這時候量到的是疤痕，存進去會把 baseline 蓋掉（助理 2026-08-24）。
+   * 所以量測的入口在這個模式下整個不出現，不是只給提示。
+   */
+  photoOnly?: boolean;
+  /** 拍完照回哪一頁；預設回收案動線 */
+  backTo?: string;
 }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [field, setField] = useState<Field>("length");
@@ -53,7 +63,7 @@ export default function LesionMeasureFlow({
   const router = useRouter();
 
   const zonesById = new Map(zones.map((z) => [z.id, z]));
-  const backHere = `/cases/${caseId}/clinic-flow`;
+  const backHere = backTo ?? `/cases/${caseId}/clinic-flow`;
 
   // 點人形圖直接進相機頁（2026-08-20 使用者要求）。原本是「點部位→在這頁填尺寸→再點拍照」，
   // 拍照鈕離當下的焦點太遠也不直覺。現在點下去就是相機，長寬高就在相機下方跟照片一起送，
@@ -110,8 +120,17 @@ export default function LesionMeasureFlow({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-lg font-medium text-ink">{lesionLabel(l)}</span>
                   <span className="flex gap-1.5 text-sm">
-                    <Badge ok={measured} waived={l.measure_waived}>
-                      {l.measure_waived ? "免量測" : measured ? `${l.length_cm}×${l.width_cm}×${l.height_cm} cm` : "尺寸未齊"}
+                    {/* 術後只是把 baseline 拿出來對照（不能改），所以標成灰的、寫明是 baseline */}
+                    <Badge ok={photoOnly ? true : measured} waived={photoOnly || l.measure_waived}>
+                      {photoOnly
+                        ? measured
+                          ? `baseline ${l.length_cm}×${l.width_cm}×${l.height_cm} cm`
+                          : "無術前尺寸"
+                        : l.measure_waived
+                          ? "免量測"
+                          : measured
+                            ? `${l.length_cm}×${l.width_cm}×${l.height_cm} cm`
+                            : "尺寸未齊"}
                     </Badge>
                     <Badge ok={shot} waived={l.photo_waived}>
                       {l.photo_waived ? "免拍照" : shot ? `🖼 ${l.photoCount} 張` : "未拍照"}
@@ -120,26 +139,28 @@ export default function LesionMeasureFlow({
                 </div>
 
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => startEdit(l, zoneId)}
-                    className="min-h-12 flex-1 rounded-lg border-2 border-brand-200 px-4 text-base text-ink/80"
-                  >
-                    ✏️ 只改尺寸（不重拍）
-                  </button>
+                  {!photoOnly && (
+                    <button
+                      type="button"
+                      onClick={() => startEdit(l, zoneId)}
+                      className="min-h-12 flex-1 rounded-lg border-2 border-brand-200 px-4 text-base text-ink/80"
+                    >
+                      ✏️ 只改尺寸（不重拍）
+                    </button>
+                  )}
                   <Link
                     href={`/patient/${caseId}/photo?lesion_id=${l.id}&next=${encodeURIComponent(backHere)}`}
                     className="flex min-h-12 flex-1 items-center justify-center rounded-lg border-2 border-brand-200 px-4 text-base text-ink/80"
                   >
-                    📷 拍照＋量尺寸
+                    {photoOnly ? "📷 拍這個部位" : "📷 拍照＋量尺寸"}
                   </Link>
                 </div>
 
                 {/* 逃生口刻意做得比主要動作小、且要兩步（點開才看得到原因輸入格），
                     免得順手一按就把該量的部位標成免除。 */}
-                {(!measured || !shot || l.measure_waived || l.photo_waived) && (
+                {((!photoOnly && (!measured || l.measure_waived)) || !shot || l.photo_waived) && (
                   <div className="mt-2 flex flex-wrap gap-3 text-sm">
-                    {(!measured || l.measure_waived) && (
+                    {!photoOnly && (!measured || l.measure_waived) && (
                       <WaiverToggle
                         active={l.measure_waived}
                         open={waiverFor?.lesionId === l.id && waiverFor.kind === "measure"}
@@ -254,7 +275,11 @@ export default function LesionMeasureFlow({
       ) : (
         <div className="space-y-2">
           <p className="text-base text-ink/60">
-            在人形圖上點選部位，會<b>直接進到相機頁</b>——長寬高就在相機下方，量完拍完一次送出。
+            {photoOnly ? (
+              <>在人形圖上點選部位，會<b>直接進到相機頁</b>。術後只拍照，長寬高留術前那組不動。</>
+            ) : (
+              <>在人形圖上點選部位，會<b>直接進到相機頁</b>——長寬高就在相機下方，量完拍完一次送出。</>
+            )}
           </p>
           <BodyDiagram zones={zones} onSelect={startNew} sex={sex} />
         </div>

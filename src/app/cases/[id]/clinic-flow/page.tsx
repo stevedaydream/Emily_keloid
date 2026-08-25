@@ -4,7 +4,7 @@ import ClinicFlow from "./ClinicFlow";
 import { CLINICIAN_SCALE_NAMES, type ClinicianScale, type LesionCheck } from "@/lib/clinicFlow";
 
 // 診間收案動線（決策 2026-08-20）。病人把平板還回來之後走的那一段：
-// 量測長寬高＋拍照 → 醫師評分（JSS ＋ VSS）。放在 /cases/[id] 底下而不是 /patient 底下，
+// 量測長寬高＋拍照 → 醫師評分（JSS，評主病灶）。放在 /cases/[id] 底下而不是 /patient 底下，
 // 是因為這一段從頭到尾都是人員操作，不該套用病人版那個「不渲染導覽列」的全螢幕版型。
 export default async function ClinicFlowPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -21,7 +21,7 @@ export default async function ClinicFlowPage({ params }: { params: Promise<{ id:
         .order("sort_order"),
       supabase
         .from("case_keloid_lesions")
-        .select("id, site_no, body_site, length_cm, width_cm, height_cm, measure_waived, photo_waived")
+        .select("id, site_no, body_site, is_primary, length_cm, width_cm, height_cm, measure_waived, photo_waived")
         .eq("case_id", id)
         .order("site_no"),
       supabase.from("photos").select("lesion_id").eq("case_id", id),
@@ -42,6 +42,7 @@ export default async function ClinicFlowPage({ params }: { params: Promise<{ id:
     id: l.id,
     site_no: l.site_no,
     body_site: l.body_site,
+    is_primary: l.is_primary ?? false,
     length_cm: l.length_cm,
     width_cm: l.width_cm,
     height_cm: l.height_cm,
@@ -50,7 +51,7 @@ export default async function ClinicFlowPage({ params }: { params: Promise<{ id:
     photoCount: photoCount.get(l.id) ?? 0,
   }));
 
-  // 「這次門診有沒有填過」＝最近一筆是不是今天。兩份量表每次追蹤都會重填，
+  // 「這次門診有沒有填過」＝最近一筆是不是今天。JSS 在術後 1/6/12 個月還會重測，
   // 所以不能只看有沒有紀錄；但本次收案的判定用日期就夠，不需要另外記一個狀態欄位。
   const taipeiDate = (d: Date) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(d);
   const today = taipeiDate(new Date());
@@ -66,7 +67,7 @@ export default async function ClinicFlowPage({ params }: { params: Promise<{ id:
     (scaleResponses ?? []).filter((r) => taipeiDate(new Date(r.submitted_at)) === today).map((r) => r.questionnaire_id)
   );
 
-  // 依 CLINICIAN_SCALE_NAMES 的順序排（先診斷分類、再嚴重度），不是資料庫回傳的順序。
+  // 依 CLINICIAN_SCALE_NAMES 的順序排，不是資料庫回傳的順序。
   const scales: ClinicianScale[] = CLINICIAN_SCALE_NAMES.map((name) => {
     const t = (scaleTemplates ?? []).find((x) => x.name === name);
     return t ? { id: t.id, name: t.name, done: doneToday.has(t.id) } : null;
