@@ -558,7 +558,15 @@ export default function PatientIntakeFlow({
       setSaving(true);
       setError(null);
       try {
-        await saveSegment(current.segment);
+        // ⚠️ 一定要走 ref 取最新的一份（2026-08-25）。autoAdvance 是
+        // `setTimeout(() => goNext(pos), 220)`，那個箭頭函式抓的是**點下去那一刻**的閉包，
+        // 裡面的 saveSegment 讀到的作答狀態還是點擊前的舊值。
+        // 病灶：第 9 題「以前有沒有為蟹足腫接受過治療？」答「沒有治療過」或「不記得」時，
+        // 那一題就是 history 段的最後一畫面（答「有」才會長出四個細項），於是點下去
+        // 220ms 後直接跨段存檔——存進去的 priorTreated 是空字串，四個欄位不寫、
+        // 還各留一筆「未填」。答「有治療過」反而不會中，因為後面還有四題、存檔被延後。
+        // 同樣的洞也吃得到任何一段最後一題是單選題的情況（SF-36／PSQI 的最後一頁）。
+        await saveSegmentRef.current(current.segment);
       } catch (e) {
         setError(e instanceof Error ? e.message : "儲存失敗，請告訴診間人員");
         setSaving(false);
@@ -569,6 +577,14 @@ export default function PatientIntakeFlow({
     if (!next) setFinished(true);
     else setIndex(from + 1);
   }
+
+  // saveSegment 每次 render 都是新的一份（它讀的是那一輪的作答狀態）。
+  // 存進 ref，讓 autoAdvance 的計時器在 220ms 後拿到的是最新那一份，而不是點擊當下那份。
+  // 沒有 dep array＝每次 render 後都更新。
+  const saveSegmentRef = useRef(saveSegment);
+  useEffect(() => {
+    saveSegmentRef.current = saveSegment;
+  });
 
   // ── 歡迎 / 完成畫面 ──────────────────────────────────────────
   //
