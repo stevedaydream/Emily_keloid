@@ -220,7 +220,18 @@ export async function commitImportRowAction(formData: FormData) {
     .single();
   if (!row || row.status !== "pending") return;
 
-  await commitRow(supabase, row as ImportRow, operator);
+  // 單列匯入失敗時不要讓錯誤往外丟——Next 在正式環境會把 throw 的訊息換成一段英文，
+  // 使用者只會看到「發生錯誤」。改成跟「整批匯入」同一個做法：把原因寫回該列的驗證錯誤，
+  // 直接顯示在畫面上那一列旁邊。
+  try {
+    await commitRow(supabase, row as ImportRow, operator);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "匯入失敗";
+    await supabase
+      .from("legacy_import_rows")
+      .update({ validation_errors: [...((row.validation_errors as string[]) ?? []), message] })
+      .eq("id", row.id);
+  }
   await syncBatchCounters(supabase, row.batch_id);
 
   revalidatePath(`/admin/import/${row.batch_id}`);

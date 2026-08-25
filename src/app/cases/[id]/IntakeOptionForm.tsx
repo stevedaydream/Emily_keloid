@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { addIntakeOptionRecordAction } from "./actions";
+import { useActionState, useState } from "react";
+import { addIntakeOptionRecordAction, type IntakeOptionFormState } from "./actions";
 import SubmitButton from "@/components/ui/SubmitButton";
 
 type Option = { id: string; label: string };
@@ -33,6 +33,9 @@ export default function IntakeOptionForm({
   exclusiveLabel?: string;
 }) {
   const [checked, setChecked] = useState<Set<string>>(() => new Set(defaultOptionIds));
+  // 互斥檢查的訊息要看得到：server action 直接 throw 的話，Next 在正式環境會把訊息抹掉，
+  // 使用者只看到一段英文（2026-08-25 在匯出金鑰那裡踩過同一個坑）。
+  const [state, formAction] = useActionState<IntakeOptionFormState, FormData>(addIntakeOptionRecordAction, null);
   const exclusiveId = exclusiveLabel ? options.find((o) => o.label === exclusiveLabel)?.id : undefined;
   const showDetail = alwaysShowNotes || options.some((o) => o.label.startsWith("其他") && checked.has(o.id));
 
@@ -51,7 +54,7 @@ export default function IntakeOptionForm({
     });
 
   return (
-    <form action={addIntakeOptionRecordAction} className="mb-2 space-y-2 rounded-md border border-brand-100 p-3">
+    <form action={formAction} className="mb-2 space-y-2 rounded-md border border-brand-100 p-3">
       <input type="hidden" name="case_id" value={caseId} />
       <input type="hidden" name="category" value={category} />
       <div className="flex flex-wrap gap-2">
@@ -84,6 +87,9 @@ export default function IntakeOptionForm({
           <span className="text-xs text-ink/40">已帶入最新一筆的勾選，歷次紀錄仍完整保留在下方</span>
         )}
       </div>
+      {state && !state.ok && (
+        <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-700">{state.message}</p>
+      )}
     </form>
   );
 }

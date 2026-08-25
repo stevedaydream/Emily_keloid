@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getCurrentOperatorContext } from "@/lib/operator";
+import { canUseMaintenanceTools } from "@/lib/adminPin";
 
 const GROUPS = [
   {
@@ -75,6 +75,7 @@ const GROUPS = [
         href: "/admin/export-key",
         title: "匯出金鑰",
         desc: "控制匯出檔要不要帶出病歷號與姓名；含救援碼（忘記時可重設）",
+        adminOnly: true,
       },
       {
         href: "/admin/test-mode",
@@ -84,15 +85,21 @@ const GROUPS = [
         // 「刪除所有測試個案」只會困惑，那跟他的工作無關。
         adminOnly: true,
       },
+      {
+        href: "/admin/admin-pin",
+        title: "系統管理者 PIN",
+        desc: "正式上線後，切換成系統管理者要先輸入 PIN，維運工具才打得開",
+        adminOnly: true,
+      },
     ],
   },
 ];
 
 export default async function AdminHubPage() {
-  // adminOnly 的卡片只給系統管理者看。⚠️ 這是**動線不是權限**（決策 #9）——
-  // 知道網址的人照樣進得去，真正的門是之後要加的 PIN（見 pending.md）。
-  const ctx = await getCurrentOperatorContext();
-  const isSystemAdmin = ctx?.isSystemAdmin === true;
+  // adminOnly 的卡片＝維運工具，要系統管理者身分，且設了 PIN 之後還要通過 PIN 驗證。
+  // ⚠️ 隱藏卡片是**動線**，真正的門在各頁自己那道 canUseMaintenanceTools()（決策 #9：
+  // 全體共用一組帳號，知道網址的人照樣打得開網址，但打不開內容）。
+  const isSystemAdmin = (await canUseMaintenanceTools()).ok;
 
   return (
     <div className="space-y-8">

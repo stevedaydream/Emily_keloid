@@ -784,7 +784,13 @@ export async function updatePriorHistoryAction(formData: FormData) {
   revalidatePath(`/cases/${caseId}`);
 }
 
-export async function addIntakeOptionRecordAction(formData: FormData) {
+/** 互斥檢查等可預期的結果用回傳值傳遞——throw 出去的訊息在正式環境會被 Next 抹掉。 */
+export type IntakeOptionFormState = { ok: boolean; message: string } | null;
+
+export async function addIntakeOptionRecordAction(
+  _prev: IntakeOptionFormState,
+  formData: FormData
+): Promise<IntakeOptionFormState> {
   const caseId = formData.get("case_id") as string;
   const category = formData.get("category") as string;
   const optionIds = formData.getAll("option_ids") as string[];
@@ -802,7 +808,7 @@ export async function addIntakeOptionRecordAction(formData: FormData) {
       .eq("label", "無明顯不適")
       .maybeSingle();
     if (exclusive && optionIds.includes(exclusive.id)) {
-      throw new Error("「無明顯不適」不能與其他症狀同時勾選");
+      return { ok: false, message: "「無明顯不適」不能與其他症狀同時勾選" };
     }
   }
 
@@ -811,7 +817,7 @@ export async function addIntakeOptionRecordAction(formData: FormData) {
     .insert({ case_id: caseId, category, recorded_by: operator, notes })
     .select("id")
     .single();
-  if (error || !record) throw error ?? new Error("建立紀錄失敗");
+  if (error || !record) return { ok: false, message: `建立紀錄失敗：${error?.message ?? "未知錯誤"}` };
 
   if (optionIds.length > 0) {
     await supabase
@@ -824,6 +830,7 @@ export async function addIntakeOptionRecordAction(formData: FormData) {
 
   await logAudit({ caseId, operatorName: operator, action: "add_intake_option_record", entity: "case_intake_option_records", entityId: record.id, detail: { category, optionIds } });
   revalidatePath(`/cases/${caseId}`);
+  return { ok: true, message: "已儲存" };
 }
 
 // 一次橫向填寫所有標記（決策 2026-07-28）：同一次採檢的所有標記共用一個採檢日期，

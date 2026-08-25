@@ -867,40 +867,61 @@ docx 要求新增兩題，剛好對應新格式的兩個編碼欄：
 
 ## G 區：2026-08-25 之後待辦（不需要問助理，是實作與維運決定）
 
-### G1. Supabase `anon` 角色仍對所有資料表開放讀寫 ⚠️ 最高優先
+> **2026-08-25：G1–G3 全數處理完畢**（G1 剩下最後一步要在新的 Supabase 專案上做，見下）。
+
+### G1. Supabase `anon` 角色仍對所有資料表開放讀寫 → 程式已改完，**migration 待新專案上線時套用**
 
 **現況**：資料庫層對 `anon` 開放全部應用資料表的完整讀寫（demo 期的刻意取捨，見 `project.md`
 安全性備忘）。存取控制全部靠應用層：共用密碼登入 ＋ 操作者選單。
 
-**為什麼現在變嚴重**：2026-08-25 起病歷號與姓名**明文存在 `cases`**。在那之前 anon key 外洩
-只會流出去識別化資料；現在等同**姓名與病歷號外洩**。而 anon key 依設計就會出現在瀏覽器端，
-任何開過這個網站的人都拿得到。
+**為什麼要處理**：2026-08-25 起病歷號與姓名**明文存在 `cases`**。在那之前 anon key 外洩
+只會流出去識別化資料；現在等同姓名與病歷號外洩。
 
-**正式上線前該做**：改用 `service_role` 金鑰（只放伺服器端環境變數）＋ 收回 anon 的資料表權限，
-讓資料庫層也有一層防護。工作量集中在 `lib/supabase.ts` 與所有 client-side 直接查詢的地方。
+> ⚠️ 更正一則先前寫錯的說法：本專案的 anon key **不會**出現在瀏覽器端。
+> 兩個環境變數都沒有 `NEXT_PUBLIC_` 前綴，而且全站沒有任何 `"use client"` 檔案直接查 Supabase
+> （實測：拿 anon key 去 grep 打包後的 `.next/static`，一個字都找不到）。
+> 也就是說風險不是「任何開過網站的人都拿得到」，而是「金鑰一旦從伺服器端外流就等於整個資料庫」。
 
-### G2. server action 的驗證訊息還有幾處用 throw
+**已做（2026-08-25）**：
+- `lib/supabase.ts` 改成優先用 `SUPABASE_SERVICE_ROLE_KEY`，沒設定才退回 `SUPABASE_ANON_KEY`
+  （退路是為了不讓還沒補環境變數的環境整個掛掉）。另加 `supabaseKeyKind()` 供健檢顯示。
+- 寫好 migration `20260825080000_lockdown_anon_role.sql`：收回 anon／authenticated 的
+  資料表、序列、函式、預設權限與 `usage on schema public`。
+
+**還沒做的最後一步**：套用那支 migration。**順序不能反**——必須先在 Vercel 與 `.env.local`
+設好 `SUPABASE_SERVICE_ROLE_KEY`，再套 migration，否則正式站會立刻打不開資料庫。
+遷移到新的 Supabase 專案時照 `docs/遷移手冊.md` 的順序做即可。
+
+### G2. server action 的驗證訊息還有幾處用 throw → 2026-08-25 已處理完
 
 Next.js 在正式環境會把 server action 丟出的錯誤訊息抹掉（只留 digest），使用者只會看到
-「An error occurred in the Server Components render…」。已改用回傳值的：`createCaseAction`、
-`setExportKeyAction`。**仍待改**：
+「An error occurred in the Server Components render…」。處理結果：
 
-- `admin/import/actions.ts`：缺醫師代碼／缺收案年份／研究編號已存在
-- `admin/import-keloid/actions.ts`：解析錯誤彙總、重複匯入提示
-- `cases/[id]/actions.ts`：「請至少選擇一種治療方式」「無明顯不適不能與其他症狀同時勾選」
+| 位置 | 做法 |
+|---|---|
+| `createCaseAction`、`setExportKeyAction` | 先前已改成回傳值 |
+| `addIntakeOptionRecordAction`（「無明顯不適」互斥） | 改成 `useActionState`＋回傳值，訊息顯示在表單下方 |
+| `admin/import/actions.ts` 單列匯入 | 改成 try/catch，把原因寫回該列的 `validation_errors`，直接顯示在畫面上那一列旁邊（跟「整批匯入」同一個做法） |
+| `admin/import-keloid/actions.ts` | `commitCase` 的錯誤本來就被整批迴圈接住並寫回 `validation_errors`，不需要改 |
+| `submitTreatmentRecordAction`（「請至少選擇一種治療方式」） | 本來就在 `submitTreatmentRecordAction` 裡 try/catch 轉成 `TreatmentFormState`，訊息看得到 |
+| 各處的 `operatorOrThrow()` | 保留 throw。proxy 會先把沒選操作者的人擋去 `/operator`，實務上到不了 |
 
-後兩者是 `<form action={...}>` 直接送出，接不到回傳值，要改成 `useActionState` 才行——
-所以不是一行的事，排在使用頻率之後處理。
+### G3. 維運工具的 PIN → 2026-08-25 已實作，範圍取 (b)
 
-### G3. 維運工具的 PIN（正式上線後）
+使用者裁決：**正式上線後，切換成「系統管理者」這個操作者需要 PIN**。
 
-**已做**：`operators.is_system_admin`，測試模式的入口只掛在系統管理者的後台首頁；
-試驗主持人看不到那張卡片，直接開網址也只會看到一段「這是維運工具」的說明。
+**做法**：
+- `lib/adminPin.ts`：PIN 存 `app_settings` 的 `admin_pin_hash`／`admin_pin_salt`
+  （SHA-256(salt:pin)，常數時間比對，跟匯出金鑰同一套）。
+- 操作者選單選到系統管理者 → 導到 `/operator/pin` 輸入 PIN；通過才寫 `keloid_operator` cookie，
+  並放一個 12 小時的 `keloid_admin_pin` cookie（值就是那串雜湊，換 PIN 立刻作廢）。
+- 維運頁（測試模式／匯出金鑰／PIN 設定）各自再驗一次 `canUseMaintenanceTools()`，
+  這樣「設 PIN 之前就已經切成系統管理者」的舊 session 也會被要求重新驗證。
+- 設定頁：後台 →「系統管理者 PIN」（只有系統管理者看得到卡片）。
 
-**待做（正式上線後）**：系統管理者進入維運工具時要輸入 PIN。這是決策 #9（全體共用帳號、
-不分權限、選操作者不需密碼）的第一個例外，要寫進 IRB 說明。
-
-⚠️ **範圍待確認**：PIN 是要擋
-  (a) 只擋維運工具（測試模式、將來的資料清除類功能），還是
-  (b) 擋「切換成系統管理者這個操作者」本身？
-(b) 比較嚴、但也代表每次切身分都要輸入。實作前要先確認。
+**刻意的取捨**：
+- **沒設定 PIN 時完全不擋**。demo／教育訓練期間不必先設一組密碼才能用；正式上線那天再設即可。
+- **忘記 PIN 沒有救援碼**——維運人員把 `app_settings` 的 `admin_pin_hash` 刪掉就回到未設定狀態。
+  這跟匯出金鑰不同：金鑰弄丟會拿不到資料，PIN 只是動線上的一道門。
+- 這是決策 #9（全體共用帳號、不分權限、選操作者不需密碼）的第一個例外，**要寫進 IRB 說明**。
+  它擋的是「誤觸」與「順手看看」，擋不住刻意繞路的人。
