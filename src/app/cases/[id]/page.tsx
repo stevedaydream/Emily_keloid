@@ -217,7 +217,7 @@ export default async function CaseDetailPage({
     supabase
       .from("questionnaire_responses")
       .select(
-        "id, submitted_at, submitted_via, questionnaire_templates(id, name), questionnaire_answers(answer_value, questionnaire_questions(order_no, question_text, question_type, options))"
+        "id, submitted_at, submitted_via, questionnaire_templates(id, name), questionnaire_answers(answer_value, updated_at, updated_by, questionnaire_questions(order_no, question_text, question_type, options))"
       )
       .eq("case_id", id)
       .order("submitted_at", { ascending: false }),
@@ -343,13 +343,16 @@ export default async function CaseDetailPage({
   function answerRows(r: {
     questionnaire_answers?: {
       answer_value: unknown;
+      /** 這一題後來被改過的時間（2026-08-25）；null＝首次送出後沒動過 */
+      updated_at?: string | null;
+      updated_by?: string | null;
       questionnaire_questions:
         | { order_no?: number; question_text?: string; question_type?: string; options?: unknown }
         | { order_no?: number; question_text?: string; question_type?: string; options?: unknown }[]
         | null;
     }[];
   }) {
-    const rows: { orderNo: number; text: string; answer: string }[] = [];
+    const rows: { orderNo: number; text: string; answer: string; updatedAt?: string | null; updatedBy?: string | null }[] = [];
     for (const a of r.questionnaire_answers ?? []) {
       const q = Array.isArray(a.questionnaire_questions) ? a.questionnaire_questions[0] : a.questionnaire_questions;
       if (!q || q.order_no === undefined) continue;
@@ -360,7 +363,13 @@ export default async function CaseDetailPage({
       };
       const raw = a.answer_value;
       const answer = Array.isArray(raw) ? raw.map(toLabel).join("、") : toLabel(raw);
-      rows.push({ orderNo: q.order_no, text: q.question_text ?? "", answer });
+      rows.push({
+        orderNo: q.order_no,
+        text: q.question_text ?? "",
+        answer,
+        updatedAt: a.updated_at ?? null,
+        updatedBy: a.updated_by ?? null,
+      });
     }
     return rows.sort((x, y) => x.orderNo - y.orderNo);
   }
@@ -1478,6 +1487,16 @@ export default async function CaseDetailPage({
                     : r.submitted_via === "line_sim"
                     ? "舊LINE路徑（已停用）"
                     : "診間人員"}
+                  {/* 直接帶著這一筆的答案進去修改（2026-08-25）：跳題沒填完的可以補，
+                      改動的題目會各自記下修改時間，不會另外長出一筆重疊的回覆。 */}
+                  {q?.id && (
+                    <Link
+                      href={`/patient/${id}/questionnaire?questionnaire_id=${q.id}&response_id=${r.id}`}
+                      className="ml-2 whitespace-nowrap rounded border border-brand-200 px-1.5 py-0.5 text-xs text-brand-700 hover:bg-brand-50"
+                    >
+                      修改這一筆
+                    </Link>
+                  )}
                 </div>
                 {isSF36 && (
                   <div className="mt-1 flex flex-wrap gap-2">
@@ -1562,6 +1581,19 @@ export default async function CaseDetailPage({
                             <span className="ml-1 font-medium text-ink/80">
                               → {row.answer || <span className="font-normal text-ink/30">（未作答）</span>}
                             </span>
+                            {/* 後來被改過的題目各自標記（2026-08-25）：哪幾題改的、什麼時候、誰改的。
+                                沒改過的不顯示——每一題都掛一行時間會把清單淹掉。 */}
+                            {row.updatedAt && (
+                              <span className="ml-1.5 whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800">
+                                {new Date(row.updatedAt).toLocaleString("zh-TW", {
+                                  month: "numeric",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}{" "}
+                                修改{row.updatedBy ? `・${row.updatedBy}` : ""}
+                              </span>
+                            )}
                           </li>
                         ))}
                       </ol>
