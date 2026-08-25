@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getCurrentOperatorContext } from "@/lib/operator";
 
 const GROUPS = [
   {
@@ -79,20 +80,31 @@ const GROUPS = [
         href: "/admin/test-mode",
         title: "測試模式",
         desc: "demo／教育訓練期間收的個案標成「測試」，不進匯出檔，之後可一鍵刪除",
+        // 維運工具：只給系統管理者看（使用者要求 2026-08-25）。部長看到一顆
+        // 「刪除所有測試個案」只會困惑，那跟他的工作無關。
+        adminOnly: true,
       },
     ],
   },
 ];
 
-export default function AdminHubPage() {
+export default async function AdminHubPage() {
+  // adminOnly 的卡片只給系統管理者看。⚠️ 這是**動線不是權限**（決策 #9）——
+  // 知道網址的人照樣進得去，真正的門是之後要加的 PIN（見 pending.md）。
+  const ctx = await getCurrentOperatorContext();
+  const isSystemAdmin = ctx?.isSystemAdmin === true;
+
   return (
     <div className="space-y-8">
       <h1 className="font-heading text-xl font-medium text-brand-900">後台管理</h1>
-      {GROUPS.map((g) => (
+      {GROUPS.map((g) => {
+        const items = g.items.filter((s) => !("adminOnly" in s) || isSystemAdmin);
+        if (items.length === 0) return null;
+        return (
         <section key={g.label}>
           <h2 className="mb-2 text-sm font-semibold text-ink/60">{g.label}</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {g.items.map((s) => (
+            {items.map((s) => (
               <Link
                 key={s.href}
                 href={s.href}
@@ -104,7 +116,8 @@ export default function AdminHubPage() {
             ))}
           </div>
         </section>
-      ))}
+        );
+      })}
     </div>
   );
 }

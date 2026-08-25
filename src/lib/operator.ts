@@ -48,6 +48,8 @@ export async function getCurrentOperatorContext(): Promise<{
   landingMode: LandingMode;
   navCompact: boolean;
   devMobileMapping: boolean;
+  /** 系統管理者：維運工具（測試模式等）的入口只給他看。**不是權限**，見 migration 20260825070000 */
+  isSystemAdmin: boolean;
 } | null> {
   const name = await getCurrentOperator();
   if (!name) return null;
@@ -55,7 +57,7 @@ export async function getCurrentOperatorContext(): Promise<{
   const supabase = supabaseServer();
   const { data } = await supabase
     .from("operators")
-    .select("landing_mode, nav_compact, dev_mobile_mapping")
+    .select("landing_mode, nav_compact, dev_mobile_mapping, is_system_admin")
     .eq("name", name)
     .maybeSingle();
   return {
@@ -63,5 +65,6 @@ export async function getCurrentOperatorContext(): Promise<{
     landingMode: toLandingMode(data?.landing_mode),
     navCompact: data?.nav_compact === true,
     devMobileMapping: data?.dev_mobile_mapping === true,
+    isSystemAdmin: data?.is_system_admin === true,
   };
 }
