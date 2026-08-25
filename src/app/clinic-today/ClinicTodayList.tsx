@@ -16,6 +16,9 @@ type AutoEntry = {
 export type SearchableCase = {
   caseId: string;
   researchId: string;
+  /** 2026-08-25 起姓名與病歷號存在資料庫，搜尋直接比對 */
+  patientName: string;
+  mrn: string;
   bodySite: string;
   enrollmentYear: number | null;
   dataSource: string;
@@ -46,7 +49,7 @@ export default function ClinicTodayList({
   today: string;
   searchable: SearchableCase[];
 }) {
-  const { names, showNames } = useLocalNames();
+  const { showNames } = useLocalNames();
   const [manualIds, setManualIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -82,7 +85,7 @@ export default function ClinicTodayList({
     const hits = searchable.filter((c) => {
       // 姓名只在使用者開著「顯示姓名」時才納入比對，跟 PatientName 的行為一致
       // （投影或有訪客時關掉，就不該還能用姓名搜到人）。
-      const name = showNames ? names.get(c.researchId) ?? "" : "";
+      const name = showNames ? c.patientName ?? "" : "";
       const haystack = normalize(
         [c.researchId, name, c.doctor, c.bodySite, c.enrollmentYear ?? "", c.dataSource].join(" ")
       );
@@ -90,7 +93,7 @@ export default function ClinicTodayList({
     });
     // 已在清單中的排到後面，避免佔住前排位置
     return hits.sort((a, b) => Number(inListIds.has(a.caseId)) - Number(inListIds.has(b.caseId)));
-  }, [query, searchable, names, showNames, inListIds]);
+  }, [query, searchable, showNames, inListIds]);
 
   const selectable = matches.filter((m) => !inListIds.has(m.caseId));
   const shown = matches.slice(0, MAX_RESULTS);
@@ -190,7 +193,7 @@ export default function ClinicTodayList({
                 <ul className="max-h-72 divide-y divide-brand-50 overflow-y-auto rounded-md border border-brand-100">
                   {shown.map((c) => {
                     const already = inListIds.has(c.caseId);
-                    const name = showNames ? names.get(c.researchId) : null;
+                    const name = showNames ? c.patientName : null;
                     return (
                       <li key={c.caseId}>
                         <label

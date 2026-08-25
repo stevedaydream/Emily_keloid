@@ -20,7 +20,7 @@ export default async function IntakePage() {
     supabase.from("doctors").select("id, code, name").eq("active", true).order("code"),
     supabase
       .from("cases")
-      .select("id, research_id, created_at, created_by, case_patient_intake_progress(segment_key)")
+      .select("id, research_id, patient_name, created_at, created_by, case_patient_intake_progress(segment_key)")
       .gte("created_at", dayStart)
       .lte("created_at", dayEnd)
       .order("created_at", { ascending: false }),
@@ -53,7 +53,7 @@ export default async function IntakePage() {
               <li key={c.id} className="rounded-lg border border-brand-100 bg-paper-raised p-3">
                 <div className="flex flex-wrap items-baseline gap-x-2">
                   <b className="font-data text-sm text-brand-900">{c.research_id}</b>
-                  <PatientName researchId={c.research_id} className="text-sm text-ink/70" />
+                  <PatientName name={c.patient_name} className="text-sm text-ink/70" />
                 </div>
                 <p className="mt-0.5 text-xs text-ink/40">
                   {new Date(c.created_at).toLocaleTimeString("zh-TW", {

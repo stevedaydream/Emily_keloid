@@ -54,8 +54,8 @@ export default async function RootLayout({
       className={`${notoSerifTC.variable} ${notoSansTC.variable} ${ibmPlexMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col font-body text-ink">
-        {/* 姓名只在瀏覽器端從本機對照表讀出後注入畫面，伺服器渲染的內容永遠不含姓名 */}
-        <LocalNameProvider devMobileMapping={operatorContext?.devMobileMapping ?? false}>
+        {/* 「顯示姓名」開關（投影／有訪客時一鍵隱藏）。姓名本身 2026-08-25 起存在資料庫。 */}
+        <LocalNameProvider>
           <AppChrome
             operator={operatorContext?.name ?? null}
             navCompact={operatorContext?.navCompact ?? false}

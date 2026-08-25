@@ -55,6 +55,9 @@ export type DecodedCase = {
   enrollment_year: number;
   doctor_id: string;
   fields: {
+    /** 2026-08-25 起病歷號與姓名直接存雲端，範本那兩欄不再需要上傳前清空 */
+    mrn: string | null;
+    patient_name: string | null;
     sex: string | null;
     birth_date: string | null;
     height_cm: number | null;
@@ -375,6 +378,8 @@ export function decodeCase(
     enrollment_year: parsedId ? Number(parsedId[2]) : 0,
     doctor_id: doctorId,
     fields: {
+      mrn: str(basic["Chart No."]) || null,
+      patient_name: str(basic["Name"]) || null,
       sex,
       birth_date: dateStr(basic["birthday"]),
       height_cm: heightCm,

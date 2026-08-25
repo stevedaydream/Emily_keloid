@@ -18,7 +18,7 @@ export async function getClinicCaseAction(caseId: string) {
     await Promise.all([
     supabase
       .from("cases")
-      .select("id, research_id, sex, age_at_enrollment, phone_number, jsw_score, body_site, doctors(code, name)")
+      .select("id, research_id, patient_name, sex, age_at_enrollment, phone_number, jsw_score, body_site, doctors(code, name)")
       .eq("id", caseId)
       .single(),
     supabase
@@ -110,6 +110,7 @@ export async function getClinicCaseAction(caseId: string) {
     timepointLabel: timepointForVisit(surgeryDate, today)?.label ?? null,
     id: caseRow?.id ?? caseId,
     research_id: caseRow?.research_id ?? "",
+    patient_name: caseRow?.patient_name ?? null,
     doctor: doctor ? `${doctor.code} ${doctor.name}` : "",
     sex: caseRow?.sex ?? "",
     age_at_enrollment: caseRow?.age_at_enrollment ?? null,

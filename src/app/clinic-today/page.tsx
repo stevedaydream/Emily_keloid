@@ -18,17 +18,17 @@ export default async function ClinicTodayPage() {
 
   const caseIds = [...new Set((items ?? []).map((i) => i.case_id))];
   const { data: cases } = caseIds.length
-    ? await supabase.from("cases").select("id, research_id").in("id", caseIds)
+    ? await supabase.from("cases").select("id, research_id, patient_name").in("id", caseIds)
     : { data: [] };
 
   const researchIdById = new Map((cases ?? []).map((c) => [c.id, c.research_id]));
+  const patientNameById = new Map((cases ?? []).map((c) => [c.id, c.patient_name]));
 
   // 搜尋用的完整個案清單一次送到瀏覽器（不到百筆、幾 KB），比對全部在前端做。
-  // 這不只是省一次往返：助理很可能直接打病人姓名，而姓名只存在本機對照表——
-  // 若改成把關鍵字送去伺服器搜尋，等於把姓名送上雲端，決策 #1 就破了。
+  // 2026-08-25 起姓名與病歷號就在這張表裡（不再是本機對照表），一起帶下來給前端比對。
   const { data: allCases } = await supabase
     .from("cases")
-    .select("id, research_id, body_site, enrollment_year, data_source, created_at, doctors(code, name)")
+    .select("id, research_id, mrn, patient_name, body_site, enrollment_year, data_source, created_at, doctors(code, name)")
     .order("research_id");
 
   const searchable = (allCases ?? []).map((c) => {
@@ -36,6 +36,8 @@ export default async function ClinicTodayPage() {
     return {
       caseId: c.id,
       researchId: c.research_id ?? "",
+      mrn: c.mrn ?? "",
+      patientName: c.patient_name ?? "",
       bodySite: c.body_site ?? "",
       enrollmentYear: c.enrollment_year ?? null,
       dataSource: c.data_source ?? "",
@@ -58,6 +60,7 @@ export default async function ClinicTodayPage() {
     .map((c) => ({
       caseId: c.id,
       researchId: c.research_id ?? "",
+      patientName: c.patient_name ?? "",
       createdAt: c.created_at as string | null,
       // 用頁面上方已算好的 today 當基準，不在 render 裡再呼叫一次 Date.now()
       daysWaiting: c.created_at
@@ -73,6 +76,7 @@ export default async function ClinicTodayPage() {
     return {
       caseId: id,
       researchId: researchIdById.get(id) ?? "",
+      patientName: patientNameById.get(id) ?? "",
       dueCount: own.length,
       overdueCount: overdue,
       earliestDue: own[0]?.due_date ?? "",
@@ -118,7 +122,7 @@ export default async function ClinicTodayPage() {
               <Link href={`/cases/${c.caseId}`} className="font-data text-brand-800 underline">
                 {c.researchId}
               </Link>
-              <PatientName researchId={c.researchId} className="text-ink/70" />
+              <PatientName name={c.patientName} className="text-ink/70" />
               {c.daysWaiting !== null && (
                 <span className={`text-xs ${c.daysWaiting > 90 ? "text-amber-700" : "text-ink/40"}`}>
                   已收案 {c.daysWaiting} 天

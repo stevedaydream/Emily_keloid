@@ -11,6 +11,8 @@ import { saveBatchEditsAction, type BatchEdit } from "./actions";
 export type BatchCaseRow = {
   id: string;
   research_id: string;
+  /** 2026-08-25 起姓名存在資料庫（原本靠本機對照表在瀏覽器端注入） */
+  patient_name: string | null;
   doctor: string;
   sex: string;
   age_at_enrollment: string;
@@ -81,9 +83,9 @@ const editKey = (caseId: string, field: string) => `${caseId}:${field}`;
 export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; years: number[] }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { names, showNames, linked } = useLocalNames();
-  // 沒掛本機對照表時整欄不顯示，免得留下一排空白的姓名欄
-  const withNames = showNames && linked;
+  const { showNames } = useLocalNames();
+  // 姓名 2026-08-25 起隨個案從資料庫帶下來；這裡只看使用者有沒有選擇顯示
+  const withNames = showNames;
 
   const [edits, setEdits] = useState<Map<string, string>>(new Map());
   const [showAllColumns, setShowAllColumns] = useState(false);
@@ -169,7 +171,7 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
     return rows.filter((r) => {
       if (onlyIncomplete && !isRowIncomplete(r)) return false;
       if (!needle) return true;
-      const name = names.get(r.research_id) ?? "";
+      const name = r.patient_name ?? "";
       return (
         r.research_id.toLowerCase().includes(needle) ||
         r.doctor.toLowerCase().includes(needle) ||
@@ -177,7 +179,7 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
         (showNames && name.toLowerCase().includes(needle))
       );
     });
-  }, [rows, keyword, onlyIncomplete, names, showNames]);
+  }, [rows, keyword, onlyIncomplete, showNames]);
 
   async function handleSave() {
     if (edits.size === 0) return;
@@ -356,7 +358,7 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
                 </td>
                 {withNames && (
                   <td className="whitespace-nowrap px-3 py-1.5 text-ink/80">
-                    <PatientName researchId={row.research_id} />
+                    <PatientName name={row.patient_name} />
                   </td>
                 )}
                 {columns.map((col) => {

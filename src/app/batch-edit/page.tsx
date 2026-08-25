@@ -14,7 +14,7 @@ export default async function BatchEditPage({
   let query = supabase
     .from("cases")
     .select(
-      "id, research_id, sex, age_at_enrollment, phone_number, consent_signed_at, jsw_score, body_site, recurrence_status, recurrence_date, followup_cutoff_date, notes, data_source, enrollment_year, doctors(code, name)"
+      "id, research_id, patient_name, sex, age_at_enrollment, phone_number, consent_signed_at, jsw_score, body_site, recurrence_status, recurrence_date, followup_cutoff_date, notes, data_source, enrollment_year, doctors(code, name)"
     )
     .order("research_id");
 
@@ -56,6 +56,7 @@ export default async function BatchEditPage({
     return {
       id: c.id,
       research_id: c.research_id,
+      patient_name: c.patient_name ?? null,
       doctor: doctor ? `${doctor.code}` : "",
       sex: c.sex ?? "",
       age_at_enrollment: c.age_at_enrollment === null || c.age_at_enrollment === undefined ? "" : String(c.age_at_enrollment),

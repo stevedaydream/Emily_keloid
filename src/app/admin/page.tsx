@@ -71,9 +71,9 @@ const GROUPS = [
         desc: "一人一次抽血；獨立編號 CTL-年份-序號，匯出為獨立分頁",
       },
       {
-        href: "/local-tools/mrn-mapping",
-        title: "病歷號對照設定",
-        desc: "設定本機對照表檔案位置，並可查詢/補登病歷號↔研究編號對照（純本機，不上雲端）",
+        href: "/admin/export-key",
+        title: "匯出金鑰",
+        desc: "控制匯出檔要不要帶出病歷號與姓名；含救援碼（忘記時可重設）",
       },
       {
         href: "/admin/test-mode",

@@ -162,7 +162,7 @@ export async function getCaseDetailAction(caseId: string) {
       supabase
         .from("cases")
         .select(
-          "id, research_id, family_history, disease_history, keloid_onset_date, prior_treatment_physician, prior_steroid_treatment, prior_tcm_treatment, prior_ogawa_patch, prior_radiation_treatment"
+          "id, research_id, patient_name, family_history, disease_history, keloid_onset_date, prior_treatment_physician, prior_steroid_treatment, prior_tcm_treatment, prior_ogawa_patch, prior_radiation_treatment"
         )
         .eq("id", caseId)
         .single(),

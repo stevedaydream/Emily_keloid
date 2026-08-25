@@ -43,21 +43,15 @@ function HelpLink() {
   );
 }
 
-// 姓名顯示開關：只有掛了本機對照表（linked）才有意義，沒掛的時候整顆隱藏。
+// 姓名顯示開關。2026-08-25 起姓名存在資料庫（不再是本機對照表），所以這顆一律顯示——
+// 它現在的用途是投影／教學／診間有訪客時把姓名藏起來，跟有沒有掛對照表無關。
 function ShowNamesToggle({ className = "" }: { className?: string }) {
-  const { linked, showNames, toggleShowNames, sessionOnly } = useLocalNames();
-  if (!linked) return null;
+  const { showNames, toggleShowNames } = useLocalNames();
   return (
     <button
       type="button"
       onClick={toggleShowNames}
-      title={
-        sessionOnly
-          ? "工程模式：對照表只讀進記憶體，重新整理就會消失"
-          : showNames
-          ? "目前顯示病人姓名（點擊隱藏）"
-          : "目前隱藏病人姓名（點擊顯示）"
-      }
+      title={showNames ? "目前顯示病人姓名（點擊隱藏）" : "目前隱藏病人姓名（點擊顯示）"}
       className={`whitespace-nowrap rounded-md border px-2 py-1 text-xs ${
         showNames
           ? "border-brand-300 bg-brand-50 text-brand-800"
@@ -65,8 +59,6 @@ function ShowNamesToggle({ className = "" }: { className?: string }) {
       } ${className}`}
     >
       {showNames ? "姓名：顯示中" : "姓名：已隱藏"}
-      {/* 工程模式掛的對照表重整就沒，標一下免得以為壞掉 */}
-      {sessionOnly && <span className="ml-1 text-sky-600">(暫)</span>}
     </button>
   );
 }

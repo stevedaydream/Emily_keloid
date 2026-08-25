@@ -61,7 +61,7 @@ export default function CaseDrawer({ caseId, onClose }: { caseId: string; onClos
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-brand-100 bg-paper-raised px-4 py-3">
           <div>
             <span className="font-data text-sm font-medium text-brand-900">{c?.research_id ?? "載入中…"}</span>
-            {c?.research_id && <PatientName researchId={c.research_id} className="ml-2 text-sm text-ink/70" />}
+            {c?.patient_name && <PatientName name={c.patient_name} className="ml-2 text-sm text-ink/70" />}
           </div>
           <div className="flex items-center gap-2">
             {c && (

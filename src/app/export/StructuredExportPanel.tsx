@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import IdentifiedExport from "./IdentifiedExport";
 import { buttonClasses } from "@/components/ui/buttonStyles";
 
 // 匯出篩選與排序（docx 2026-08-12 第 7 點：「後台 raw data 匯出，可以照收案點選先後順序排序或其他篩選方式列出」）。
 //
-// 篩選條件要同時套用在「一般匯出」與「含姓名的匯出」兩個下載上，所以查詢字串在這裡集中管理，
-// 再分別交給下載連結與 IdentifiedExport。
+// 篩選條件集中在這裡管理，交給下載連結。
+//
+// 2026-08-25：病歷號與姓名改存資料庫後，原本「在瀏覽器端用本機對照表補上姓名」的
+// IdentifiedExport 整個不需要了——改成勾一個選項＋輸入金鑰，由伺服器直接帶出那兩欄。
 
 export type DoctorOption = { id: string; code: string; name: string };
 
@@ -32,6 +33,9 @@ export default function StructuredExportPanel({
   // 測試個案預設排除（2026-08-25）：多幾列假病人比缺幾列難發現得多——
   // 缺列看得出來，多列會被當成真的病人一起算進統計。
   const [includeTest, setIncludeTest] = useState(false);
+  // 病歷號與姓名（2026-08-25）：預設不匯出，勾了要輸入金鑰才會帶出那兩欄。
+  const [identified, setIdentified] = useState(false);
+  const [exportKey, setExportKey] = useState("");
   const [sort, setSort] = useState("created");
 
   const params = new URLSearchParams();
@@ -42,6 +46,10 @@ export default function StructuredExportPanel({
   if (source) params.set("source", source);
   if (!consentOnly) params.set("consent", "all");
   if (includeTest) params.set("test", "all");
+  if (identified && exportKey) {
+    params.set("identified", "1");
+    params.set("key", exportKey);
+  }
   if (sort && sort !== "created") params.set("sort", sort);
   const query = params.toString();
   const href = `/api/export/structured-data${query ? `?${query}` : ""}`;
@@ -129,6 +137,33 @@ export default function StructuredExportPanel({
             </span>
           </label>
         </div>
+        <div className="col-span-2 sm:col-span-3">
+          <label className="flex items-start gap-2 rounded-md border-2 border-amber-200 bg-amber-50/60 px-2 py-1.5 text-xs text-ink/70">
+            <input
+              type="checkbox"
+              checked={identified}
+              onChange={(e) => setIdentified(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span className="flex-1">
+              <b>包含病歷號與姓名</b>（預設關閉，需要金鑰）
+              <span className="mt-0.5 block text-ink/40">
+                勾選後 Name / Chart No. 兩欄才會有內容。下載的檔案含可識別資料，請依 IRB 規範保管，
+                不要放進共用雲端硬碟或用電子郵件轉寄。金鑰在後台「匯出金鑰」設定。
+              </span>
+              {identified && (
+                <input
+                  type="password"
+                  value={exportKey}
+                  onChange={(e) => setExportKey(e.target.value)}
+                  placeholder="輸入匯出金鑰"
+                  autoComplete="off"
+                  className="mt-1.5 w-full rounded-md border border-amber-300 px-2 py-1.5 text-sm"
+                />
+              )}
+            </span>
+          </label>
+        </div>
         <div>
           <label className="block text-xs font-medium text-ink/60">是否已手術</label>
           <select value={operated} onChange={(e) => setOperated(e.target.value)} className={field}>
@@ -163,9 +198,8 @@ export default function StructuredExportPanel({
       <a href={href} className={`${buttonClasses("primary")} mt-3`}>
         下載結構化資料（.xlsx）
         {filtered && <span className="ml-1 text-xs opacity-80">・已套用篩選</span>}
+        {identified && exportKey && <span className="ml-1 text-xs opacity-80">・含病歷號姓名</span>}
       </a>
-
-      <IdentifiedExport query={query} />
 
       {/* 對照組獨立成另一個檔（助理 2026-08-24），不再是主檔裡的一張分頁 */}
       <div className="mt-4 rounded-md border border-brand-100 bg-paper-sunken p-3">

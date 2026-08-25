@@ -32,7 +32,7 @@ export default async function HomePage({
   let query = supabase
     .from("cases")
     .select(
-      "id, research_id, body_site, consent_signed_at, data_source, line_bound, enrollment_year, recurrence_status, created_at, is_test, doctors(code, name)"
+      "id, research_id, mrn, patient_name, body_site, consent_signed_at, data_source, line_bound, enrollment_year, recurrence_status, created_at, is_test, doctors(code, name)"
     )
     .order("created_at", { ascending: false });
 
@@ -59,7 +59,11 @@ export default async function HomePage({
   const cases = q
     ? (casesRaw ?? []).filter((c) => {
         const doctor = Array.isArray(c.doctors) ? c.doctors[0] : c.doctors;
-        const haystack = [c.research_id, doctor?.code, doctor?.name, c.body_site].filter(Boolean).join(" ").toLowerCase();
+        // 病歷號與姓名 2026-08-25 起存在資料庫，搜尋直接吃得到（原本要靠瀏覽器讀本機對照表）
+        const haystack = [c.research_id, c.mrn, c.patient_name, doctor?.code, doctor?.name, c.body_site]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
         return haystack.includes(q);
       })
     : casesRaw ?? [];
@@ -129,7 +133,7 @@ export default async function HomePage({
                   </td>
                   {/* 姓名由瀏覽器端從本機對照表注入，伺服器渲染的內容不含姓名 */}
                   <td className="whitespace-nowrap px-4 py-2 text-ink/80">
-                    <PatientName researchId={c.research_id} />
+                    <PatientName name={c.patient_name} />
                   </td>
                   <td className="whitespace-nowrap px-4 py-2 text-ink/70">
                     {doctor?.code} {doctor?.name}

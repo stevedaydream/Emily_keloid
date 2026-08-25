@@ -467,7 +467,7 @@ export default async function CaseDetailPage({
         <div className="mt-1 flex items-center gap-3">
           <h1 className="text-xl font-semibold">{caseRow.research_id}</h1>
           {/* 姓名由瀏覽器端從本機對照表注入 */}
-          <PatientName researchId={caseRow.research_id} className="text-lg text-ink/70" />
+          <PatientName name={caseRow.patient_name} className="text-lg text-ink/70" />
           {/* 測試個案（2026-08-25）：正式與測試資料混在同一套系統裡，要在最顯眼的地方講清楚 */}
           {caseRow.is_test && (
             <span className="rounded bg-amber-500 px-2 py-0.5 text-xs font-medium text-white">測試個案</span>

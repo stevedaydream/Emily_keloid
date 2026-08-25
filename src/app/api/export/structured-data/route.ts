@@ -34,8 +34,10 @@ import {
 // 刻意的偏離只有一處：欄名去掉原檔的排版空白與冗長括號（原檔是 `Keloid Lo_1                     (Keloid Location)`），
 // 改用 `Keloid Lo_1`。原檔那些空白會讓公式參照與程式讀取都很脆弱，完整英文語意改放「編碼對照表」附表。
 //
-// 去識別化：Name / Chart No. 兩欄伺服器**永遠留空**，下載後由 /export 頁的
-// IdentifiedExport 在瀏覽器端從本機對照表或零知識保管庫補上（決策 #1 的紅線）。
+// Name / Chart No. 兩欄：預設留空；勾選「包含病歷號與姓名」並輸入正確的匯出金鑰時才帶出來
+// （2026-08-25，取代原本的本機對照表／保管庫回填機制）。
+
+import { verifyExportKey } from "@/lib/exportKey";
 
 export const dynamic = "force-dynamic";
 
@@ -113,6 +115,9 @@ type CaseRow = {
   data_source: string | null;
   /** demo／教育訓練期間建立的測試個案，預設不進匯出檔（2026-08-25） */
   is_test: boolean | null;
+  /** 2026-08-25 起明文存雲端；匯出時要金鑰才帶得出來 */
+  mrn: string | null;
+  patient_name: string | null;
   sex: string | null;
   phone_number: string | null;
   age_at_enrollment: number | null;
@@ -173,6 +178,13 @@ export async function GET(request: Request) {
   // 測試個案：預設排除（2026-08-25）。測試列混進部長的分析檔比缺幾列難發現得多——
   // 缺列看得出來，多列會被當成真的病人算進去。test=all 才會一起帶出來。
   const includeTestCases = sp.get("test") === "all";
+  // 病歷號與姓名（2026-08-25）：預設不帶出來，要帶必須附上正確的匯出金鑰。
+  // 金鑰錯或沒設定就一律當作沒勾——不要用錯誤訊息告訴對方「金鑰錯了但功能存在」。
+  const identified = sp.get("identified") === "1" && (await verifyExportKey(sp.get("key") ?? ""));
+  // 沒通過驗證就一律留空。集中成兩支小函式，四張主表共用同一個判斷，
+  // 免得日後有人只改其中一張而讓姓名從另一張漏出去。
+  const idName = (c: CaseRow) => (identified ? c.patient_name ?? "" : "");
+  const idMrn = (c: CaseRow) => (identified ? c.mrn ?? "" : "");
 
   const [
     { data: casesRaw },
@@ -615,7 +627,7 @@ export async function GET(request: Request) {
     const anyBiobank = [...bioMap.values()].some((b) => b.collected) || !!legacyBio?.tissue_bank_status;
 
     wsBasic.addRow([
-      rid, "", "", sexCode, c.phone_number ?? "",
+      rid, idName(c), idMrn(c), sexCode, c.phone_number ?? "",
       c.birth_date ?? "", // birthday（2026-08-13 加入，見 project.md 安全性備忘）
       c.age_at_enrollment ?? "",
       // 身高體重沒填時用部長定義的「無紀錄」哨兵；BMI 由兩者算出，不另存欄位以免不同步
@@ -698,7 +710,7 @@ export async function GET(request: Request) {
     const rtDate = sessions.map((s) => s.due_date).filter(Boolean).sort()[0] ?? rtRecord?.treatment_date ?? "";
 
     wsOp.addRow([
-      rid, "", "", sexCode, opDate ?? "",
+      rid, idName(c), idMrn(c), sexCode, opDate ?? "",
       ...opCells,
       rtDate,
       // 醫師有兩個來源：「放射治療」治療紀錄，以及手術後自動產生的逐次待辦。
@@ -748,8 +760,8 @@ export async function GET(request: Request) {
       }
       return cells;
     };
-    wsY1.addRow([rid, "", "", sexCode, opDate ?? "", y1Symptom, ...fwCells(y1Slots, 1, MAX_FW_YEAR1)]);
-    wsY2.addRow([rid, "", "", sexCode, opDate ?? "", ...fwCells(y2Slots, MAX_FW_YEAR1 + 1, MAX_FW_YEAR2)]);
+    wsY1.addRow([rid, idName(c), idMrn(c), sexCode, opDate ?? "", y1Symptom, ...fwCells(y1Slots, 1, MAX_FW_YEAR1)]);
+    wsY2.addRow([rid, idName(c), idMrn(c), sexCode, opDate ?? "", ...fwCells(y2Slots, MAX_FW_YEAR1 + 1, MAX_FW_YEAR2)]);
 
     for (const [idx, v] of visits.entries()) {
       visitRows.push([
@@ -1072,7 +1084,9 @@ export async function GET(request: Request) {
     ["Basic Info.", "Medical_history_self / Fmaily_history", "已可編碼：勾選常見疾病後自動對到 1-8", "舊資料的自由文字對不到清單的片段會落到「其他」(8)"],
     ["Basic Info.", "KC_1..5（發生原因）", "系統只有個案層級的發生原因，拆不到每個病灶", "待助理確認舊病歷能否拆到病灶層級（pending.md D5）"],
     ["Basic Info.", "KOST_1..5（藥膏/貼片）", "系統尚無藥膏/貼片的 1-12 清單", "新增可維護清單並在治療紀錄可複選"],
-    ["全部主表", "Name / Chart No.", "去識別化：伺服器永遠留空", "於 /export 頁用「含姓名的匯出」按鈕在瀏覽器端回填"],
+    identified
+      ? ["全部主表", "Name / Chart No.", "已帶出（本次匯出有輸入金鑰）", "含可識別資料，請依 IRB 規範保管"]
+      : ["全部主表", "Name / Chart No.", "留空", "要帶出病歷號與姓名，請在匯出頁勾選並輸入金鑰"],
   ];
   const gapRows = gaps.map((g) => [...g]);
   for (const n of overflowNotes) gapRows.push(["超出格式上限", "", n, "完整資料在對應的 long-format 附表"]);

@@ -90,7 +90,7 @@ export default function ClinicCard({
           <Link href={`/cases/${caseId}`} className="font-data text-sm font-medium text-brand-800 underline">
             {data.research_id}
           </Link>
-          <PatientName researchId={data.research_id} className="text-sm text-ink/80" />
+          <PatientName name={data.patient_name} className="text-sm text-ink/80" />
           <span className="text-xs text-ink/40">{data.doctor}</span>
           {dueBadge && <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700">{dueBadge}</span>}
           {manual && <span className="rounded bg-brand-50 px-2 py-0.5 text-xs text-brand-700">手動加入</span>}
