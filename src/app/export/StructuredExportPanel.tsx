@@ -65,8 +65,9 @@ export default function StructuredExportPanel({
       <h2 className="text-sm font-semibold text-brand-900">① 結構化資料表</h2>
       <p className="mt-1 text-xs text-ink/50">
         目前共 {caseCount} 筆個案。格式為部長 2026-08 版 Excel 編碼簿的 4 張主表
-        （Basic Info. 56 欄 / Operation 26 欄 / Year 1 follow-up 42 欄 / Year 2 follow-up 41 欄），
-        欄位順序與數量完全一致，儲存格只放數字碼，可直接貼進統計軟體。
+        （Basic Info. / Operation / Year 1 follow-up / Year 2 follow-up），欄名與欄位順序照他的檔，
+        儲存格只放數字碼，可直接貼進統計軟體。欄數比他的原檔多，因為容量已依 2026-08-14 定案放寬到
+        病灶 20 處、手術與放療各 4 處、追蹤 27 次（原檔是 5／4／3／24，實際資料會超過）。
         平台多出來的資料（病灶數字化測量、追蹤逐筆、問卷分數、術前術後比較、Lab、編碼對照表、未能對應清單、欄位缺口清單）
         放在附表，不污染主表。<b>這個檔只有實驗組</b>，對照組見下方另一個下載。
       </p>
