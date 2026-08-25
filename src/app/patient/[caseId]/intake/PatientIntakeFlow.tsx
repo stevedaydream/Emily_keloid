@@ -181,6 +181,27 @@ export default function PatientIntakeFlow({
     ...extras,
   ];
 
+  /**
+   * 這次流程實際會問到的題目（2026-08-24）。畫面切頁與「漏答幾題」的判定要吃同一份清單——
+   * 各算各的遲早會把刻意不問的題（PSQI 的 5j／11e 文字說明、沒有睡伴時的第 11 題）
+   * 算成病人漏答，那筆待補就永遠消不掉。
+   */
+  const usableQuestions = useMemo(() => {
+    const pick = (segment: "sf36" | "psqi", q: Questionnaire | null): PageableQuestion[] => {
+      if (!q) return [];
+      const noBedPartner =
+        segment === "psqi" &&
+        String(answers[q.questions.find((x) => x.order_no === PSQI_BED_PARTNER_ORDER)?.id ?? ""] ?? "") === "0";
+      return q.questions.filter((x) => {
+        if (segment !== "psqi") return true;
+        if (PSQI_SKIP_ORDERS.includes(x.order_no)) return false;
+        if (noBedPartner && PSQI_PARTNER_ONLY_ORDERS.includes(x.order_no)) return false;
+        return true;
+      });
+    };
+    return { sf36: pick("sf36", sf36), psqi: pick("psqi", psqi) };
+  }, [sf36, psqi, answers]);
+
   // ── 把整個流程攤平成一連串畫面 ──────────────────────────────
   const screens = useMemo<Screen[]>(() => {
     const list: Screen[] = [];
@@ -378,16 +399,7 @@ export default function PatientIntakeFlow({
       ["psqi", psqi],
     ] as const) {
       if (!q) continue;
-      const noBedPartner =
-        segment === "psqi" &&
-        String(answers[q.questions.find((x) => x.order_no === PSQI_BED_PARTNER_ORDER)?.id ?? ""] ?? "") === "0";
-      const usable = q.questions.filter((x) => {
-        if (segment !== "psqi") return true;
-        if (PSQI_SKIP_ORDERS.includes(x.order_no)) return false;
-        if (noBedPartner && PSQI_PARTNER_ONLY_ORDERS.includes(x.order_no)) return false;
-        return true;
-      });
-      for (const page of paginateQuestions(usable)) {
+      for (const page of paginateQuestions(usableQuestions[segment])) {
         list.push({
           segment,
           title: page.length === 1 ? page[0].question_text : q.name,
@@ -415,7 +427,7 @@ export default function PatientIntakeFlow({
     priorTreated, priorDoctor, onsetCause, referral, symptoms, noSymptomId, answers,
     prefill.sex, prefill.birthDate, prefill.height, prefill.weight, prefill.phone, birthDateMax,
     familyDiseaseOptions, visitReasonOptions, onsetCauseOptions, referralOptions,
-    symptomOptions, priorDoctorOptions, sf36, psqi,
+    symptomOptions, priorDoctorOptions, sf36, psqi, usableQuestions,
   ]);
 
   // 續填：從第一個「還沒完成的段落」的第一個畫面開始
@@ -449,7 +461,9 @@ export default function PatientIntakeFlow({
       const { recordId } = await savePatientHistoryAction(caseId, {
         familyHistory: familyDiseaseOptions.filter((o) => family.includes(o.id)).map((o) => o.label),
         familyHistoryUnknown: family.includes(UNKNOWN),
+        familyHistoryNone: family.includes(NONE),
         visitReasonOptionIds: visitReason.filter((v) => v !== NONE && v !== UNKNOWN),
+        visitReasonUnknown: visitReason.includes(UNKNOWN),
         onsetYear: onsetYear || null,
         priorTreated,
         priorTreatmentPhysician: priorTreated === "yes" ? priorDoctor || null : null,
@@ -462,6 +476,8 @@ export default function PatientIntakeFlow({
         onsetCauseIds: onsetCause.filter((v) => v !== NONE && v !== UNKNOWN),
         referralIds: referral.filter((v) => v !== NONE && v !== UNKNOWN),
         symptomIds: symptoms,
+        onsetCauseUnknown: onsetCause.includes(UNKNOWN),
+        referralUnknown: referral.includes(UNKNOWN),
         replaceRecordIds: savedIds.intakeOptions,
       });
       setSavedIds((s) => ({ ...s, intakeOptions: recordIds }));
@@ -469,6 +485,7 @@ export default function PatientIntakeFlow({
       const { responseId } = await savePatientQuestionnaireAction(caseId, "sf36", {
         questionnaireId: sf36.id,
         answers,
+        presentedQuestionIds: usableQuestions.sf36.map((q) => q.id),
         replaceResponseId: savedIds.sf36,
       });
       setSavedIds((s) => ({ ...s, sf36: responseId }));
@@ -476,6 +493,7 @@ export default function PatientIntakeFlow({
       const { responseId } = await savePatientQuestionnaireAction(caseId, "psqi", {
         questionnaireId: psqi.id,
         answers,
+        presentedQuestionIds: usableQuestions.psqi.map((q) => q.id),
         replaceResponseId: savedIds.psqi,
       });
       setSavedIds((s) => ({ ...s, psqi: responseId }));

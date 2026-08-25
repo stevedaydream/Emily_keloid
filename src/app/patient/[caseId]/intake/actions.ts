@@ -7,6 +7,7 @@ import { logAudit } from "@/lib/audit";
 import type { PatientIntakeSegmentKey } from "@/lib/patientIntake";
 import QRCode from "qrcode";
 import { generateBindCode, bindDeepLink, BIND_CODE_TTL_HOURS } from "@/lib/line";
+import { ageFromBirthDate } from "@/lib/dates";
 
 // 病人自助填寫的寫入路徑（決策 2026-07-29）。
 //
@@ -29,6 +30,30 @@ const PRIOR_LABELS: Record<string, string> = {
 };
 const PRIOR_KEYS = Object.keys(PRIOR_LABELS);
 
+/**
+ * 選單類問題（case_intake_option_records）的待補標籤（2026-08-24 補）。
+ *
+ * 這四題原本是整個病人版裡唯一沒有「答不出來就留一筆待補」的地方：跳過不寫紀錄，
+ * 選「我不知道」則在送出前就被 filter 掉——兩者在資料上完全一樣，也沒有任何人被通知。
+ * 個案頁那四區的勾選框長得跟沒填過一模一樣，看起來就像病人的答案掉了。
+ */
+const OPTION_FOLLOWUP_LABELS: Record<string, string> = {
+  visit_reason: "此次就診主要原因",
+  onset_cause: "發生原因",
+  referral_source: "如何得知看診資訊",
+  keloid_symptom: "目前不適症狀",
+};
+
+/** 兩份病人自評量表的待補鍵。逐題各留一筆會有五十幾筆，改成一份一筆、標題帶未答題數。 */
+const QUESTIONNAIRE_FOLLOWUP_KEY: Partial<Record<PatientIntakeSegmentKey, string>> = {
+  sf36: "questionnaire_sf36",
+  psqi: "questionnaire_psqi",
+};
+const QUESTIONNAIRE_FOLLOWUP_LABEL: Partial<Record<PatientIntakeSegmentKey, string>> = {
+  sf36: "SF-36 健康調查簡表",
+  psqi: "匹茲堡睡眠品質量表（PSQI）",
+};
+
 async function operatorName() {
   // 病人自填時 operator cookie 仍是那位交出平板的人員——稽核要記得住負責的人，不是「病人」。
   return (await getCurrentOperator()) ?? "未知操作者";
@@ -45,10 +70,14 @@ async function markSegmentDone(caseId: string, segment: PatientIntakeSegmentKey)
 }
 
 /** reason: unknown=答不知道 / no_detail=答有但沒問細節 / skipped=跳過沒答 */
-async function addFollowups(
-  caseId: string,
-  rows: { fieldKey: string; fieldLabel: string; reason: "unknown" | "no_detail" | "skipped"; patientAnswer?: string }[]
-) {
+type FollowupRow = {
+  fieldKey: string;
+  fieldLabel: string;
+  reason: "unknown" | "no_detail" | "skipped";
+  patientAnswer?: string;
+};
+
+async function addFollowups(caseId: string, rows: FollowupRow[]) {
   if (rows.length === 0) return;
   const supabase = supabaseServer();
   await supabase.from("case_intake_followups").upsert(
@@ -64,22 +93,23 @@ async function addFollowups(
   );
 }
 
+/**
+ * 選單類問題答不出來時的待補（2026-08-24）。有勾任何一項就是有效答案，不進清單；
+ * 選「我不知道」與整題跳過都要留一筆，但理由分開——前者是問過了、後者是根本沒答。
+ */
+function optionFollowups(category: string, optionIds: string[], unknown: boolean): FollowupRow[] {
+  if (optionIds.length > 0) return [];
+  const fieldLabel = OPTION_FOLLOWUP_LABELS[category] ?? category;
+  return unknown
+    ? [{ fieldKey: category, fieldLabel, reason: "unknown", patientAnswer: "不知道" }]
+    : [{ fieldKey: category, fieldLabel, reason: "skipped" }];
+}
+
 /** 這一段重填時，先把上次留下、屬於這一段的待補項目清掉，避免舊的殘留。 */
 async function clearFollowups(caseId: string, fieldKeys: string[]) {
   if (fieldKeys.length === 0) return;
   const supabase = supabaseServer();
   await supabase.from("case_intake_followups").delete().eq("case_id", caseId).in("field_key", fieldKeys);
-}
-
-/** 出生日期換算收案當下的實歲（生日還沒到就減一歲）。`age_at_enrollment` 仍是匯出與分析在用的欄位。 */
-function ageFromBirthDate(birthDate: string): number | null {
-  const m = birthDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return null;
-  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const now = new Date();
-  let age = now.getFullYear() - y;
-  if (now.getMonth() + 1 < mo || (now.getMonth() + 1 === mo && now.getDate() < d)) age -= 1;
-  return Number.isFinite(age) && age >= 0 && age <= 130 ? age : null;
 }
 
 export async function savePatientBasicAction(
@@ -129,7 +159,11 @@ export async function savePatientHistoryAction(
   payload: {
     familyHistory: string[];
     familyHistoryUnknown: boolean;
+    /** 病人明確選了「以上都沒有」。跟「整題跳過」不同：後者不該被寫成「無」（2026-08-24） */
+    familyHistoryNone: boolean;
     visitReasonOptionIds: string[];
+    /** 病人選了「我不知道」。跟跳過一樣不會產生紀錄，但要留下不同的待補理由 */
+    visitReasonUnknown: boolean;
     onsetYear: string | null;
     /** 「以前有沒有為蟹足腫治療過」的總開關。答無／不記得時，四個細項不再逐題問（見下方） */
     priorTreated: Prior | "";
@@ -144,13 +178,23 @@ export async function savePatientHistoryAction(
   const operator = await operatorName();
 
   const update: Record<string, string | null> = {};
-  if (!payload.familyHistoryUnknown) update.family_history = payload.familyHistory.join("、") || "無";
+  // 家族史三種結局要分得開（2026-08-24）：
+  //   勾了病名 → 寫病名 ／ 勾「以上都沒有」→ 寫「無」 ／ 跳過或答不知道 → 不寫欄位，留待補。
+  // 原本是 `join("、") || "無"`，於是「整題跳過」也會被寫成「無」——那是憑空生出來的陰性結果，
+  // 家族史又正好是蟹足腫最重要的體質線索之一。
+  if (payload.familyHistory.length > 0) update.family_history = payload.familyHistory.join("、");
+  else if (payload.familyHistoryNone) update.family_history = "無";
   // 只問到年份就好（月日長輩多半記不得），存成該年 1 月 1 日
   if (payload.onsetYear) update.keloid_onset_date = `${payload.onsetYear}-01-01`;
 
   // 治療史的總開關（2026-08-20 使用者要求）：答「沒有治療過」就不必再逐題問類固醇／中醫／
   // 貼布／放射線——那四題的答案已經被決定了。這個推導放在伺服器端而不是讓畫面補齊，
   // 是因為「病人跳過那四題」跟「病人答無」在 payload 上長得一樣，只有這裡分得出來。
+  //
+  // ⚠️ 2026-08-24：`priorTreated` 沒答（病人跳過那一頁）時走的是最後這條分支，而那四題的畫面
+  // 根本沒出現過，所以 payload.priors 是空物件——底下的迴圈不跑、欄位不寫，連一筆待補都不會產。
+  // 治療史整組靜悄悄地消失。答「有治療過」但四個細項跳過也是同一個洞。
+  // 欄位維持不寫（沒有答案就不該編一個），改成在下面的 addFollowups 補上 `skipped`。
   const effectivePriors: Record<string, Prior> =
     payload.priorTreated === "no"
       ? Object.fromEntries(PRIOR_KEYS.map((k) => [k, "no" as Prior]))
@@ -191,18 +235,34 @@ export async function savePatientHistoryAction(
     "keloid_onset_date",
     "keloid_history_detail",
     "prior_treatment_physician",
+    "visit_reason",
   ]);
 
   await addFollowups(caseId, [
-    // 答「有」→ 病人版沒問日期/次數/劑量，人員要追；答「不知道」→ 也要追；答「無」不進清單
-    ...Object.entries(effectivePriors).flatMap(([key, value]) =>
-      value === "no"
-        ? []
-        : [{ fieldKey: key, fieldLabel: PRIOR_LABELS[key] ?? key, reason: value === "yes" ? ("no_detail" as const) : ("unknown" as const), patientAnswer: PRIOR_TEXT[value] }]
-    ),
+    // 答「有」→ 病人版沒問日期/次數/劑量，人員要追；答「不知道」→ 也要追；答「無」不進清單。
+    // 沒有答案（跳過總開關、或答「有」但細項沒答）→ skipped，同樣要有人去問。
+    ...PRIOR_KEYS.flatMap((key): FollowupRow[] => {
+      const value = effectivePriors[key];
+      const fieldLabel = PRIOR_LABELS[key] ?? key;
+      if (value === "no") return [];
+      if (value === undefined) return [{ fieldKey: key, fieldLabel, reason: "skipped" }];
+      return [
+        {
+          fieldKey: key,
+          fieldLabel,
+          reason: value === "yes" ? ("no_detail" as const) : ("unknown" as const),
+          patientAnswer: PRIOR_TEXT[value],
+        },
+      ];
+    }),
     ...(payload.familyHistoryUnknown
       ? [{ fieldKey: "family_history", fieldLabel: "家族史", reason: "unknown" as const, patientAnswer: "不知道" }]
       : []),
+    // 跳過（沒勾病名、也沒勾「以上都沒有」）
+    ...(!payload.familyHistoryUnknown && payload.familyHistory.length === 0 && !payload.familyHistoryNone
+      ? [{ fieldKey: "family_history", fieldLabel: "家族史", reason: "skipped" as const }]
+      : []),
+    ...optionFollowups("visit_reason", payload.visitReasonOptionIds, payload.visitReasonUnknown),
     ...(payload.onsetYear
       ? []
       : [{ fieldKey: "keloid_onset_date", fieldLabel: "蟹足腫初次發生時間", reason: "unknown" as const, patientAnswer: "不記得" }]),
@@ -228,6 +288,9 @@ export async function savePatientIntakeOptionsAction(
     referralIds: string[];
     /** 目前不適症狀（keloid_symptom）。純主觀症狀，只有病人答得準，2026-08-20 移進病人版。 */
     symptomIds: string[];
+    /** 各題「我不知道」的旗標。症狀題沒有這個選項（不會不舒服要選「無明顯不適」），故只有兩個 */
+    onsetCauseUnknown: boolean;
+    referralUnknown: boolean;
     /** 同 savePatientHistoryAction：回頭改後重存時取代本次先前建立的紀錄 */
     replaceRecordIds?: (string | null)[];
   }
@@ -263,6 +326,14 @@ export async function savePatientIntakeOptionsAction(
     }
   }
 
+  await clearFollowups(caseId, ["onset_cause", "referral_source", "keloid_symptom"]);
+  await addFollowups(caseId, [
+    ...optionFollowups("onset_cause", payload.onsetCauseIds, payload.onsetCauseUnknown),
+    ...optionFollowups("referral_source", payload.referralIds, payload.referralUnknown),
+    // 症狀題沒有「我不知道」，空的就是整題跳過
+    ...optionFollowups("keloid_symptom", payload.symptomIds, false),
+  ]);
+
   await markSegmentDone(caseId, "intake_options");
   await logAudit({
     caseId,
@@ -281,6 +352,12 @@ export async function savePatientQuestionnaireAction(
   payload: {
     questionnaireId: string;
     answers: Record<string, string | string[]>;
+    /**
+     * 這次流程實際顯示給病人看過的題目 id。用來算「該答而沒答」的題數——
+     * 不能直接拿問卷總題數扣，PSQI 有幾題是刻意不問的（5j／11e 的文字說明），
+     * 答「沒有睡伴或室友」時第 11 題那四小題也整組不出現，那些不算漏答。
+     */
+    presentedQuestionIds: string[];
     /** 本次填寫先前送出的那一筆回覆；病人回頭改答案後重存時取代它，不要留下兩份同一份問卷的回覆。
      *  只刪本次自己建立的那一筆，歷史回覆（例如上次回診填的）不受影響。 */
     replaceResponseId?: string | null;
@@ -320,6 +397,24 @@ export async function savePatientQuestionnaireAction(
     }
   }
   if (rows.length > 0) await supabase.from("questionnaire_answers").insert(rows);
+
+  // 漏答的題目要有人知道（2026-08-24）。逐題各留一筆會有五十幾筆待補把清單灌爆，
+  // 所以一份問卷只留一筆、標題帶未答題數；人員點進去重填即可。
+  const followupKey = QUESTIONNAIRE_FOLLOWUP_KEY[segment];
+  if (followupKey) {
+    const answered = new Set(rows.map((r) => r.question_id));
+    const missing = payload.presentedQuestionIds.filter((qid) => !answered.has(qid)).length;
+    await clearFollowups(caseId, [followupKey]);
+    if (missing > 0) {
+      await addFollowups(caseId, [
+        {
+          fieldKey: followupKey,
+          fieldLabel: `${QUESTIONNAIRE_FOLLOWUP_LABEL[segment] ?? segment}（${missing} 題未作答）`,
+          reason: "skipped",
+        },
+      ]);
+    }
+  }
 
   await markSegmentDone(caseId, segment);
   await logAudit({

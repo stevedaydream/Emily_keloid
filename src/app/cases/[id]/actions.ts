@@ -8,6 +8,8 @@ import { withTermGroup } from "@/lib/terms";
 import { generateBindCode, BIND_CODE_TTL_HOURS } from "@/lib/line";
 import { onsetMonthToDate } from "@/lib/onsetMonth";
 import { BIOBANK_ITEM_LABEL, bloodDrawWindows, followupSchedule } from "@/lib/biobank";
+import { ageFromBirthDate } from "@/lib/dates";
+import { resolveFilledFollowups } from "@/lib/intakeFollowups";
 
 /** 伺服器跑 UTC，直接 toISOString() 早上八點前會少一天。日期欄位一律走這支。 */
 function todayInTaipei(): string {
@@ -671,19 +673,33 @@ export async function updateDemographicsAction(formData: FormData) {
   const operator = await operatorOrThrow();
   const supabase = supabaseServer();
 
-  await supabase
-    .from("cases")
-    .update({
-      sex,
-      age_at_enrollment: ageRaw ? Number(ageRaw) : null,
-      family_history: familyHistory,
-      jsw_score: jswScore,
-      phone_number: phoneNumber,
-      birth_date: birthDate,
-      height_cm: heightRaw ? Number(heightRaw) : null,
-      weight_kg: weightRaw ? Number(weightRaw) : null,
-    })
-    .eq("id", caseId);
+  // 有出生日期就以它為準重算實歲（2026-08-24）。原本兩格各自送各自的值，改了生日、
+  // 年齡那格還留著舊數字送回來，匯出與分析吃的正是 age_at_enrollment 那一欄。
+  // 沒有出生日期的個案（舊資料回溯建檔只有年齡）仍照手填的年齡走。
+  const derivedAge = birthDate ? ageFromBirthDate(birthDate) : null;
+  const age = derivedAge ?? (ageRaw ? Number(ageRaw) : null);
+
+  const update = {
+    sex,
+    age_at_enrollment: age,
+    family_history: familyHistory,
+    jsw_score: jswScore,
+    phone_number: phoneNumber,
+    birth_date: birthDate,
+    height_cm: heightRaw ? Number(heightRaw) : null,
+    weight_kg: weightRaw ? Number(weightRaw) : null,
+  };
+  await supabase.from("cases").update(update).eq("id", caseId);
+
+  // 待補清單的 field_key 與欄位名不完全同名（age／height／weight／phone），對照後結案
+  await resolveFilledFollowups(caseId, {
+    sex: update.sex,
+    age: update.birth_date ?? update.age_at_enrollment,
+    height: update.height_cm,
+    weight: update.weight_kg,
+    phone: update.phone_number,
+    family_history: update.family_history,
+  }, operator);
 
   await logAudit({ caseId, operatorName: operator, action: "update_demographics", entity: "cases" });
   revalidatePath(`/cases/${caseId}`);
@@ -761,6 +777,8 @@ export async function updatePriorHistoryAction(formData: FormData) {
   update.keloid_onset_date = onsetMonthToDate(update.keloid_onset_date);
 
   await supabase.from("cases").update(update).eq("id", caseId);
+  // 病人自填時答不出來的那幾格，人員在這裡補完就等於處理完（2026-08-24）
+  await resolveFilledFollowups(caseId, update, operator);
 
   await logAudit({ caseId, operatorName: operator, action: "update_prior_history", entity: "cases" });
   revalidatePath(`/cases/${caseId}`);
@@ -800,6 +818,9 @@ export async function addIntakeOptionRecordAction(formData: FormData) {
       .from("case_intake_option_record_items")
       .insert(optionIds.map((optionId) => ({ record_id: record.id, option_id: optionId })));
   }
+
+  // 選單類的待補（field_key 就是 category）：勾了東西存下去就算補完（2026-08-24）
+  if (optionIds.length > 0) await resolveFilledFollowups(caseId, { [category]: "1" }, operator);
 
   await logAudit({ caseId, operatorName: operator, action: "add_intake_option_record", entity: "case_intake_option_records", entityId: record.id, detail: { category, optionIds } });
   revalidatePath(`/cases/${caseId}`);

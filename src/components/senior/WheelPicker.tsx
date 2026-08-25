@@ -16,14 +16,31 @@ function Column({
   value,
   onChange,
   ariaLabel,
+  unset = false,
 }: {
   items: { value: string; label: string }[];
   value: string;
   onChange: (v: string) => void;
   ariaLabel: string;
+  /**
+   * 還沒選過（外層傳進來的原始值是空的，`value` 只是用來決定捲軸停在哪的起始位置）。
+   *
+   * 2026-08-24：這一格原本會把起始位置畫成「已選中」的樣子——身高停在 160 並高亮，
+   * 病人以為答了、按下一步，實際上父層 state 還是空字串，資料存成 null。
+   * 實測那筆測試資料的身高、體重、PSQI 第 1 題（上床時間）與第 3 題（起床時間）
+   * 全都是這樣掉的，而 PSQI 少了那兩題就算不出睡眠效率，整份總分變成「資料不足」。
+   *
+   * 不改成「掛載時直接把起始值寫回去」是刻意的：那等於幫病人答了 160 公分。
+   * 誠實的做法是畫面上講清楚還沒選，滑動或點一下才算數。
+   */
+  unset?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 這個履帶被「人」動過了嗎。下面的 effect 會用 scrollTo 把起始位置捲到中間，
+  // 那也會觸發 onScroll——沒有這個旗標的話，還沒選過的履帶一掛載就會自己回報起始值，
+  // 等於系統幫病人答了 160 公分，正是這次要修掉的行為。
+  const interacted = useRef(false);
 
   const index = Math.max(0, items.findIndex((i) => i.value === value));
 
@@ -43,18 +60,35 @@ function Column({
     settleTimer.current = setTimeout(() => {
       const i = Math.round(el.scrollTop / ITEM_HEIGHT);
       const item = items[Math.min(items.length - 1, Math.max(0, i))];
-      if (item && item.value !== value) onChange(item.value);
+      // 還沒選過時，只要人動過就一律回報，即使停回起始那一格——滑出去又滑回 160
+      // 也是「病人選了 160」，拿 item.value !== value 擋掉會讓那個動作靜悄悄地不算數。
+      if (item && (unset ? interacted.current : item.value !== value)) onChange(item.value);
     }, 120);
   }
 
   return (
-    <div className="relative flex-1" style={{ height: ITEM_HEIGHT * VISIBLE }}>
-      {/* 中間那一格的框，讓「現在選的是這個」看得出來 */}
+    // 還沒選過時多留 22px 給下方的提示。捲動視窗本身仍固定 ITEM_HEIGHT × VISIBLE，
+    // 不能讓它跟著長高——snap 的對齊數學是拿 snapport 中心算的，容器一變高就整排偏半格。
+    <div className="relative flex-1" style={{ height: ITEM_HEIGHT * VISIBLE + (unset ? 22 : 0) }}>
+      {/* 中間那一格的框，讓「現在選的是這個」看得出來。
+          還沒選過時改成虛線＋淡色，並在下方壓一行提示——實線框配著一個數字
+          就是「已經選好了」的意思，而那時候還沒有任何值。 */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 z-10 rounded-lg border-2 border-brand-500"
+        className={`pointer-events-none absolute inset-x-0 z-10 rounded-lg border-2 ${
+          unset ? "border-dashed border-brand-300" : "border-brand-500"
+        }`}
         style={{ top: ITEM_HEIGHT, height: ITEM_HEIGHT }}
       />
+      {unset && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 z-10 text-center text-sm text-brand-600"
+          style={{ top: ITEM_HEIGHT * VISIBLE + 2 }}
+        >
+          ↑↓ 滑動或點一下選擇
+        </div>
+      )}
       {/* 對齊的數學：容器高 = ITEM_HEIGHT × VISIBLE，內容 = 上墊片 + 各項目 + 下墊片。
           snap-center 把項目中心對到 snapport 中心（= 容器中心 84），項目 k 的中心在
           內容座標 56 + k×56 + 28，所以 scrollTop = k×56——正好跟 effect 的 scrollTo
@@ -64,10 +98,16 @@ function Column({
       <div
         ref={ref}
         onScroll={handleScroll}
+        // 「人動過了」的四種入口：手指、滑鼠滾輪、鍵盤、拖曳捲軸。
+        onPointerDown={() => (interacted.current = true)}
+        onTouchStart={() => (interacted.current = true)}
+        onWheel={() => (interacted.current = true)}
+        onKeyDown={() => (interacted.current = true)}
         role="listbox"
         aria-label={ariaLabel}
         tabIndex={0}
-        className="h-full snap-y snap-mandatory overflow-y-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="snap-y snap-mandatory overflow-y-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        style={{ height: ITEM_HEIGHT * VISIBLE }}
       >
         {/* 上下各墊一格，第一個與最後一個項目才捲得到中間 */}
         <div style={{ height: ITEM_HEIGHT }} aria-hidden />
@@ -75,10 +115,10 @@ function Column({
           <div
             key={item.value}
             role="option"
-            aria-selected={item.value === value}
+            aria-selected={!unset && item.value === value}
             onClick={() => onChange(item.value)}
             className={`flex snap-center items-center justify-center text-xl tabular-nums ${
-              item.value === value ? "font-semibold text-ink" : "text-ink/45"
+              !unset && item.value === value ? "font-semibold text-ink" : "text-ink/45"
             }`}
             style={{ height: ITEM_HEIGHT }}
           >
@@ -108,11 +148,14 @@ export function TimeWheel({ value, onChange }: { value: string; onChange: (v: st
   const minutes = range(0, 55, 5).map((m) => ({ value: pad2(m), label: `${pad2(m)} 分` }));
   const currentH = hours.some((h) => h.value === hh) ? hh : "22";
   const currentM = minutes.some((m) => m.value === mm) ? mm : "00";
+  // 兩欄共用一個 unset：只滑了小時就送出 `23:00`（分鐘取起始值），對 PSQI 的
+  // 就寢/起床時間夠用，也比整格不算數好——scoring 的 parseClockMinutes 要的就是 HH:MM。
+  const unset = !/^\d{2}:\d{2}$/.test(value);
 
   return (
     <div className="flex gap-3">
-      <Column items={hours} value={currentH} onChange={(h) => onChange(`${h}:${currentM}`)} ariaLabel="小時" />
-      <Column items={minutes} value={currentM} onChange={(m) => onChange(`${currentH}:${m}`)} ariaLabel="分鐘" />
+      <Column items={hours} value={currentH} onChange={(h) => onChange(`${h}:${currentM}`)} ariaLabel="小時" unset={unset} />
+      <Column items={minutes} value={currentM} onChange={(m) => onChange(`${currentH}:${m}`)} ariaLabel="分鐘" unset={unset} />
     </div>
   );
 }
@@ -123,10 +166,11 @@ export function HoursWheel({ value, onChange }: { value: string; onChange: (v: s
     const h = half / 2;
     return { value: String(h), label: `${h} 小時` };
   });
-  const current = items.some((i) => i.value === value) ? value : "6";
+  const unset = !items.some((i) => i.value === value);
+  const current = unset ? "6" : value;
   return (
     <div className="flex">
-      <Column items={items} value={current} onChange={onChange} ariaLabel="睡眠時數" />
+      <Column items={items} value={current} onChange={onChange} ariaLabel="睡眠時數" unset={unset} />
     </div>
   );
 }
@@ -137,10 +181,11 @@ export function YearWheel({ value, onChange }: { value: string; onChange: (v: st
   const items = range(thisYear - 80, thisYear)
     .reverse()
     .map((y) => ({ value: String(y), label: `${y} 年（民國 ${y - 1911}）` }));
-  const current = items.some((i) => i.value === value) ? value : String(thisYear);
+  const unset = !items.some((i) => i.value === value);
+  const current = unset ? String(thisYear) : value;
   return (
     <div className="flex">
-      <Column items={items} value={current} onChange={onChange} ariaLabel="年份" />
+      <Column items={items} value={current} onChange={onChange} ariaLabel="年份" unset={unset} />
     </div>
   );
 }
@@ -151,10 +196,11 @@ export function YearWheel({ value, onChange }: { value: string; onChange: (v: st
  */
 export function HeightWheel({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const items = range(120, 210).map((h) => ({ value: String(h), label: `${h} 公分` }));
-  const current = items.some((i) => i.value === value) ? value : "160";
+  const unset = !items.some((i) => i.value === value);
+  const current = unset ? "160" : value;
   return (
     <div className="flex">
-      <Column items={items} value={current} onChange={onChange} ariaLabel="身高" />
+      <Column items={items} value={current} onChange={onChange} ariaLabel="身高" unset={unset} />
     </div>
   );
 }
@@ -162,10 +208,11 @@ export function HeightWheel({ value, onChange }: { value: string; onChange: (v: 
 /** 體重（kg）。範圍 30-150，1kg 一格，預設停在 60。 */
 export function WeightWheel({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const items = range(30, 150).map((w) => ({ value: String(w), label: `${w} 公斤` }));
-  const current = items.some((i) => i.value === value) ? value : "60";
+  const unset = !items.some((i) => i.value === value);
+  const current = unset ? "60" : value;
   return (
     <div className="flex">
-      <Column items={items} value={current} onChange={onChange} ariaLabel="體重" />
+      <Column items={items} value={current} onChange={onChange} ariaLabel="體重" unset={unset} />
     </div>
   );
 }

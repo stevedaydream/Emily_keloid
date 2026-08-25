@@ -92,6 +92,14 @@ const FOLLOWUP_ANCHOR: Record<string, string | undefined> = {
   prior_tcm_treatment: "field-prior_tcm_treatment",
   prior_ogawa_patch: "field-prior_ogawa_patch",
   prior_radiation_treatment: "field-prior_radiation_treatment",
+  // 選單類（2026-08-24 起跳過／答不知道也會留一筆待補）。field_key 就是 category。
+  visit_reason: "field-intake-visit_reason",
+  onset_cause: "field-intake-onset_cause",
+  referral_source: "field-intake-referral_source",
+  keloid_symptom: "field-intake-keloid_symptom",
+  // 病人自評量表漏答：一份一筆，點過去是問卷區塊（要重填整份，不是補某一格）
+  questionnaire_sf36: "section-responses",
+  questionnaire_psqi: "section-responses",
 };
 
 /** 從待補清單點過來時，`:target` 讓那一格亮一圈——捲到位還要自己找是哪一格就白做了。 */
@@ -229,7 +237,9 @@ export default async function CaseDetailPage({
     supabase.from("case_intake_option_lists").select("id, category, label").eq("active", true).order("sort_order"),
     supabase
       .from("case_intake_option_records")
-      .select("id, category, recorded_at, recorded_by, notes, case_intake_option_record_items(case_intake_option_lists(label))")
+      // option_id 是給表單帶入「目前值」用的（2026-08-24）：勾選框原本永遠空白，
+      // 病人在平板上選過的答案只出現在下面那行灰字歷次紀錄，看起來像是整題沒填到。
+      .select("id, category, recorded_at, recorded_by, notes, case_intake_option_record_items(option_id, case_intake_option_lists(label))")
       .eq("case_id", id)
       .order("recorded_at", { ascending: false }),
     supabase.from("lab_marker_definitions").select("id, display_name, unit").eq("active", true).order("sort_order"),
@@ -297,6 +307,23 @@ export default async function CaseDetailPage({
   const familyDiseaseOptions = (intakeOptions ?? []).filter((o) => o.category === "family_disease");
   const keloidHistoryTypeOptions = (intakeOptions ?? []).filter((o) => o.category === "keloid_history_type");
   const keloidHistoryRecords = (intakeRecords ?? []).filter((r) => r.category === "keloid_history_type");
+
+  /**
+   * 每一類選單的「目前值」＝最新一筆紀錄勾了哪些（intakeRecords 已依 recorded_at 由新到舊排序）。
+   *
+   * 這幾類是逐筆累加的歷史（append-only），所以最新一筆就是現況，而修改現況＝再存一筆新的。
+   * 2026-08-24 之前表單一律空白，於是病人自填的答案在個案頁上看起來像沒填。
+   */
+  function latestOptionRecord(category: string) {
+    const latest = (intakeRecords ?? []).find((r) => r.category === category);
+    if (!latest) return { recordId: null as string | null, optionIds: [] as string[] };
+    return {
+      recordId: latest.id as string,
+      optionIds: (latest.case_intake_option_record_items ?? [])
+        .map((it: { option_id?: string | null }) => it.option_id)
+        .filter((v): v is string => Boolean(v)),
+    };
+  }
 
   function extractAnswers(r: {
     questionnaire_answers?: { answer_value: unknown; questionnaire_questions: { order_no?: number } | { order_no?: number }[] | null }[];
@@ -761,13 +788,21 @@ export default async function CaseDetailPage({
             Keloid history（勾選病史類型，並填寫部位/時間/治療等詳細內容）
           </label>
           <div className="mt-1">
-            <IntakeOptionForm
-              caseId={id}
-              category="keloid_history_type"
-              options={keloidHistoryTypeOptions}
-              alwaysShowNotes
-              notesPlaceholder="請描述部位、時間、治療方式等詳細內容"
-            />
+            {(() => {
+              const current = latestOptionRecord("keloid_history_type");
+              return (
+                <IntakeOptionForm
+                  // key＝最新一筆紀錄的 id：存檔後帶入值會變，要讓表單重新掛載才吃得到新的預設勾選
+                  key={current.recordId ?? "empty"}
+                  caseId={id}
+                  category="keloid_history_type"
+                  options={keloidHistoryTypeOptions}
+                  defaultOptionIds={current.optionIds}
+                  alwaysShowNotes
+                  notesPlaceholder="請描述部位、時間、治療方式等詳細內容"
+                />
+              );
+            })()}
           </div>
           <ul className="space-y-1">
             <CollapsedList listClassName="space-y-1" label="病史紀錄">
@@ -856,18 +891,24 @@ export default async function CaseDetailPage({
       <section id="section-intake" data-nav-section data-nav-label="發生原因與看診來源" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           就診原因 / 發生原因 / 得知看診資訊 / 目前症狀
-          <InfoTooltip text="四類選單皆為後台可維護清單（非單純勾選），可複選並保留歷次紀錄。「目前不適症狀」的『無明顯不適』與其他選項互斥。衛教內容不在此記錄，改由後台「衛教資料庫」維護供 LINE 衛教機器人參考。" />
+          <InfoTooltip text="四類選單皆為後台可維護清單（非單純勾選），可複選並保留歷次紀錄。勾選框會帶入最新一筆的內容（＝目前值），改完儲存會再存一筆新紀錄，歷次紀錄不會被蓋掉。「目前不適症狀」的『無明顯不適』與其他選項互斥。衛教內容不在此記錄，改由後台「衛教資料庫」維護供 LINE 衛教機器人參考。" />
+          {/* 「此次就診主要原因」是病人自填 history 段的最後一題，其餘三類在 intake_options 段 */}
+          <PatientFilledBadge entry={patientIntakeBySegment.get("intake_options")} />
         </h2>
         {INTAKE_CATEGORIES.map((cat) => {
           const options = (intakeOptions ?? []).filter((o) => o.category === cat.key);
           const records = (intakeRecords ?? []).filter((r) => r.category === cat.key);
+          const current = latestOptionRecord(cat.key);
           return (
-            <div key={cat.key} className="mb-4 last:mb-0">
+            // 待補清單點過來時落在這一區塊（field_key 就是 category，見 FOLLOWUP_ANCHOR）
+            <div key={cat.key} id={`field-intake-${cat.key}`} className={`mb-4 last:mb-0 ${FIELD_ANCHOR}`}>
               <h3 className="mb-1 text-xs font-semibold text-ink/50">{cat.label}</h3>
               <IntakeOptionForm
+                key={current.recordId ?? "empty"}
                 caseId={id}
                 category={cat.key}
                 options={options}
+                defaultOptionIds={current.optionIds}
                 exclusiveLabel={EXCLUSIVE_OPTION_BY_CATEGORY[cat.key]}
               />
               <ul className="space-y-1">
@@ -1425,7 +1466,13 @@ export default async function CaseDetailPage({
               <li key={r.id} className="rounded-md border border-brand-50 p-2 text-sm text-ink/70">
                 <div>
                   {new Date(r.submitted_at).toLocaleString("zh-TW")} ・ {q?.name} ・ 填寫人：
-                  {r.submitted_via === "line_sim" ? "舊LINE路徑（已停用）" : "診間人員"}
+                  {/* submitted_via 分得出 patient／staff，畫面原本一律顯示「診間人員」，
+                      等於把「這份是病人自己答的」這件事抹掉——SF-36／PSQI 全都是病人自填。 */}
+                  {r.submitted_via === "patient"
+                    ? "病人自填"
+                    : r.submitted_via === "line_sim"
+                    ? "舊LINE路徑（已停用）"
+                    : "診間人員"}
                 </div>
                 {isSF36 && (
                   <div className="mt-1 flex flex-wrap gap-2">

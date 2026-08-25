@@ -20,6 +20,23 @@ export function addMonths(iso: string, months: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * 出生日期換算今天的實歲（生日還沒到就減一歲）。`cases.age_at_enrollment` 仍是匯出與分析吃的欄位，
+ * 所以任何寫 birth_date 的地方都要順手把它算出來。
+ *
+ * 2026-08-25 從 patient/[caseId]/intake/actions.ts 移到這裡共用：個案頁改出生日期時
+ * 年齡原本不會跟著動，於是「改了生日、忘了改年齡」會讓匯出檔留著舊年齡。
+ */
+export function ageFromBirthDate(birthDate: string): number | null {
+  const m = birthDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const now = new Date();
+  let age = now.getFullYear() - y;
+  if (now.getMonth() + 1 < mo || (now.getMonth() + 1 === mo && now.getDate() < d)) age -= 1;
+  return Number.isFinite(age) && age >= 0 && age <= 130 ? age : null;
+}
+
 /** b − a 的天數（兩者皆為 ISO 日期）。 */
 export function daysApart(a: string, b: string): number {
   const t1 = new Date(`${a}T00:00:00Z`).getTime();
