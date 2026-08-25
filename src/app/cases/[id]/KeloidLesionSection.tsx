@@ -2,12 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import BodyDiagram from "@/components/BodyDiagram";
 import SubmitButton from "@/components/ui/SubmitButton";
 import DeletePhotoButton from "./DeletePhotoButton";
 import { DOSE_CATEGORY_LABEL, BODY_VIEW_LABEL, type BodyView } from "@/lib/bodyZones";
 import {
-  addKeloidLesionAction,
   deleteKeloidLesionAction,
   moveKeloidLesionAction,
   setPrimaryLesionAction,
@@ -87,29 +85,19 @@ export default function KeloidLesionSection({
   caseId,
   lesions,
   zones,
-  sex,
   photosByLesion,
   unassignedPhotos = [],
 }: {
   caseId: string;
   lesions: Lesion[];
   zones: Zone[];
-  sex?: string | null;
   /** 各病灶的照片（key = lesion id），縮圖直接顯示在該部位底下 */
   photosByLesion: Record<string, LesionPhoto[]>;
   /** 尚未掛到任何部位的舊照片（新拍的照片一律會掛到部位，見 uploadPhotoAction） */
   unassignedPhotos?: LesionPhoto[];
 }) {
-  // 人形圖點選的部位：同時決定新病灶的名稱（可再改）與部位分類（決定放療劑量方案）
-  const [pickedZone, setPickedZone] = useState<Zone | null>(null);
-  const [siteName, setSiteName] = useState("");
   // 目前正在就地編輯（名稱／尺寸／備註）的部位 id
   const [editingId, setEditingId] = useState<string | null>(null);
-
-  function pickZone(z: Zone) {
-    setPickedZone(z);
-    setSiteName(z.display_name);
-  }
 
   const zonesById = new Map(zones.map((z) => [z.id, z]));
 
@@ -119,7 +107,10 @@ export default function KeloidLesionSection({
         蟹足腫部位（可多處，依序編號 1、2…，各自可填描述與尺寸）
       </label>
       <p className="mt-0.5 text-[11px] text-ink/40">
-        每個部位各自的分類決定它自己的放射治療劑量方案；拍照時也可直接點選對應部位。
+        {/* 2026-08-25：新增部位的人形圖與表單原本就長在這一段底下，現在整個收進「建立部位」
+            那顆按鈕（＝拍照流程）——建立部位本來就會拍照，兩個入口只是讓人猶豫該用哪個。 */}
+        每個部位各自的分類決定它自己的放射治療劑量方案。要新增部位請按上方「建立部位」：
+        在人形圖點下去就是相機，拍完照片自動掛到該部位。
       </p>
 
       {/* 排序有臨床意義（助理 2026-08-13 D10）：嚴重及需開刀的放第一個，匯出時「部位1」就是它。 */}
@@ -318,7 +309,9 @@ export default function KeloidLesionSection({
             </li>
           );
         })}
-        {lesions.length === 0 && <li className="text-xs text-ink/40">尚無病灶紀錄，請在下方人形圖點選部位新增</li>}
+        {lesions.length === 0 && (
+          <li className="text-xs text-ink/40">尚無病灶紀錄，請按右上角「建立部位」，在人形圖點選部位後拍照即可建立。</li>
+        )}
         {unassignedPhotos.length > 0 && (
           <li className="rounded-md border border-dashed border-amber-200 px-3 py-1.5 text-sm">
             <span className="text-xs text-amber-700">
@@ -329,59 +322,6 @@ export default function KeloidLesionSection({
         )}
       </ul>
 
-      <div className="mt-3 space-y-2">
-        <BodyDiagram zones={zones} currentZoneKey={pickedZone?.zone_key} onSelect={pickZone} sex={sex} />
-
-        <form action={addKeloidLesionAction} className="flex flex-wrap items-end gap-2 rounded-md border border-brand-100 p-2">
-          <input type="hidden" name="case_id" value={caseId} />
-          <input type="hidden" name="body_part_zone_id" value={pickedZone?.id ?? ""} />
-          <div>
-            <label className="block text-[11px] text-ink/50">
-              部位名稱{pickedZone && <span className="ml-1 text-brand-700">（{DOSE_CATEGORY_LABEL[pickedZone.dose_category]}）</span>}
-            </label>
-            <input
-              name="body_site"
-              required
-              value={siteName}
-              onChange={(e) => setSiteName(e.target.value)}
-              placeholder="請先在上方人形圖點選部位"
-              className="mt-0.5 w-32 rounded-md border border-brand-200 px-1.5 py-1 text-xs"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] text-ink/50">長 cm</label>
-            <input name="length_cm" type="number" step="0.1" className="mt-0.5 w-16 rounded-md border border-brand-200 px-1.5 py-1 text-xs" />
-          </div>
-          <div>
-            <label className="block text-[11px] text-ink/50">寬 cm</label>
-            <input name="width_cm" type="number" step="0.1" className="mt-0.5 w-16 rounded-md border border-brand-200 px-1.5 py-1 text-xs" />
-          </div>
-          <div>
-            <label className="block text-[11px] text-ink/50">高 cm</label>
-            <input name="height_cm" type="number" step="0.1" className="mt-0.5 w-16 rounded-md border border-brand-200 px-1.5 py-1 text-xs" />
-          </div>
-          <div className="min-w-[100px] flex-1">
-            <label className="block text-[11px] text-ink/50">備註</label>
-            <input name="note" className="mt-0.5 w-full rounded-md border border-brand-200 px-1.5 py-1 text-xs" />
-          </div>
-          <SubmitButton variant="outline" size="sm" pendingText="新增中…">
-            ＋ 新增病灶
-          </SubmitButton>
-          {/* 點了人形圖就能直接去拍這個部位：拍照頁會跳到該部位的相機，
-              上傳時自動對應（或建立）這個部位，照片一定掛得上部位。 */}
-          {pickedZone && (
-            <Link
-              href={`/patient/${caseId}/photo?zone_key=${pickedZone.zone_key}`}
-              className="whitespace-nowrap rounded border border-brand-200 px-2 py-1 text-xs text-brand-700 hover:bg-brand-50"
-            >
-              📷 直接拍「{pickedZone.display_name}」
-            </Link>
-          )}
-        </form>
-        <p className="text-[11px] text-ink/40">
-          部位名稱預設帶入人形圖區塊名稱，可再改成更精確的描述（例：「耳」改成「左耳垂」），部位分類仍沿用點選的區塊。
-        </p>
-      </div>
     </div>
   );
 }

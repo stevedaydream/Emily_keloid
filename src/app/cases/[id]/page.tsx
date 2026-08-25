@@ -826,20 +826,21 @@ export default async function CaseDetailPage({
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-semibold text-ink/60">
               蟹足腫部位與大小
-              <InfoTooltip text="在人形圖點選部位即可帶入病灶部位與劑量分類。每個部位各自跑自己的放射治療排程（胸/肩胛區18Gy×3、耳8Gy×1、其他部位15Gy×2）。" />
+              <InfoTooltip text="按「建立部位」會開啟人形圖：點下部位就是相機，拍完照片自動建立該部位並帶入劑量分類。每個部位各自跑自己的放射治療排程（胸/肩胛區18Gy×3、耳8Gy×1、其他部位15Gy×2）。" />
             </span>
+            {/* 2026-08-25：原本這顆叫「立即拍照」，旁邊另有一塊常駐的人形圖＋新增病灶表單。
+                建立部位本來就會拍照，兩個入口只是讓人猶豫該用哪個，所以留這一條並改名。 */}
             <Link
               href={`/patient/${id}/photo`}
               className="whitespace-nowrap rounded-md bg-brand-700 px-3 py-1.5 text-xs text-white hover:bg-brand-800"
             >
-              立即拍照
+              ＋ 建立部位（拍照）
             </Link>
           </div>
           <KeloidLesionSection
             caseId={id}
             lesions={lesionList}
-            zones={bodyZones ?? []}
-            sex={caseRow.sex}
+            zones={bodyZones ?? []}
             photosByLesion={photosByLesion}
             unassignedPhotos={unassignedPhotos}
           />
