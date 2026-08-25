@@ -253,8 +253,10 @@ const OPTION_CATEGORY_LABEL: Record<string, string> = {
   onset_cause: "發生原因 (KC)",
   keloid_symptom: "目前不適症狀 (Keloid_symptom)",
   symptom_change: "症狀變化 (FW_k_symptom)",
-  // 下面兩類部長的 4 張主表沒有欄位，資料放在「收案選項紀錄」附表
-  visit_reason: "此次就診主要原因（見「收案選項紀錄」附表）",
+  // visit_reason 在 Basic Info. 有對應欄位（Primary_Visit_Reason），主表就填碼；
+  // 這裡列出來是為了讓「收案選項紀錄」附表也看得到逐筆的選項文字與時間。
+  visit_reason: "此次就診主要原因 (Primary_Visit_Reason)",
+  // referral_source 部長的 4 張主表沒有欄位，只在「收案選項紀錄」附表
   referral_source: "如何得知看診資訊（見「收案選項紀錄」附表）",
 };
 
