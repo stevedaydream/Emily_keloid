@@ -170,6 +170,18 @@ export async function syncVaultIfUnlocked(
     if (!existing) return { status: "failed", message: "雲端還沒有保管庫，請先建立" };
     const stale = staleKeyMessage(existing, held);
     if (stale) return { status: "failed", message: stale };
+
+    // ⚠️ 不准用「空的」蓋掉「有內容的」（2026-08-25）。
+    // 這支是拿整份本機 CSV 覆蓋雲端，而本機 CSV 可能是剛建立的空檔、或這台裝置根本讀不到內容。
+    // 實際踩到過：手機端每收一筆案就把 0 筆的 CSV 整份蓋回去，保管庫因此一直是 0 筆。
+    // 覆蓋是不可逆的（舊內容要靠版本快照才救得回），所以寧可擋下來要求明確操作。
+    if (rows.length === 0 && existing.row_count > 0) {
+      return {
+        status: "failed",
+        message: `本機對照表讀到 0 筆，若寫上去會清空雲端現有的 ${existing.row_count} 筆，已停止。請確認本機對照表檔案選對了。`,
+      };
+    }
+
     const content = await encryptRowsWithDek(rows, held.key);
     const result = await saveVaultAction(v2Payload(existing, content));
     if (!result.ok) return { status: "failed", message: result.message };

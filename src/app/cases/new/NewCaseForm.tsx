@@ -144,8 +144,9 @@ export default function NewCaseForm({
 
   async function retryPendingMapping() {
     if (!pendingMapping) return;
-    // 平板：重試寫保管庫（沒有本機檔案可用）
-    if (!supported) {
+    // 保管庫是正本：只要解鎖就先寫它，跟這台裝置支不支援本機檔案無關
+    // （2026-08-25 修正，理由同 handleSubmit 裡那段註解）。
+    if (vaultUnlocked) {
       const r = await appendRowToVault({
         mrn: pendingMapping.mrn,
         research_id: pendingMapping.researchId,
@@ -154,7 +155,7 @@ export default function NewCaseForm({
         name: pendingMapping.name,
       });
       if (r.status !== "saved") {
-        setError(r.message ?? "保管庫仍然鎖定，請先到「病歷號對照維護」解鎖");
+        setError(r.message ?? "寫入保管庫失敗");
         return;
       }
       const created = { caseId: pendingMapping.caseId, researchId: pendingMapping.researchId };
@@ -162,6 +163,10 @@ export default function NewCaseForm({
       setPendingMapping(null);
       setError(null);
       finishCreate(created);
+      return;
+    }
+    if (!supported) {
+      setError("保管庫未解鎖，且這台裝置沒有本機對照表可寫。請先到「病歷號對照維護」解鎖保管庫。");
       return;
     }
     if (!fileHandle) return;
@@ -218,16 +223,26 @@ export default function NewCaseForm({
       if (trimmedMrn || trimmedName) {
         if (!supported && !vaultUnlocked) {
           throw new Error(
-            "這台裝置沒有 File System Access（手機與平板一律沒有），要記錄病歷號/姓名得改用雲端保管庫，但它目前是鎖住的。請到「病歷號對照維護」輸入通行碼解鎖（解鎖後 30 天內不用再打），或先把這兩格留空、之後再補對照。"
+            "這台裝置沒有 File System Access，要記錄病歷號/姓名得改用雲端保管庫，但它目前是鎖住的。請到「病歷號對照維護」輸入通行碼解鎖（解鎖後 30 天內不用再打），或先把這兩格留空、之後再補對照。"
           );
         }
-        if (supported) {
+        if (supported && !vaultUnlocked) {
+          // 只有本機檔案這一條路，所以檔案與權限一定要先拿到，拿不到就不能往下走
           if (!handle) {
             handle = await pickMappingFile();
             setFileHandle(handle);
           }
           const ok = await requestHandlePermission(handle);
           if (!ok) throw new Error("本機對照表檔案的存取權限被拒絕，請重新選擇檔案");
+        } else if (supported) {
+          // 保管庫已解鎖＝正本有地方放，本機 CSV 只是備份。
+          // 這時候**不要**跳檔案選擇器、也不要因為權限被拒就整筆擋下來
+          // （2026-08-25：使用者的 Android Chrome 宣稱支援 File System Access，
+          //  但權限與寫入都不穩，原本會讓整個收案卡在這裡）。
+          if (handle) {
+            const ok = await requestHandlePermission(handle).catch(() => false);
+            if (!ok) handle = null;
+          }
         }
       }
 
@@ -262,45 +277,55 @@ export default function NewCaseForm({
 
       const { caseId, researchId } = await createCaseAction(formData);
 
-      // 平板：寫進保管庫。失敗時個案已經建好了，同樣保留下來讓使用者重試。
-      if ((trimmedMrn || trimmedName) && !supported) {
-        const r = await appendRowToVault({
-          mrn: trimmedMrn,
-          research_id: researchId,
-          case_id: caseId,
-          created_at: new Date().toISOString(),
-          name: trimmedName,
-        });
-        if (r.status === "saved") {
-          setVaultSync("synced");
-        } else {
-          setPendingMapping({ caseId, researchId, mrn: trimmedMrn, name: trimmedName });
-          setError(
-            `個案已建立成功（研究編號：${researchId}），但對照寫入保管庫失敗：${
-              r.message ?? "保管庫已鎖定"
-            }。請解鎖後再試，或自行記下這筆對應。`
-          );
-          return;
-        }
-      }
+      // ── 對照要寫到哪裡（2026-08-25 修正）────────────────────────
+      //
+      // 原本是二選一：`!supported` 才寫保管庫，`supported` 就只寫本機 CSV，保管庫靠背景
+      // 把整份 CSV 重傳上去。這在「瀏覽器說支援 File System Access、實際上寫不進去」的
+      // 裝置上會整組落空——使用者的 Android Chrome 正是這種：`isFileSystemAccessSupported()`
+      // 回 true，於是走本機那條，而背景同步再把（空的）CSV 整份蓋回雲端，
+      // 結果保管庫被寫成 0 筆，收案收了三筆對照表還是空的。
+      //
+      // 改成：**保管庫是正本（決策 2026-08-20），只要解鎖就一定直接寫進去**，
+      // 跟這台裝置支不支援本機檔案無關；本機 CSV 有就順便寫一份當備份，寫不進去也不擋。
+      let mappingSaved = false;
+      const mappingRow = {
+        mrn: trimmedMrn,
+        research_id: researchId,
+        case_id: caseId,
+        created_at: new Date().toISOString(),
+        name: trimmedName,
+      };
+      let vaultMessage: string | null = null;
 
-      if ((trimmedMrn || trimmedName) && supported && handle) {
-        try {
-          await appendMappingRow(handle, {
-            mrn: trimmedMrn,
-            research_id: researchId,
-            case_id: caseId,
-            created_at: new Date().toISOString(),
-            name: trimmedName,
-          });
-          syncVaultInBackground(handle);
-        } catch (err) {
-          // 個案已經建立成功，只是本機寫入失敗——保留下來讓使用者重試，不要憑空遺失這筆對應。
+      if (trimmedMrn || trimmedName) {
+        if (vaultUnlocked) {
+          const r = await appendRowToVault(mappingRow);
+          if (r.status === "saved") {
+            setVaultSync("synced");
+            mappingSaved = true;
+          } else {
+            vaultMessage = r.message ?? "保管庫已鎖定";
+            setVaultSync(r.status === "locked" ? "locked" : "failed");
+            setVaultSyncMsg(vaultMessage);
+          }
+        }
+
+        if (supported && handle) {
+          try {
+            await appendMappingRow(handle, mappingRow);
+            mappingSaved = true;
+          } catch (err) {
+            // 本機寫不進去不再是致命錯誤——保管庫才是正本。只有兩邊都失敗才擋。
+            vaultMessage = vaultMessage ?? (err instanceof Error ? err.message : "本機對照表寫入失敗");
+          }
+        }
+
+        if (!mappingSaved) {
           setPendingMapping({ caseId, researchId, mrn: trimmedMrn, name: trimmedName });
           setError(
-            `個案已建立成功（研究編號：${researchId}），但病歷號對照表寫入失敗：${
-              err instanceof Error ? err.message : "未知錯誤"
-            }。請按下方「重試寫入」，或自行手動記錄這筆對應。`
+            `個案已建立成功（研究編號：${researchId}），但病歷號對照沒有寫進任何地方：${
+              vaultMessage ?? "保管庫未解鎖，且這台裝置沒有可寫入的本機對照表"
+            }。請到「病歷號對照維護」解鎖保管庫後按下方「重試寫入」，或先自行記下這筆對應。`
           );
           return;
         }
