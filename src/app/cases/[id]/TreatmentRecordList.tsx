@@ -53,32 +53,39 @@ export default function TreatmentRecordList({
         const values = r.field_values ?? {};
         return (
           <li key={r.id} className="rounded-md border border-brand-50 px-3 py-1.5">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 break-words text-sm text-ink/70">
-              <span className="font-medium">{r.treatment_date}</span>
-              <span>・ {r.typeName}</span>
-              {r.body_site && (
-                <span className="rounded bg-brand-50 px-1.5 py-0.5 text-xs text-brand-800">部位：{r.body_site}</span>
-              )}
-              <span className="min-w-0 flex-1">
-                {r.free_text || Object.entries(values).map(([k, v]) => `${k}: ${v}`).join(", ")}
-              </span>
-              <span className="text-xs text-ink/40">記錄人：{r.recorded_by}</span>
-              {r.recurrence_observed && (
-                <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">
-                  復發：{r.recurrence_description || "（未填情形）"}
-                </span>
-              )}
-              {r.blood_drawn && (
-                <span className="rounded bg-sky-100 px-1.5 py-0.5 text-xs text-sky-700">
-                  抽血{r.blood_drawn_note ? `：${r.blood_drawn_note}` : ""}
-                </span>
-              )}
-              {r.symptom_change_option_id && (
-                <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-700">
-                  症狀變化：
-                  {symptomChangeOptions.find((o) => o.id === r.symptom_change_option_id)?.label ?? "（選項已移除）"}
-                </span>
-              )}
+            {/* 一筆紀錄一行，不換行、擠不下就左右捲（2026-08-27 使用者要求）。
+                原本是 flex-wrap ＋ 放治療內容那格用 flex-1：`flex:1 1 0%` 的基準寬度是 0，
+                所以那一格永遠不會被擠到下一行，只會把自己壓扁——旁邊 badge 一多
+                （記錄人／抽血／症狀變化）就剩幾 px，變成一個字一行的直條。
+                改成整行 whitespace-nowrap + w-max，外層 overflow-x-auto；
+                -mx-3 px-3 是為了讓捲動區域切齊卡片邊緣，內容不會被 padding 截斷。
+                這個寫法跟追蹤時程那一列的動作列一致。 */}
+            <div className="-mx-3 overflow-x-auto px-3">
+              <div className="flex w-max items-center gap-x-2 whitespace-nowrap text-sm text-ink/70">
+                <span className="font-medium">{r.treatment_date}</span>
+                <span>・ {r.typeName}</span>
+                {r.body_site && (
+                  <span className="rounded bg-brand-50 px-1.5 py-0.5 text-xs text-brand-800">部位：{r.body_site}</span>
+                )}
+                <span>{r.free_text || Object.entries(values).map(([k, v]) => `${k}: ${v}`).join(", ")}</span>
+                <span className="text-xs text-ink/40">記錄人：{r.recorded_by}</span>
+                {r.recurrence_observed && (
+                  <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">
+                    復發：{r.recurrence_description || "（未填情形）"}
+                  </span>
+                )}
+                {r.blood_drawn && (
+                  <span className="rounded bg-sky-100 px-1.5 py-0.5 text-xs text-sky-700">
+                    抽血{r.blood_drawn_note ? `：${r.blood_drawn_note}` : ""}
+                  </span>
+                )}
+                {r.symptom_change_option_id && (
+                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-700">
+                    症狀變化：
+                    {symptomChangeOptions.find((o) => o.id === r.symptom_change_option_id)?.label ?? "（選項已移除）"}
+                  </span>
+                )}
+              </div>
             </div>
 
             <details className="mt-1 text-xs">

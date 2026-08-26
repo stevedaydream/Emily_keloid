@@ -2043,3 +2043,17 @@ JSS 評的是主病灶，而 `questionnaire_responses` 沒有存「評的是哪�
 `sevrnqdvaqtdomhkxlxh` 並驗證（19 筆回覆全數回填、1 張照片預設 camera）。
 `supabase/bootstrap/01_schema.sql` 是產生出來的檔案，已同步補上這兩欄，
 免得日後照遷移手冊建新專案時漏掉。
+
+#### 追加：治療紀錄摘要行改成不換行、可左右捲（2026-08-27）
+
+使用者回報「其他回診治療」裡「小川令」那格被擠成一條直線。
+
+原因不是寬度不夠，是 `TreatmentRecordList` 的摘要行用 `flex-wrap`，而放治療內容那格是
+`min-w-0 flex-1`——`flex: 1 1 0%` 的**基準寬度是 0**，所以它永遠不會被 flex-wrap 擠到下一行，
+只會把自己壓扁。旁邊 badge 一多（記錄人／抽血／症狀變化）就只剩幾 px，變成一個字一行的直條。
+
+依使用者要求改成**不換行、擠不下就左右捲**：整行 `whitespace-nowrap` + `w-max`，
+外層 `overflow-x-auto`，`-mx-3 px-3` 讓捲動區切齊卡片邊緣。寫法與追蹤時程那一列的動作列一致。
+
+實測（容器壓到 360px）：`scrollWidth 658 / clientWidth 358`、捲得到底、行高維持單行 20px，
+且 `document` 本身不橫捲——捲動被關在那張卡片裡，不會把整頁撐寬。
