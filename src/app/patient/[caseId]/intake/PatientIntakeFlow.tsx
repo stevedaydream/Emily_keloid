@@ -76,7 +76,16 @@ type Screen = {
   body: React.ReactNode;
   /** 單選類的畫面選完自動前進，長輩不用再找「下一步」 */
   autoAdvance?: boolean;
+  /**
+   * 這一頁上的題目 id（只有 SF-36／PSQI 的畫面有）。用途有二：
+   *   ① 硬鎖：這些題目全部答了才放行（2026-08-26 助理要求「有點選才能跳下一步」）
+   *   ② 逐頁存檔：翻頁就存一次草稿，卡住時損失上限是一頁
+   */
+  questionIds?: string[];
 };
+
+/** 兩份自評量表要硬鎖：沒作答就不能下一步。其餘三段維持可跳過（跳過會進待補清單）。 */
+const LOCKED_SEGMENTS: PatientIntakeSegmentKey[] = ["sf36", "psqi"];
 
 /** 建檔時診間已填過的欄位，用來當作病人流程的初始值 */
 export type IntakePrefill = {
@@ -212,6 +221,22 @@ export default function PatientIntakeFlow({
   });
 
   const setAnswer = (qid: string, value: string | string[]) => setAnswers((a) => ({ ...a, [qid]: value }));
+
+  /**
+   * 這一頁的題目全都作答了嗎（2026-08-26 硬鎖用）。
+   *
+   * 沒有 questionIds 的畫面（前三段）一律回 true——那三段維持可跳過。
+   * PSQI 前四題不是選項題，但 WheelPicker 本來就記得住「有沒有被滑過」：沒滑過時 value 是空字串，
+   * 滑過才會寫回 `HH:MM`／分鐘數／時數，所以這裡的空值判定對輪盤題同樣成立。
+   */
+  function screenAnswered(s: Screen): boolean {
+    if (!s.questionIds || !LOCKED_SEGMENTS.includes(s.segment)) return true;
+    return s.questionIds.every((qid) => {
+      const v = answers[qid];
+      if (Array.isArray(v)) return v.length > 0;
+      return typeof v === "string" && v.trim() !== "";
+    });
+  }
 
   // 複選題的互斥處理：選「都沒有」或「不知道」就把其他清掉，反之亦然。
   function toggleExclusive(next: string[], prev: string[]): string[] {
@@ -404,7 +429,11 @@ export default function PatientIntakeFlow({
 
     list.push({
       segment: "intake_options",
-      title: "您覺得蟹足腫是什麼原因造成的？",
+      // 2026-08-26：原本問「您覺得……是什麼原因造成的？」是在問病人的歸因（他自己怎麼想），
+      // 但這一題的選項（外傷／燒傷／手術切口／疫苗接種／耳洞穿刺／痤瘡／自發）描述的是
+      // 病灶出現時的「情境」，而且它就是部長 Excel 的 KC 碼來源。改成問情境，
+      // 選項、export_code 與個案頁的「發生原因」欄位一律不動。
+      title: "您的蟹足腫最初是在哪一種情況下出現的？",
       hint: "可以複選",
       body: (
         <BigMultiChoice
@@ -452,6 +481,7 @@ export default function PatientIntakeFlow({
           segment,
           title: page.length === 1 ? page[0].question_text : q.name,
           hint: page.length === 1 ? undefined : "請依序回答下列問題",
+          questionIds: page.map((question) => question.id),
           body: (
             <div className="space-y-6">
               {page.map((question) => (
@@ -496,7 +526,13 @@ export default function PatientIntakeFlow({
     screensRef.current = screens;
   }, [screens]);
 
-  async function saveSegment(segment: PatientIntakeSegmentKey) {
+  /**
+   * @param completed 走到這一段的最後一頁了嗎。只有兩份量表在意這個旗標：
+   *   false ＝ 翻頁順手存的草稿（不寫 completed_at、不標段落完成、不動待補清單）
+   *   true  ＝ 這一段跑完了
+   * 前三段只會在跨段時被呼叫一次，傳進來的一律是 true。
+   */
+  async function saveSegment(segment: PatientIntakeSegmentKey, completed: boolean) {
     if (segment === "basic") {
       await savePatientBasicAction(caseId, {
         sex,
@@ -535,6 +571,7 @@ export default function PatientIntakeFlow({
         answers,
         presentedQuestionIds: usableQuestions.sf36.map((q) => q.id),
         replaceResponseId: savedIds.sf36,
+        completed,
       });
       setSavedIds((s) => ({ ...s, sf36: responseId }));
     } else if (segment === "psqi" && psqi) {
@@ -543,6 +580,7 @@ export default function PatientIntakeFlow({
         answers,
         presentedQuestionIds: usableQuestions.psqi.map((q) => q.id),
         replaceResponseId: savedIds.psqi,
+        completed,
       });
       setSavedIds((s) => ({ ...s, psqi: responseId }));
     }
@@ -553,8 +591,15 @@ export default function PatientIntakeFlow({
     const current = list[from];
     if (!current) return;
     const next = list[from + 1];
-    // 跨段（或走完最後一段）時把這一段存起來——被打斷也只會丟掉當下這一段
-    if (!next || next.segment !== current.segment) {
+    // 硬鎖：這一頁還有題目沒答就不放行（2026-08-26）。按鈕本來就是灰的，
+    // 這裡再擋一次是因為 autoAdvance 的計時器也會走到 goNext。
+    if (!screenAnsweredRef.current(current)) return;
+
+    const crossing = !next || next.segment !== current.segment;
+    // 跨段（或走完最後一段）時把這一段存起來——被打斷也只會丟掉當下這一段。
+    // 兩份量表另外**每翻一頁就存一次草稿**：硬鎖之後病人卡在中間出不去，
+    // 只能請人員從右上角出口跳出，那一刻沒存的東西就沒了。逐頁存讓損失上限降到一頁。
+    if (crossing || LOCKED_SEGMENTS.includes(current.segment)) {
       setSaving(true);
       setError(null);
       try {
@@ -566,7 +611,7 @@ export default function PatientIntakeFlow({
         // 220ms 後直接跨段存檔——存進去的 priorTreated 是空字串，四個欄位不寫、
         // 還各留一筆「未填」。答「有治療過」反而不會中，因為後面還有四題、存檔被延後。
         // 同樣的洞也吃得到任何一段最後一題是單選題的情況（SF-36／PSQI 的最後一頁）。
-        await saveSegmentRef.current(current.segment);
+        await saveSegmentRef.current(current.segment, crossing);
       } catch (e) {
         setError(e instanceof Error ? e.message : "儲存失敗，請告訴診間人員");
         setSaving(false);
@@ -584,6 +629,14 @@ export default function PatientIntakeFlow({
   const saveSegmentRef = useRef(saveSegment);
   useEffect(() => {
     saveSegmentRef.current = saveSegment;
+  });
+
+  // screenAnswered 讀的也是那一輪的 answers，同樣要走 ref——
+  // autoAdvance 的 220ms 計時器執行時，閉包裡那份 answers 還是點下去之前的，
+  // 會把「剛剛才選好的那一題」判成沒答而擋住自己。
+  const screenAnsweredRef = useRef(screenAnswered);
+  useEffect(() => {
+    screenAnsweredRef.current = screenAnswered;
   });
 
   // ── 歡迎 / 完成畫面 ──────────────────────────────────────────
@@ -730,6 +783,9 @@ export default function PatientIntakeFlow({
   const pos = Math.min(index, screens.length - 1);
   const screen = screens[pos];
   const segmentMeta = PATIENT_INTAKE_SEGMENTS.find((s) => s.key === screen.segment);
+  // 兩份量表的畫面沒作答就不放行（2026-08-26）。這兩份是純主觀量表，
+  // 只有病人自己答得出來，事後人員補不了——跟前三段跳過後可以再追問不同。
+  const answered = screenAnswered(screen);
 
   return (
     <Shell caseId={caseId}>
@@ -769,6 +825,13 @@ export default function PatientIntakeFlow({
           <p className="mt-4 rounded-xl border-2 border-red-200 bg-red-50 p-4 text-lg text-red-700">{error}</p>
         )}
 
+        {/* 沒作答時要講出原因，不然病人只會看到一顆按不動的灰按鈕而不知道自己漏了什麼 */}
+        {!answered && (
+          <p className="mt-4 text-center text-lg text-ink/50">
+            {(screen.questionIds?.length ?? 0) > 1 ? "上面每一題都選好才能繼續" : "請先選一個答案"}
+          </p>
+        )}
+
         <div className="sticky bottom-0 flex gap-3 bg-paper-raised py-4">
           <button
             type="button"
@@ -781,8 +844,8 @@ export default function PatientIntakeFlow({
           <button
             type="button"
             onClick={() => goNext(pos)}
-            disabled={saving}
-            className="flex min-h-16 flex-[2] items-center justify-center gap-2 rounded-xl bg-brand-700 text-xl font-medium text-white hover:bg-brand-800 disabled:opacity-60"
+            disabled={saving || !answered}
+            className="flex min-h-16 flex-[2] items-center justify-center gap-2 rounded-xl bg-brand-700 text-xl font-medium text-white hover:bg-brand-800 disabled:opacity-40 disabled:hover:bg-brand-700"
           >
             {saving ? (
               <>

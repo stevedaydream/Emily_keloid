@@ -36,7 +36,7 @@ export async function getClinicCaseAction(caseId: string) {
       .eq("status", "pending")
       .order("due_date"),
     // 病灶照片張數：卡片要提醒「這位還沒量／還沒拍，別讓他走」（決策 2026-08-20）
-    supabase.from("photos").select("lesion_id, taken_at").eq("case_id", caseId),
+    supabase.from("photos").select("lesion_id, created_at").eq("case_id", caseId),
     // 回診進度：今天有沒有登記回診（＝今天有沒有任何一筆治療紀錄，含「追蹤（無治療）」）
     supabase.from("treatment_records").select("treatment_date, treatment_types(name)").eq("case_id", caseId),
   ]);
@@ -73,9 +73,15 @@ export async function getClinicCaseAction(caseId: string) {
   };
   const surgeryDate = (allTreatments ?? []).find((t) => typeNameOf(t) === "手術切除")?.treatment_date ?? null;
   const visitRegistered = (allTreatments ?? []).some((t) => t.treatment_date === today);
+  // 2026-08-26：由 taken_at 改成 created_at。拍照開放候補上傳後，taken_at 是真正的拍攝日
+  // （可能是三天前），拿它判定會讓「今天補上的照片」永遠不算今天做過。詳見 visit-flow/page.tsx。
+  // 時區：資料庫存的是 UTC，today 是台北日期。直接 slice(0,10) 會讓台北時間
+  // 早上 8 點前建立的照片被判成前一天——門診開診前的準備時段正好落在這裡。
+  const taipeiDay = (ts: unknown) =>
+    new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(new Date(String(ts)));
   const photoTodayCount = new Map<string, number>();
   for (const p of photos ?? []) {
-    if (p.lesion_id && String(p.taken_at).slice(0, 10) === today) {
+    if (p.lesion_id && taipeiDay(p.created_at) === today) {
       photoTodayCount.set(p.lesion_id, (photoTodayCount.get(p.lesion_id) ?? 0) + 1);
     }
   }

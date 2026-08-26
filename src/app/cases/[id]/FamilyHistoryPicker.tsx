@@ -5,6 +5,17 @@ import Button from "@/components/ui/Button";
 
 type Option = { id: string; label: string };
 
+/**
+ * 「都問過了，一項也沒有」（2026-08-26 助理要求）。
+ *
+ * 在這之前，個案頁的勾選視窗裡沒有任何方式表達這件事——把視窗關掉、欄位留空，
+ * 跟「還沒問」在資料上完全一樣。病人自填流程其實早就有「以上都沒有」，
+ * 且存進 cases.family_history 的就是這兩個字，所以這裡沿用同一個值，兩邊寫出來的資料一致。
+ *
+ * 匯出時對到代碼 0（見 structured-data/route.ts 的 codesFromText，以及 exportCodebook 的碼表說明）。
+ */
+const NONE_LABEL = "無";
+
 // 「Family（家族史）」欄位的輔助輸入工具：彈出視窗勾選常見家族疾病（後台可維護清單）＋「其他」自填，
 // 按「帶入」後把勾選結果組成文字寫進同一個 family_history 文字框，實際儲存仍走原本「更新基本資料」按鈕，
 // 不另外呼叫伺服器（家族病史是一次性資訊，不需要像飲食衛教那樣逐次記錄歷史）。
@@ -30,6 +41,10 @@ export default function FamilyHistoryPicker({
     const next = new Set<string>();
     let other = "";
     for (const part of parts) {
+      if (part === NONE_LABEL) {
+        next.add(NONE_LABEL);
+        continue;
+      }
       const match = options.find((o) => o.label !== "其他" && o.label === part);
       if (match) next.add(match.label);
       else other = other ? `${other}、${part}` : part;
@@ -39,7 +54,28 @@ export default function FamilyHistoryPicker({
     setOpen(true);
   }
 
+  /** 「無」與其他項目互斥：勾了「無」就清掉其他，勾了其他就清掉「無」。 */
+  function toggle(label: string, on: boolean) {
+    setChecked((prev) => {
+      if (!on) {
+        const next = new Set(prev);
+        next.delete(label);
+        return next;
+      }
+      if (label === NONE_LABEL) return new Set([NONE_LABEL]);
+      const next = new Set(prev);
+      next.delete(NONE_LABEL);
+      next.add(label);
+      return next;
+    });
+  }
+
   function apply() {
+    if (checked.has(NONE_LABEL)) {
+      setValue(NONE_LABEL);
+      setOpen(false);
+      return;
+    }
     const labels = options.filter((o) => o.label !== "其他" && checked.has(o.label)).map((o) => o.label);
     if (checked.has("其他") && otherText.trim()) labels.push(otherText.trim());
     setValue(labels.join("、"));
@@ -74,21 +110,24 @@ export default function FamilyHistoryPicker({
                   <input
                     type="checkbox"
                     checked={checked.has(o.label)}
-                    onChange={(e) =>
-                      setChecked((prev) => {
-                        const next = new Set(prev);
-                        if (e.target.checked) next.add(o.label);
-                        else next.delete(o.label);
-                        return next;
-                      })
-                    }
+                    onChange={(e) => toggle(o.label, e.target.checked)}
                   />
                   {o.label}
                 </label>
               ))}
               {options.length === 0 && <p className="text-xs text-ink/40">後台尚未設定選項</p>}
+              {/* 「無」不進後台選單清單（那份清單病人端也在用，那邊已經有「以上都沒有」了），
+                  固定放在最後一列，並與上面所有項目互斥。 */}
+              <label className="mt-1 flex items-center gap-2 border-t border-brand-50 pt-2 text-sm text-ink">
+                <input
+                  type="checkbox"
+                  checked={checked.has(NONE_LABEL)}
+                  onChange={(e) => toggle(NONE_LABEL, e.target.checked)}
+                />
+                無（都問過了，一項也沒有）
+              </label>
             </div>
-            {checked.has("其他") && (
+            {checked.has("其他") && !checked.has(NONE_LABEL) && (
               <input
                 value={otherText}
                 onChange={(e) => setOtherText(e.target.value)}

@@ -1169,6 +1169,87 @@ export async function unbindLineAction(formData: FormData) {
 // 時程項目的 due_date 原本是「建檔日 + 範本天數」算出來的，但真正的回診日由掛號決定，
 // 兩者常差好幾天。沒有這支 action 的話，推出去的回診提醒日子會是錯的。
 
+/**
+ * 從追蹤時程的某一列直接登記這次回診（2026-08-26 助理要求：回診治療跟追蹤時程放在一起 key）。
+ *
+ * 一個動作收掉三件事，因為它們在門診現場本來就是同一件事：
+ *   ① 建 treatment_records（沒勾任何治療＝「追蹤（無治療）」，否則記勾到的那幾種）
+ *   ② 把該列的 due_date 寫成**實際回診日**——匯出的 FW1–FW27 是拿治療日期距手術日算的，
+ *      而 LINE 提醒也讀這個日期，兩邊都要對得上病人真正來的那天
+ *   ③ 把該列標記完成
+ *
+ * 劑量、套組那些細節欄位這裡不收（門診當下沒空填），仍到個案頁的完整治療表單補。
+ */
+export async function registerVisitAtScheduleItemAction(formData: FormData) {
+  const caseId = formData.get("case_id") as string;
+  const itemId = formData.get("item_id") as string;
+  const visitDate = ((formData.get("visit_date") as string) ?? "").trim();
+  if (!caseId || !itemId || !/^\d{4}-\d{2}-\d{2}$/.test(visitDate)) {
+    throw new Error("請填寫實際回診日");
+  }
+
+  const supabase = supabaseServer();
+
+  // 沒勾任何治療就記「追蹤（無治療）」——讓「什麼都沒做」也留得下一筆紀錄。
+  // 沒有這一筆，那次回診在匯出檔裡等於沒發生，復發與症狀變化也一起消失。
+  const typeIds = formData.getAll("type_ids") as string[];
+  if (typeIds.length === 0) {
+    const { data: followupType } = await supabase
+      .from("treatment_types")
+      .select("id")
+      .eq("name", "追蹤（無治療）")
+      .maybeSingle();
+    if (!followupType) throw new Error("後台找不到「追蹤（無治療）」治療類型，請先到治療方式管理建立");
+    typeIds.push(followupType.id);
+  }
+
+  // ① 治療紀錄。addTreatmentRecordAction 已經處理好複選治療方式 × 多部位、
+  //   復發／抽血／症狀變化這些欄位，這裡把表單原樣轉過去，不另外寫一份寫入邏輯。
+  const treatmentForm = new FormData();
+  treatmentForm.set("case_id", caseId);
+  treatmentForm.set("treatment_date", visitDate);
+  for (const id of typeIds) treatmentForm.append("type_ids", id);
+  for (const lid of formData.getAll("lesion_ids") as string[]) treatmentForm.append("lesion_ids", lid);
+  for (const key of ["recurrence_observed", "recurrence_description", "blood_drawn", "blood_drawn_note", "symptom_change_option_id"]) {
+    const v = formData.get(key);
+    if (v !== null) treatmentForm.set(key, v);
+  }
+  await addTreatmentRecordAction(treatmentForm);
+
+  // ② 實際回診日寫回該列（actions 不動，LINE 提醒的開關維持原設定）
+  //    ③ 標記完成
+  await supabase
+    .from("case_schedule_items")
+    .update({ due_date: visitDate, status: "done", completed_at: new Date().toISOString(), skipped_reason: null })
+    .eq("id", itemId)
+    .eq("case_id", caseId);
+
+  // 抽血類的時程項目：跟 markScheduleItemAction 一樣單向回寫檢體清單，
+  // 不然從這條路徑標完成的抽血項目在生物資料庫那邊會是空的。
+  const { data: item } = await supabase
+    .from("case_schedule_items")
+    .select("biobank_item_key")
+    .eq("id", itemId)
+    .maybeSingle();
+  if (item?.biobank_item_key) {
+    await supabase
+      .from("biobank_checklist_items")
+      .update({ collected: true, collected_date: visitDate, updated_at: new Date().toISOString() })
+      .eq("case_id", caseId)
+      .eq("item_key", item.biobank_item_key);
+  }
+
+  await logAudit({
+    caseId,
+    operatorName: await operatorOrThrow(),
+    action: "register_visit_at_schedule_item",
+    entity: "case_schedule_items",
+    entityId: itemId,
+    detail: { visitDate, typeCount: typeIds.length },
+  });
+  revalidatePath(`/cases/${caseId}`);
+}
+
 export async function updateScheduleItemDateAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
   const itemId = formData.get("item_id") as string;

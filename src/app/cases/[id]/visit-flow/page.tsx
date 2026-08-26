@@ -56,13 +56,17 @@ export default async function VisitFlowPage({ params }: { params: Promise<{ id: 
   // 本次回診已登記＝今天有任何一筆治療紀錄（含「追蹤（無治療）」）。
   const visitRegistered = (treatments ?? []).some((t) => t.treatment_date === today);
 
-  // 今天拍的照片才算數
+  // 今天「加進來」的照片才算數。
+  // 2026-08-26 由 taken_at 改成 created_at：拍照開放候補上傳之後，taken_at 記的是
+  // 真正的拍攝日（可能是三天前），用它判定的話，人員補完照片這一步永遠不會變綠，
+  // 只好回頭把拍攝日改成今天——那就把拍攝日這個欄位廢掉了。created_at 是寫進資料庫的時間，
+  // 現場拍的兩者一樣，候補上傳的才會分開。
   const { data: photosToday } = await supabase
     .from("photos")
-    .select("lesion_id, taken_at")
+    .select("lesion_id, created_at")
     .eq("case_id", id)
-    .gte("taken_at", `${today}T00:00:00+08:00`)
-    .lte("taken_at", `${today}T23:59:59+08:00`);
+    .gte("created_at", `${today}T00:00:00+08:00`)
+    .lte("created_at", `${today}T23:59:59+08:00`);
   const photoToday = new Map<string, number>();
   for (const p of photosToday ?? []) {
     if (p.lesion_id) photoToday.set(p.lesion_id, (photoToday.get(p.lesion_id) ?? 0) + 1);
@@ -91,6 +95,8 @@ export default async function VisitFlowPage({ params }: { params: Promise<{ id: 
         .select("questionnaire_id, submitted_at")
         .eq("case_id", id)
         .in("questionnaire_id", templateIds)
+        // 半份問卷不算「這一步做完了」（2026-08-26）
+        .not("completed_at", "is", null)
     : { data: [] };
   const doneToday = new Set(
     (scaleResponses ?? []).filter((r) => taipeiDate(new Date(r.submitted_at)) === today).map((r) => r.questionnaire_id)

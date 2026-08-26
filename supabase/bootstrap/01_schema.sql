@@ -472,7 +472,9 @@ create table if not exists public.photos (
   body_part_zone_id uuid,
   thumbnail_path text,
   lesion_id uuid,
+  source text default 'camera'::text not null,
   constraint photos_uploaded_via_check CHECK ((uploaded_via = ANY (ARRAY['line_sim'::text, 'staff'::text, 'patient'::text]))),
+  constraint photos_source_check CHECK ((source = ANY (ARRAY['camera'::text, 'upload'::text]))),
   constraint photos_pkey PRIMARY KEY (id)
 );
 
@@ -507,6 +509,7 @@ create table if not exists public.questionnaire_responses (
   schedule_item_id uuid,
   submitted_at timestamp with time zone default now() not null,
   submitted_via text default 'line_sim'::text not null,
+  completed_at timestamp with time zone,
   constraint questionnaire_responses_submitted_via_check CHECK ((submitted_via = ANY (ARRAY['line_sim'::text, 'staff'::text, 'patient'::text]))),
   constraint questionnaire_responses_pkey PRIMARY KEY (id)
 );

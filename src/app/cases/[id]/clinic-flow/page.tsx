@@ -62,6 +62,8 @@ export default async function ClinicFlowPage({ params }: { params: Promise<{ id:
         .select("questionnaire_id, submitted_at")
         .eq("case_id", id)
         .in("questionnaire_id", templateIds)
+        // 半份問卷不算「這一步做完了」（2026-08-26）
+        .not("completed_at", "is", null)
     : { data: [] };
   const doneToday = new Set(
     (scaleResponses ?? []).filter((r) => taipeiDate(new Date(r.submitted_at)) === today).map((r) => r.questionnaire_id)

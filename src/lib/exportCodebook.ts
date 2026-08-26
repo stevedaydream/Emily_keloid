@@ -64,10 +64,12 @@ export const LEGEND: Record<string, string> = {
   BMI: "無紀錄= 9999",
   Doctor_ID: "顏v = 01,  蒲v = 02",
   Diagnosis: "1. L730 ,  2. L910 ,  3. L905",
+  // 「無= 0」是 2026-08-26 加的，部長原檔沒有這一格。加的理由：原本「問過了、一項也沒有」
+  // 只能留空白，跟「還沒問」在匯出檔裡完全一樣。空白仍然保留原意（沒問／沒填）。
   Medical_history_self:
-    "1. 高血壓 , 2. 糖尿病 , 3. 心臟病 , 4. 腦中風 , 5. 癌症 , 6. 氣喘/過敏性疾病 , 7. 蟹足腫或肥厚性疤痕 , 8. 其他",
+    "無= 0, 1. 高血壓 , 2. 糖尿病 , 3. 心臟病 , 4. 腦中風 , 5. 癌症 , 6. 氣喘/過敏性疾病 , 7. 蟹足腫或肥厚性疤痕 , 8. 其他",
   Fmaily_history:
-    "1. 高血壓 , 2. 糖尿病 , 3. 心臟病 , 4. 腦中風 , 5. 癌症 , 6. 氣喘/過敏性疾病 , 7. 肥厚性疤痕 , 8. 其他",
+    "無= 0, 1. 高血壓 , 2. 糖尿病 , 3. 心臟病 , 4. 腦中風 , 5. 癌症 , 6. 氣喘/過敏性疾病 , 7. 肥厚性疤痕 , 8. 其他",
   Keloid_family_history: "無=0, 有=1, 不清楚= 9999",
   "time of occurrence": "發生時間以 month 計算　ex： 1年填「12」",
   KeloidLo:
@@ -153,15 +155,26 @@ const lesionBlockLegends = (n: number): (string | null)[] =>
     ? [LEGEND.KeloidLo, LEGEND.KC, "未測量可留空", "未測量可留空", "未測量可留空", "長×寬，自動計算", LEGEND.KOR, LEGEND.KSI, LEGEND.KOST]
     : [null, null, "未測量可留空", "未測量可留空", "未測量可留空", "長×寬，自動計算", null, null, null];
 
-/** 追蹤區塊。第 1、2 次多了當次治療的三個欄位（新格式 2026-08-13）。 */
-const fwBlock = (n: number) =>
-  n <= 2
-    ? [`FW${n}_time`, `FW${n}_days`, `KOR_FW${n}`, `KSI_FW${n}`, `KOST_FW${n}`, `Recurrence_${n}`]
-    : [`FW${n}_time`, `FW${n}_days`, `Recurrence_${n}`];
+/**
+ * 追蹤區塊。每一次追蹤都有「當次治療」的三個欄位（KOR／KSI／KOST）。
+ *
+ * 2026-08-26：原本只有第 1、2 次有這三欄，那是照著部長原檔抄的。他在 08-26 的討論裡說明
+ * 那是**他來不及放**，不是不需要——FW3 之後同樣會有治療。平台本來就每一筆回診都算得出這三個碼
+ * （見 route.ts 的 Visit），先前等於把 FW3 以後的治療資料丟掉，只剩「追蹤逐筆」附表查得到。
+ */
+const fwBlock = (n: number) => [
+  `FW${n}_time`,
+  `FW${n}_days`,
+  `KOR_FW${n}`,
+  `KSI_FW${n}`,
+  `KOST_FW${n}`,
+  `Recurrence_${n}`,
+];
+/** 說明只寫在第 1 組（部長原檔的慣例：同型區塊只在第一個寫說明）。 */
 const fwLegends = (n: number): (string | null)[] =>
-  n <= 2
+  n === 1
     ? [`${n}　未回診請直接填 0`, "距手術日天數", LEGEND.KOR, LEGEND.KSI, LEGEND.KOST, LEGEND.Recurrence]
-    : [`${n}　未回診請直接填 0`, null, null];
+    : [`${n}　未回診請直接填 0`, null, null, null, null, null];
 
 export type SheetDef = { name: string; headers: string[]; legends: (string | null)[] };
 
@@ -222,19 +235,18 @@ export const YEAR2_SHEET: SheetDef = {
   name: "Year 2 follow-up",
   headers: [
     "Subject_ID", "Name", "Chart No.", "gender", "Operation date",
-    // 第二年沒有 KOR/KSI/KOST（只有第 1、2 次追蹤才有），維持三欄一組
-    ...Array.from({ length: MAX_FW_YEAR2 }, (_, i) => {
-      const n = MAX_FW_YEAR1 + 1 + i;
-      return [`FW${n}_time`, `FW${n}_days`, `Recurrence_${n}`];
-    }).flat(),
+    // 2026-08-26：第二年也補上 KOR/KSI/KOST，跟 Year 1 一樣六欄一組（見 fwBlock 的說明）
+    ...Array.from({ length: MAX_FW_YEAR2 }, (_, i) => fwBlock(MAX_FW_YEAR1 + 1 + i)).flat(),
   ],
   legends: [
     null, "（匯出：勾選並輸入匯出金鑰才會有值／匯入範本：請留空）", "（匯出：勾選並輸入匯出金鑰才會有值／匯入範本：請留空）", LEGEND.gender, null,
-    ...Array.from({ length: MAX_FW_YEAR2 }, (_, i) => [
-      `${MAX_FW_YEAR1 + 1 + i}　未回診請直接填 0`,
-      i === 0 ? "距手術日天數" : null,
-      i === 0 ? LEGEND.Recurrence : null,
-    ]).flat(),
+    ...Array.from({ length: MAX_FW_YEAR2 }, (_, i) => {
+      const n = MAX_FW_YEAR1 + 1 + i;
+      // 這張表的第一組（FW13）要寫說明——Year 2 是獨立工作表，讀的人看不到 Year 1 的說明列
+      return i === 0
+        ? [`${n}　未回診請直接填 0`, "距手術日天數", LEGEND.KOR, LEGEND.KSI, LEGEND.KOST, LEGEND.Recurrence]
+        : [`${n}　未回診請直接填 0`, null, null, null, null, null];
+    }).flat(),
   ],
 };
 

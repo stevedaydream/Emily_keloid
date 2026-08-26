@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import LesionMeasureFlow from "./LesionMeasureFlow";
-import { measureBlockers, type ClinicianScale, type LesionCheck } from "@/lib/clinicFlow";
+import { measureBlockers, jssHardBlocker, type ClinicianScale, type LesionCheck } from "@/lib/clinicFlow";
 import { PATIENT_INTAKE_SEGMENTS } from "@/lib/patientIntake";
 import type { BodyView } from "@/lib/bodyZones";
 
@@ -41,6 +41,9 @@ export default function ClinicFlow({
   const primaryLabel = primary ? `部位${primary.site_no ?? "?"} ${primary.body_site}` : "尚未登記病灶";
   const blockers = measureBlockers(lesions);
   const measureAllDone = blockers.length === 0;
+  // 2026-08-26：步驟 3 由硬擋改軟擋——量測沒做完照樣點得開 JSS，只是上面警告哪幾題會變成用猜的。
+  // 還會擋住的只剩「一顆病灶都沒登記」（那份 JSS 事後無從歸屬）。
+  const jssBlocked = jssHardBlocker(lesions);
   // 清單裡的量表都填完才算走完這一步。scales 為空是「後台找不到量表」的異常狀況
   // （missingScaleNames 會把它講出來），不能當成完成。
   const scalesDone = scales.length > 0 && scales.every((s) => s.done);
@@ -196,8 +199,37 @@ export default function ClinicFlow({
           </p>
         )}
 
-        {measureAllDone ? (
+        {jssBlocked ? (
+          <>
+            <button
+              type="button"
+              disabled
+              className="min-h-16 w-full cursor-not-allowed rounded-xl bg-ink/10 px-4 text-xl font-medium text-ink/35"
+            >
+              請先在步驟 2 登記病灶部位
+            </button>
+            <p className="text-base text-ink/50">{jssBlocked}。在上一步的人形圖上點一個部位就會建立。</p>
+          </>
+        ) : (
           <div className="space-y-2">
+            {/* 量測沒做完不再擋住這一步（2026-08-26），但要講清楚代價：
+                JSS 的第 7、8 題直接問大小與垂直生長，沒量就只能用猜的。 */}
+            {!measureAllDone && (
+              <div className="rounded-lg border-2 border-amber-300 bg-amber-50 p-3">
+                <p className="text-base font-medium text-amber-900">
+                  ⚠️ 步驟 2 還沒做完，JSS 的「7. 大小」「8. 垂直生長」只能用猜的：
+                </p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-base text-amber-800">
+                  {blockers.map((b) => (
+                    <li key={b}>{b}</li>
+                  ))}
+                </ul>
+                <p className="mt-1.5 text-sm text-amber-800/80">
+                  量得到就先回上一步量。真的量不到（病人拒絕、位置量不著）就在該部位勾
+                  「無法量測／拒絕拍照」填原因，系統會留一筆待補提醒。
+                </p>
+              </div>
+            )}
             {scales.map((s) => (
               <Link
                 key={s.id}
@@ -207,25 +239,12 @@ export default function ClinicFlow({
                 }`}
               >
                 <span>{s.name}</span>
-                <span className="shrink-0 text-base font-normal">{s.done ? "✓ 已完成，點此重填" : "開始填 →"}</span>
+                <span className="shrink-0 text-base font-normal">
+                  {s.done ? "✓ 已完成，點此重填" : measureAllDone ? "開始填 →" : "還是要現在填 →"}
+                </span>
               </Link>
             ))}
           </div>
-        ) : (
-          <>
-            <button
-              type="button"
-              disabled
-              className="min-h-16 w-full cursor-not-allowed rounded-xl bg-ink/10 px-4 text-xl font-medium text-ink/35"
-            >
-              請先完成步驟 2
-            </button>
-            <p className="text-base text-ink/50">
-              量完才填得準：JSS 有「7. 大小」「8. 垂直生長」，沒量長寬高那幾題只能用猜的。
-              量不到或病人拒絕拍照時，可以在步驟 2 的該部位勾「無法量測／拒絕拍照」並填原因，就會放行，
-              同時留一筆待補提醒。
-            </p>
-          </>
         )}
       </div>
     );

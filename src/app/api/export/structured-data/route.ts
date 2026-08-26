@@ -153,7 +153,7 @@ type Visit = {
   monthIndex: number | null;
   recurrence: number;
   symptomChangeCode: number | null;
-  /** 當次治療（新格式的 KOR_FW / KSI_FW / KOST_FW，只有 FW1、FW2 有這三欄） */
+  /** 當次治療（KOR_FW / KSI_FW / KOST_FW；2026-08-26 起 FW1–FW27 每一格都有這三欄） */
   korCode: number;
   ksiCode: number;
   kostCode: number | "";
@@ -222,7 +222,14 @@ export async function GET(request: Request) {
       .order("treatment_date"),
     supabase.from("radiotherapy_sessions").select("case_id, lesion_id, dose_category, fraction_no, status, due_date, planned_dose_cgy, actual_dose_cgy, rt_doctor"),
     supabase.from("photos").select("case_id"),
-    supabase.from("questionnaire_responses").select("id, case_id, submitted_at, submitted_via, questionnaire_templates(name, category)"),
+    // completed_at is not null：把「存到一半」的草稿整份濾掉（2026-08-26）。
+    // 病人版的 SF-36／PSQI 改成硬鎖＋逐頁存草稿之後，中途被打斷會留下半份問卷，
+    // 而缺題是用官方的「已答題目平均」算的——一份只答了 19/36 題的 SF-36
+    // 照樣會產生一個看起來完全正常的 0-100 分數，那不能進研究資料。
+    supabase
+      .from("questionnaire_responses")
+      .select("id, case_id, submitted_at, submitted_via, questionnaire_templates(name, category)")
+      .not("completed_at", "is", null),
     supabase.from("questionnaire_answers").select("response_id, answer_value, questionnaire_questions(order_no, question_text, options)"),
     supabase
       .from("case_intake_option_records")
@@ -342,6 +349,10 @@ export async function GET(request: Request) {
   const codesFromText = (text: string | null | undefined, category: string): string => {
     const raw = String(text ?? "").trim();
     if (!raw) return "";
+    // 「無」＝問過了、一項也沒有（2026-08-26 助理要求加的選項；病人自填勾「以上都沒有」
+    // 寫進來的也是這兩個字）。輸出 0 而不是留空白——空白在這張表裡代表「沒問／沒填」，
+    // 兩者是不同的資料。部長原碼表只有 1–8，但他自己的 Keloid_family_history 就是用「無= 0」。
+    if (raw === "無") return "0";
     const opts = optionsOfCategory(category);
     const other = opts.find((o) => o.label === "其他");
     const parts = raw.split(/[、,，;；]/).map((x) => x.trim()).filter(Boolean);
@@ -748,15 +759,14 @@ export async function GET(request: Request) {
       for (let i = 0; i < count; i++) {
         const m = fromMonth + i;
         const v = slots.get(m);
-        const withTreatment = m <= 2;
+        // 2026-08-26：每一格都輸出當次治療的三個碼。原本只有 m<=2 有，那是照部長原檔抄的，
+        // 他 08-26 說明那是來不及放。碼本來就每筆回診都算好了（見 Visit），不用補資料。
         if (!v) {
           // 未回診：時間欄填 0（依工作表說明），其餘留空
-          cells.push(0, "", ...(withTreatment ? ["", "", ""] : []), "");
+          cells.push(0, "", "", "", "", "");
           continue;
         }
-        cells.push(v.date, v.days ?? "");
-        if (withTreatment) cells.push(v.korCode, v.ksiCode, v.kostCode);
-        cells.push(v.recurrence);
+        cells.push(v.date, v.days ?? "", v.korCode, v.ksiCode, v.kostCode, v.recurrence);
       }
       return cells;
     };

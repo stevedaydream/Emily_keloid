@@ -42,8 +42,12 @@ export function lesionLabel(l: LesionCheck): string {
 }
 
 /**
- * 開 JSS 之前擋不擋。回傳還缺什麼——空陣列＝可以開。
- * 一個病灶都沒有也算沒過：那代表這位根本還沒被量過。
+ * 步驟 2 還缺什麼——空陣列＝這一步做完了。
+ *
+ * ⚠️ **2026-08-26 起這不再是「開不開得了 JSS」的判定**。助理反映步驟 2、3 應該可以候補
+ * （門診會被打斷、醫師與護理師不一定同時在場），所以步驟 3 改成軟擋：
+ * 這份清單現在只拿來（a）畫「病人離開前要完成」的黃色提醒、（b）在 JSS 上方警告哪幾題會變成用猜的。
+ * 真正還會擋住 JSS 的只剩 jssHardBlocker()。
  */
 export function measureBlockers(lesions: LesionCheck[]): string[] {
   if (lesions.length === 0) return ["尚未登記任何病灶部位"];
@@ -53,6 +57,20 @@ export function measureBlockers(lesions: LesionCheck[]): string[] {
     if (!isPhotographed(l)) out.push(`${lesionLabel(l)}：尚未拍照`);
   }
   return out;
+}
+
+/**
+ * 現在唯一還硬擋 JSS 的情況：一顆病灶都還沒登記（2026-08-26）。
+ *
+ * 量不到、沒拍到都可以候補——那些欄位之後補得上去。但 JSS 評的是**主病灶**
+ * （`is_primary`，12 題裡有 6 題在描述單一顆疤），而 `questionnaire_responses`
+ * 並沒有存「這份評的是哪一顆」，靠的是「個案的主病灶」這個慣例。
+ * 一顆都沒登記時填出來的那份分數，事後無從歸屬到任何病灶，也補救不了。
+ *
+ * @returns 擋住的理由；null ＝ 放行
+ */
+export function jssHardBlocker(lesions: LesionCheck[]): string | null {
+  return lesions.length === 0 ? "尚未登記任何病灶部位——JSS 評的是主病灶，沒有病灶就無從歸屬" : null;
 }
 
 /**

@@ -13,6 +13,18 @@ function parseDim(raw: FormDataEntryValue | null): number | null {
   return Number.isFinite(v) && v > 0 && v < 100 ? v : null;
 }
 
+/**
+ * 拍攝日期（`YYYY-MM-DD`）。空的或不合法就回 null，讓資料庫用預設值 now()。
+ * 未來的日期一律不收——那只會是選錯，而且會讓照片排到時間序的最前面。
+ */
+function parseTakenAt(raw: FormDataEntryValue | null): string | null {
+  const t = typeof raw === "string" ? raw.trim() : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return null;
+  const d = new Date(`${t}T12:00:00+08:00`);
+  if (Number.isNaN(d.getTime()) || d.getTime() > Date.now()) return null;
+  return d.toISOString();
+}
+
 export async function uploadPhotoAction(formData: FormData) {
   const caseId = formData.get("case_id") as string;
   const itemId = formData.get("item_id") as string;
@@ -20,6 +32,14 @@ export async function uploadPhotoAction(formData: FormData) {
   const lesionId = (formData.get("lesion_id") as string) || "";
   const file = formData.get("file") as File;
   const thumb = formData.get("thumb") as File | null;
+  // 2026-08-26：拍照改成也可以「從相簿選圖」候補（助理要求不一定要當下馬上拍）。
+  //   source     camera＝在 app 裡經過對齊框／比例尺蒙板拍的；upload＝事後從相簿補的。
+  //              兩者的影像條件不同，之後做前後對比必須分得出來。
+  //   taken_at   真正的拍攝日（上傳時由前端預帶檔案的 lastModified，人員可改）。
+  //              **「本次回診拍過了沒」不看這欄，看 created_at**——否則補上三天前拍的照片
+  //              永遠無法讓回診動線那一步收掉（見 visit-flow/page.tsx 與 clinic-today/actions.ts）。
+  const source = formData.get("source") === "upload" ? "upload" : "camera";
+  const takenAt = parseTakenAt(formData.get("taken_at"));
   // 長寬高跟照片一起送（決策 2026-08-20）：點部位直接進相機頁，量完拍完一次送出。
   // 分兩趟做的話，門診被打斷就只剩照片沒有尺寸——而尺寸是病人一走就補不回來的那一半。
   const dims = {
@@ -140,6 +160,9 @@ export async function uploadPhotoAction(formData: FormData) {
     mask_type: "generic",
     uploaded_by: operator,
     uploaded_via: "staff",
+    source,
+    // 沒帶（現場拍）時不寫這一欄，讓資料庫的 default now() 生效
+    ...(takenAt ? { taken_at: takenAt } : {}),
   });
 
   // 2026-07-27 多部位整合後不再有個案層級的「主要部位」：部位分類一律來自 case_keloid_lesions，
@@ -149,7 +172,7 @@ export async function uploadPhotoAction(formData: FormData) {
     operatorName: operator,
     action: "upload_photo",
     entity: "photos",
-    detail: { zoneKey, lesionId: lesion?.id ?? null },
+    detail: { zoneKey, lesionId: lesion?.id ?? null, source, takenAt },
   });
 
   // 個案頁面的部位縮圖／張數要立刻反映這張新照片

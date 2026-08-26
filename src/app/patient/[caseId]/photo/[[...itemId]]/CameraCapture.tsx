@@ -4,6 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { maskShapeForCategory, DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
 import { uploadPhotoAction } from "./actions";
 
+/** 時間戳 → 本地的 `YYYY-MM-DD`（`<input type="date">` 要的格式）。不能用 toISOString，那是 UTC。 */
+function localDate(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export default function CameraCapture({
   caseId,
   itemId,
@@ -34,8 +41,20 @@ export default function CameraCapture({
   const maskShape = maskShapeForCategory(doseCategory);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [capturedUrl, setCapturedUrl] = useState<string | null>(null);
+  // 2026-08-26：候補上傳。助理要的是「不一定要當下馬上拍」——病人先走了、
+  // 照片還在公務機相簿裡，事後補得上去。
+  //   source   camera＝經過上面那層對齊框／比例尺蒙板拍的；upload＝相簿選的（沒有蒙板）。
+  //   takenAt  真正的拍攝日，預帶檔案的 lastModified；人員改得了（相簿轉存會把時間戳弄丟）。
+  // 兩者都跟著照片一起送，這樣之後做影像對比才分得出哪些是診間標準拍攝。
+  const [source, setSource] = useState<"camera" | "upload">("camera");
+  const [takenAt, setTakenAt] = useState("");
+  // 拍攝日期的上界（不能選未來）。在 pickFile 裡算——那是事件處理器，
+  // 在 render 當中呼叫 Date.now() 會被 react-hooks/purity 擋下。
+  // 這個欄位只在選完檔案後才出現，所以那時才有值就夠了。
+  const [todayLocal, setTodayLocal] = useState("");
   const [status, setStatus] = useState<"idle" | "uploading" | "done" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
   // 長寬高跟照片一起送（決策 2026-08-20）。分兩趟做的話，門診一被打斷就只剩照片沒有尺寸，
@@ -64,11 +83,47 @@ export default function CameraCapture({
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
     ctx?.drawImage(video, 0, 0);
+    setSource("camera");
+    setTakenAt("");
     setCapturedUrl(canvas.toDataURL("image/jpeg"));
+  }
+
+  /**
+   * 從相簿選一張。**畫進同一張 canvas**，所以底下的 confirmUpload（含縮圖那段）
+   * 完全不用改，兩條路徑送出的東西格式一致。
+   *
+   * 長邊壓到 2400px：手機相簿的原始檔動輒 12MP，畫成 canvas 再 toDataURL 會在
+   * 平板上吃掉大量記憶體；2400px 對傷口照片綽綽有餘。
+   */
+  function pickFile(file: File) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    setTodayLocal(localDate(Date.now()));
+    const url = URL.createObjectURL(file);
+    const img = new window.Image();
+    img.onload = () => {
+      const scale = Math.min(1, 2400 / Math.max(img.width, img.height));
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      setSource("upload");
+      setTakenAt(localDate(file.lastModified));
+      setCapturedUrl(canvas.toDataURL("image/jpeg"));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      setStatus("error");
+      setMessage("這個檔案讀不出來，請換一張圖片");
+    };
+    img.src = url;
   }
 
   function retake() {
     setCapturedUrl(null);
+    setSource("camera");
+    setTakenAt("");
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   async function confirmUpload() {
@@ -109,6 +164,9 @@ export default function CameraCapture({
     }
     formData.append("file", blob, "photo.jpg");
     if (thumbBlob) formData.append("thumb", thumbBlob, "thumb.jpg");
+    formData.append("source", source);
+    // 現場拍的不送日期，讓伺服器用 now()；候補上傳的才送真正的拍攝日
+    if (source === "upload" && takenAt) formData.append("taken_at", takenAt);
     const result = await uploadPhotoAction(formData);
     setMessage(result.message);
     setStatus(result.ok ? "done" : "error");
@@ -135,8 +193,15 @@ export default function CameraCapture({
               </button>
             </div>
           ) : capturedUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={capturedUrl} alt="拍攝預覽" className="w-full" />
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={capturedUrl} alt="拍攝預覽" className="w-full" />
+              {source === "upload" && (
+                <div className="absolute left-2 top-2 rounded bg-amber-500/90 px-2 py-1 text-xs text-white">
+                  候補上傳（未經對齊框）
+                </div>
+              )}
+            </>
           ) : (
             <>
               <video ref={videoRef} autoPlay playsInline muted className="w-full" />
@@ -164,6 +229,27 @@ export default function CameraCapture({
             </>
           )}
         </div>
+
+        {/* 候補上傳的照片不是今天拍的，拍攝日要跟著照片一起記下來——匯出的照片 zip
+            是用拍攝日命名的，記成上傳日會讓整條時間序錯位。
+            （「本次回診拍過了沒」看的是上傳時間，所以回填拍攝日不會害那一步收不掉。） */}
+        {status !== "done" && source === "upload" && (
+          <div className="border-t border-slate-200 px-3 pt-3">
+            <label className="block">
+              <span className="block text-xs text-slate-500">這張是哪一天拍的？</span>
+              <input
+                type="date"
+                value={takenAt}
+                max={todayLocal || undefined}
+                onChange={(e) => setTakenAt(e.target.value)}
+                className="mt-0.5 min-h-12 w-full rounded-md border border-slate-300 px-2 text-base tabular-nums"
+              />
+            </label>
+            <p className="mt-1 text-[11px] text-slate-400">
+              已從檔案時間讀出，不對就改。這張沒有經過對齊框與比例尺，系統會記成「候補上傳」。
+            </p>
+          </div>
+        )}
 
         {/* 尺寸就在相機下方：拍完不用再回上一頁找輸入格，量完拍完一次送出。
             這裡用原生數字鍵盤而不是大鍵盤——相機預覽已經吃掉大半個畫面，
@@ -222,12 +308,31 @@ export default function CameraCapture({
                 </button>
               </>
             ) : (
-              <button onClick={capture} className="w-full whitespace-nowrap rounded-md bg-slate-900 py-2 text-sm font-medium text-white">
-                拍照
-              </button>
+              <>
+                <button onClick={capture} className="flex-1 whitespace-nowrap rounded-md bg-slate-900 py-2 text-sm font-medium text-white">
+                  拍照
+                </button>
+                {/* 候補上傳（2026-08-26）：病人已經走了、照片還在公務機相簿裡時的補救路徑 */}
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  className="flex-1 whitespace-nowrap rounded-md border border-slate-300 py-2 text-sm text-slate-700"
+                >
+                  從相簿選圖
+                </button>
+              </>
             )}
           </div>
         )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) pickFile(f);
+          }}
+        />
         {status === "error" && <p className="px-3 pb-2 text-xs text-red-500">{message}</p>}
       </div>
       <canvas ref={canvasRef} className="hidden" />

@@ -37,7 +37,15 @@ export async function submitQuestionnaireAction(formData: FormData) {
   } else {
     const { data: response, error } = await supabase
       .from("questionnaire_responses")
-      .insert({ case_id: caseId, questionnaire_id: questionnaireId, schedule_item_id: itemId || null, submitted_via: "staff" })
+      // completed_at：這條路徑是整份一次送出（不像病人版逐頁存草稿），送出即完成。
+      // 沒寫的話計分與匯出會把它當成半份問卷整份濾掉（2026-08-26）。
+      .insert({
+        case_id: caseId,
+        questionnaire_id: questionnaireId,
+        schedule_item_id: itemId || null,
+        submitted_via: "staff",
+        completed_at: new Date().toISOString(),
+      })
       .select("id")
       .single();
     if (error || !response) throw error ?? new Error("送出問卷失敗");

@@ -24,6 +24,8 @@ import DiagnosisSection from "./DiagnosisSection";
 import PipelineProgress from "./PipelineProgress";
 import IntakeOptionForm from "./IntakeOptionForm";
 import FamilyHistoryPicker from "./FamilyHistoryPicker";
+import ScheduleVisitForm from "./ScheduleVisitForm";
+import MarkScheduleDoneButton from "./MarkScheduleDoneButton";
 import PriorTreatmentPicker from "./PriorTreatmentPicker";
 import MultiEntryInput from "./MultiEntryInput";
 import KeloidLesionSection from "./KeloidLesionSection";
@@ -217,11 +219,20 @@ export default async function CaseDetailPage({
     supabase
       .from("questionnaire_responses")
       .select(
-        "id, submitted_at, submitted_via, questionnaire_templates(id, name), questionnaire_answers(answer_value, updated_at, updated_by, questionnaire_questions(order_no, question_text, question_type, options))"
+        // completed_at：null ＝ 病人版存到一半被中斷的草稿（2026-08-26）。
+        // 這裡刻意**不過濾掉**——個案頁正是人員要看到「這份還沒填完，去接續」的地方；
+        // 濾掉的是計分、應填清單與匯出。
+        // schedule_item_id：追蹤時程那一列要標出「這個時間點的問卷填了沒」（2026-08-26）
+        "id, submitted_at, submitted_via, completed_at, schedule_item_id, questionnaire_templates(id, name), questionnaire_answers(answer_value, updated_at, updated_by, questionnaire_questions(order_no, question_text, question_type, options))"
       )
       .eq("case_id", id)
       .order("submitted_at", { ascending: false }),
-    supabase.from("photos").select("id, taken_at, body_site, lesion_id, file_path, thumbnail_path").eq("case_id", id).order("taken_at", { ascending: false }),
+    supabase
+      .from("photos")
+      // schedule_item_id：追蹤時程那一列要標出「這個時間點拍了沒」（2026-08-26）
+      .select("id, taken_at, body_site, lesion_id, file_path, thumbnail_path, schedule_item_id, source")
+      .eq("case_id", id)
+      .order("taken_at", { ascending: false }),
     supabase.from("case_data_completeness").select("*").eq("case_id", id),
     supabase.from("radiotherapy_dose_protocols").select("dose_category, fraction_count, per_fraction_dose_cgy"),
     supabase.from("radiotherapy_doctors").select("name").eq("active", true).order("sort_order").order("name"),
@@ -245,7 +256,8 @@ export default async function CaseDetailPage({
     supabase.from("lab_marker_definitions").select("id, display_name, unit").eq("active", true).order("sort_order"),
     supabase
       .from("lab_results")
-      .select("id, sample_date, value, value_text, note, recorded_by, lab_marker_definitions(display_name, unit)")
+      // marker_id：紀錄要攤成「一列一個採檢日期、每個標記固定一欄」的寬表，得靠它對欄（2026-08-27）
+      .select("id, marker_id, sample_date, value, value_text, note, recorded_by, lab_marker_definitions(display_name, unit)")
       .eq("case_id", id)
       .order("sample_date", { ascending: false }),
     supabase.from("questionnaire_templates").select("id").eq("name", "JSS 疤痕診斷分類表").maybeSingle(),
@@ -436,6 +448,9 @@ export default async function CaseDetailPage({
   for (const r of responses ?? []) {
     const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
     if (!q?.id) continue;
+    // 草稿不算已完成（2026-08-26）——不然「應填問卷清單」會對一份只答了 19/36 題的
+    // SF-36 打綠色的勾，那正是這次要修掉的假完成。
+    if (!r.completed_at) continue;
     const prev = responseCountByTemplate.get(q.id);
     responseCountByTemplate.set(q.id, {
       count: (prev?.count ?? 0) + 1,
@@ -446,6 +461,384 @@ export default async function CaseDetailPage({
     .filter((t) => t.required_for_intake)
     .map((t) => ({ ...t, done: responseCountByTemplate.get(t.id) }));
 
+  // ── 治療紀錄拆成術前／術後兩區（2026-08-26 助理要求）────────────────
+  //
+  // 在這之前，「手術前的治療」「收案當次手術」「之後每一次回診的治療」全部擠在同一張表、
+  // 同一份清單裡，看不出一位病人的治療歷程走到哪。現在依日期分流：
+  //   ≤ 手術日 → 上方「術前治療與收案當次手術」
+  //   > 手術日 → 下方追蹤時程那一區（跟每一次回診的時間點放在一起）
+  //
+  // **資料完全不動**（treatment_records 沒有新欄位）：手術日本來就推導得出來，
+  // 多一個可能跟日期矛盾的分類欄位只會多一個要維護的東西。
+  // 尚未登記手術的個案，全部算術前——他還沒開刀，本來就沒有「術後回診」。
+  const treatmentTypeNameOf = (r: { treatment_types: unknown }) => {
+    const tt = Array.isArray(r.treatment_types) ? r.treatment_types[0] : r.treatment_types;
+    return (tt as { name?: string } | null)?.name ?? "";
+  };
+  const surgeryDate =
+    (treatmentRecords ?? [])
+      .filter((r) => treatmentTypeNameOf(r) === "手術切除")
+      .map((r) => r.treatment_date)
+      .sort()[0] ?? null;
+  const isFollowUpRecord = (r: { treatment_date: string }) => surgeryDate !== null && r.treatment_date > surgeryDate;
+  const preOpRecords = (treatmentRecords ?? []).filter((r) => !isFollowUpRecord(r));
+  const followUpRecords = (treatmentRecords ?? []).filter(isFollowUpRecord);
+
+  // 台北時區的今天。時程列的「實際回診日」預帶這一天。
+  const todayTaipei = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(new Date());
+
+  // 治療紀錄現在有三個地方要列（術前那一區、時程列底下、其他回診治療），
+  // 攤平的方式共用同一份，免得三處各寫一次而漸漸長歪。
+  type TreatmentRowSource = (NonNullable<typeof treatmentRecords>)[number];
+  const toTreatmentRow = (r: TreatmentRowSource) => {
+    const tt = Array.isArray(r.treatment_types) ? r.treatment_types[0] : r.treatment_types;
+    return {
+      id: r.id,
+      treatment_type_id: r.treatment_type_id,
+      typeName: tt?.name ?? null,
+      treatment_date: r.treatment_date,
+      body_site: r.body_site,
+      lesion_id: r.lesion_id,
+      field_values: r.field_values,
+      free_text: r.free_text,
+      recorded_by: r.recorded_by,
+      recurrence_observed: r.recurrence_observed,
+      recurrence_description: r.recurrence_description,
+      blood_drawn: r.blood_drawn,
+      blood_drawn_note: r.blood_drawn_note,
+      symptom_change_option_id: r.symptom_change_option_id,
+    };
+  };
+  const symptomChangeOptions = (intakeOptions ?? [])
+    .filter((o) => o.category === "symptom_change")
+    .map((o) => ({ id: o.id, label: o.label }));
+  const treatmentFieldSchemas = Object.fromEntries((treatmentTypes ?? []).map((t) => [t.id, t.field_schema ?? []]));
+
+  // 每一列時程的狀態：那天登了哪些治療、問卷填了沒、拍了沒。
+  // 治療用「日期對得上」關聯——登記時會把 due_date 寫成實際回診日，所以對得起來；
+  // 對不上任何一列的（臨時回診、舊資料匯入）落到「其他回診治療」那一區，不會不見。
+  const scheduleDueDates = new Set((scheduleItems ?? []).map((s) => s.due_date));
+  const treatmentsByDate = new Map<string, typeof followUpRecords>();
+  for (const r of followUpRecords) {
+    treatmentsByDate.set(r.treatment_date, [...(treatmentsByDate.get(r.treatment_date) ?? []), r]);
+  }
+  const orphanFollowUpRecords = followUpRecords.filter((r) => !scheduleDueDates.has(r.treatment_date));
+  const responseByScheduleItem = new Set(
+    (responses ?? []).filter((r) => r.schedule_item_id && r.completed_at).map((r) => r.schedule_item_id as string)
+  );
+  const photoByScheduleItem = new Set(
+    (photos ?? []).filter((p) => p.schedule_item_id).map((p) => p.schedule_item_id as string)
+  );
+  /**
+   * 這一列還有什麼沒做（2026-08-26）。標記完成／登記回診前會拿它跳一次確認——
+   * 「已完成但問卷其實沒填」正是文件抱怨的來源。
+   * 只看該列**指定的動作**：沒掛問卷動作的列不會因為沒問卷而被嘮叨。
+   */
+  const pendingWarningsFor = (item: { id: string; actions: string[] | null; questionnaire_id: string | null }): string[] => {
+    const out: string[] = [];
+    const acts = item.actions ?? [];
+    if (acts.includes("questionnaire") && item.questionnaire_id && !responseByScheduleItem.has(item.id)) {
+      const name = (questionnaireTemplates ?? []).find((t) => t.id === item.questionnaire_id)?.name ?? "問卷";
+      out.push(`問卷（${name}）`);
+    }
+    if (acts.includes("photo") && !photoByScheduleItem.has(item.id)) out.push("拍照");
+    return out;
+  };
+
+  // ── Lab 生物標記：紀錄攤成寬表（2026-08-27 使用者要求）──────────────
+  //
+  // 輸入表單本來就是「一次橫向填完所有標記」，但下方的紀錄清單是逐筆列的：
+  // 一次採檢只驗了 9 項裡的 2 項，就只長出 2 行，而且不同採檢日期之間左右對不齊，
+  // 沒辦法一眼看出某個標記在各次採檢的變化。
+  //
+  // 改成一列＝一個採檢日期，每個標記固定一欄，沒驗的那幾格明寫「未輸入」——
+  // 留白會讓人分不清是沒驗還是漏看。
+  //
+  // 欄位＝後台目前啟用的標記，再補上「已停用但這位病人驗過」的（附在後面並標示），
+  // 否則停用一個標記就會讓歷史數據從畫面上消失。
+  type LabColumn = { id: string; name: string; unit: string | null; retired: boolean };
+  const labColumns: LabColumn[] = (() => {
+    const cols: LabColumn[] = (labMarkers ?? []).map((m) => ({
+      id: m.id,
+      name: m.display_name,
+      unit: m.unit,
+      retired: false,
+    }));
+    const known = new Set(cols.map((c) => c.id));
+    for (const r of labResults ?? []) {
+      if (!r.marker_id || known.has(r.marker_id)) continue;
+      known.add(r.marker_id);
+      const def = Array.isArray(r.lab_marker_definitions) ? r.lab_marker_definitions[0] : r.lab_marker_definitions;
+      cols.push({ id: r.marker_id, name: def?.display_name ?? "（已刪除的標記）", unit: def?.unit ?? null, retired: true });
+    }
+    return cols;
+  })();
+  // 同一次採檢的同一個標記理論上只有一筆，但沒有唯一鍵擋著（重複登打就會有兩筆）。
+  // 存成陣列並在畫面上全部列出來，而不是默默只顯示其中一筆——看不到的資料比看得到的錯誤更難查。
+  type LabResultRow = (NonNullable<typeof labResults>)[number];
+  const labRows = (() => {
+    const byDate = new Map<string, Map<string, LabResultRow[]>>();
+    for (const r of labResults ?? []) {
+      if (!byDate.has(r.sample_date)) byDate.set(r.sample_date, new Map());
+      const row = byDate.get(r.sample_date)!;
+      row.set(r.marker_id, [...(row.get(r.marker_id) ?? []), r]);
+    }
+    // labResults 已是採檢日期新到舊，這裡再排一次是因為 Map 的順序取決於插入順序
+    return [...byDate.entries()]
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      .map(([sampleDate, byMarker]) => ({ sampleDate, byMarker }));
+  })();
+  const labCellText = (rows: LabResultRow[] | undefined) =>
+    rows && rows.length > 0 ? rows.map((r) => (r.value !== null ? String(r.value) : r.value_text ?? "")).join(" / ") : null;
+
+  // ── 追蹤時程分三組（2026-08-26 建立，08-27 依使用者回報再收窄）──────────
+  //
+  // 一位病人有 27 筆時程（術後 24 個月的每月追蹤＋3 次抽血），整面攤開就是一面牆。
+  //
+  // 08-26 的第一版把「已逾期」也算進預設展開，理由是逾期的最該被看到。實際上反了：
+  // 一位拖了一年沒回診的病人有二十幾筆逾期，全部展開之後那面牆更長，而且逾期這件事
+  // 本來一行字就講得完。所以改成三組：
+  //
+  //   ① 近期待處理（今天 ~ 今天＋3 個月）→ 展開。這是真正要動手處理的
+  //   ② 已逾期                          → 收折，但摘要行用醒目色寫出筆數與最早那筆的日期
+  //   ③ 其他（已完成、免回診、三個月後才到期）→ 收折
+  //
+  // 逾期收折但**筆數一定看得到**——收折的目的是不佔版面，不是把它藏起來。
+  //
+  // 放療不在這份清單裡（它是 radiotherapy_sessions，上方獨立區塊），刻意不合併：
+  // 放療要填實際劑量與放射科醫師，那些欄位搬不進時程列，合併只會讓同一件事出現在兩個地方。
+  const scheduleHorizon = (() => {
+    // 從台北的今天往後推三個月。用 todayTaipei 當起點而不是 new Date()——
+    // 伺服器跑 UTC，直接拿 UTC 的今天推會在台北時間的凌晨差一天。
+    const d = new Date(`${todayTaipei}T00:00:00+08:00`);
+    d.setMonth(d.getMonth() + 3);
+    return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(d);
+  })();
+  const isPendingItem = (item: { status: string }) => item.status === "pending";
+  const overdueScheduleItems = (scheduleItems ?? []).filter((s) => isPendingItem(s) && s.due_date < todayTaipei);
+  const upcomingScheduleItems = (scheduleItems ?? []).filter(
+    (s) => isPendingItem(s) && s.due_date >= todayTaipei && s.due_date <= scheduleHorizon
+  );
+  const collapsedScheduleItems = (scheduleItems ?? []).filter(
+    (s) => !overdueScheduleItems.includes(s) && !upcomingScheduleItems.includes(s)
+  );
+  // scheduleItems 是依 due_date 遞增查出來的，所以第一筆就是最早的那筆逾期
+  const earliestOverdue = overdueScheduleItems[0]?.due_date ?? null;
+
+  /** 時程列的內容。展開區與收折區共用同一份，兩邊各寫一次遲早會長歪。 */
+  const renderScheduleRow = (item: (NonNullable<typeof scheduleItems>)[number]) => {
+    // 這一列還缺什麼（問卷／拍照），以及那一天已經登了哪些治療。
+    // 「已完成但問卷其實沒填」就是靠 pending 這一串標出來的（2026-08-26）。
+    const pending = pendingWarningsFor(item);
+    const dayTreatments = treatmentsByDate.get(item.due_date) ?? [];
+    return (
+    <li key={item.id} className="rounded-md border border-brand-100 bg-paper-raised px-3 py-2 text-sm">
+      <div className="flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 break-words">
+          <span className="font-medium text-ink">{item.label}</span>
+          <span className="text-ink/40">到期 {item.due_date}</span>
+          <span className="text-xs text-ink/40">{(item.actions ?? []).join("、")}</span>
+          {item.questionnaire_id && (
+            <span className="text-xs text-ink/40">
+              問卷：
+              {(questionnaireTemplates ?? []).find((t) => t.id === item.questionnaire_id)?.name ?? "（已刪除）"}
+            </span>
+          )}
+          <span
+            className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
+              item.status === "done"
+                ? "bg-emerald-100 text-emerald-700"
+                : item.status === "skipped"
+                ? "bg-ink/10 text-ink/50"
+                : "bg-accent-100 text-accent-800"
+            }`}
+          >
+            {item.status === "done" ? "已完成" : item.status === "skipped" ? "本月免回診" : "待處理"}
+          </span>
+          {/* 不分狀態都標出來。已完成的列更要標——那正是「看起來做完了，其實沒有」的情況 */}
+          {pending.length > 0 && item.status !== "skipped" && (
+            <span className="whitespace-nowrap rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
+              ⚠ {pending.join("、")}尚未完成
+            </span>
+          )}
+        </div>
+
+        {/* 那一天登到的治療：把回診治療放在該次回診的時間點旁邊（2026-08-26） */}
+        {dayTreatments.length > 0 && (
+          <ul className="space-y-0.5 border-l-2 border-brand-100 pl-2.5">
+            {dayTreatments.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center gap-x-1.5 text-xs text-ink/60">
+                <span className="text-ink/80">{treatmentTypeNameOf(r) || "（未指定治療方式）"}</span>
+                {r.body_site && <span className="rounded bg-brand-50 px-1.5 text-ink/50">{r.body_site}</span>}
+                {r.recurrence_observed && <span className="text-red-600">復發</span>}
+                {r.blood_drawn && <span className="text-sky-700">抽血</span>}
+                {r.symptom_change_option_id && (
+                  <span className="text-emerald-700">
+                    {symptomChangeOptions.find((o) => o.id === r.symptom_change_option_id)?.label ?? ""}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {item.status === "skipped" && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-ink/40">
+            <span>{item.skipped_reason ?? "醫師判定免回診"}</span>
+            <form action={markScheduleItemAction}>
+              <input type="hidden" name="case_id" value={id} />
+              <input type="hidden" name="item_id" value={item.id} />
+              <input type="hidden" name="status" value="pending" />
+              <SubmitButton variant="ghost" size="sm" className="!px-1 !py-0 text-xs underline" pendingText="處理中…">
+                改回待處理
+              </SubmitButton>
+            </form>
+          </div>
+        )}
+
+        {/* 改期：範本算出來的日期只是預估，實際約診日確定後改這裡，提醒才會在對的日子送出 */}
+        {item.status === "pending" && (
+          <form action={updateScheduleItemDateAction} className="flex flex-wrap items-center gap-2 text-xs">
+            <input type="hidden" name="case_id" value={id} />
+            <input type="hidden" name="item_id" value={item.id} />
+            <span className="text-ink/40">實際回診日</span>
+            <input
+              type="date"
+              name="due_date"
+              defaultValue={item.due_date ?? ""}
+              className="rounded border border-brand-200 px-1.5 py-0.5 text-xs"
+            />
+            <label className="flex items-center gap-1 text-ink/60">
+              <input
+                type="checkbox"
+                name="remind"
+                defaultChecked={(item.actions ?? []).includes("visit_reminder")}
+              />
+              LINE 提醒
+            </label>
+            <SubmitButton variant="ghost" size="sm" className="!px-1 !py-0 text-xs underline" pendingText="儲存中…">
+              儲存日期
+            </SubmitButton>
+          </form>
+        )}
+        {/* 填問卷／拍照的連結**不分狀態都顯示**（2026-08-26）。
+            原本只在 pending 時渲染，於是那一列一被標成完成，補填的入口就整個消失——
+            文件抱怨的「已完成但問卷未完成，無法再打開補填」有一半是這裡造成的。 */}
+        {item.status !== "skipped" && (
+          <div className="-mx-3 overflow-x-auto px-3">
+            <span className="flex w-max items-center gap-3 whitespace-nowrap">
+              {(item.actions ?? []).includes("questionnaire") &&
+                (item.questionnaire_id ? (
+                  <Link
+                    href={`/patient/${id}/questionnaire/${item.id}`}
+                    className="text-xs text-brand-700 underline"
+                  >
+                    {responseByScheduleItem.has(item.id) ? "問卷已填，點此重填" : "填寫問卷"}
+                  </Link>
+                ) : (
+                  <span className="text-xs text-red-400" title="此時間點標記了填問卷動作，但尚未指定問卷，請至後台時程範本補設定">
+                    （未指定問卷）
+                  </span>
+                ))}
+              {(item.actions ?? []).includes("photo") && (
+                <Link href={`/patient/${id}/photo/${item.id}`} className="text-xs text-brand-700 underline">
+                  {photoByScheduleItem.has(item.id) ? "已拍照，點此再拍" : "部位標記與拍照"}
+                </Link>
+              )}
+              {item.status === "pending" ? (
+                <>
+                  {/* 有未完成事項時會先跳確認，沒有的話跟以前一樣一按就完成 */}
+                  <MarkScheduleDoneButton caseId={id} itemId={item.id} pendingWarnings={pending} />
+                  {/* 醫師判定穩定、改為每 2 個月追蹤時，跳過的月份標這個而不是刪掉：
+                      欄位對齊 FW1–24 不變，也查得到是從第幾個月開始降頻的（決策 2026-08-20 F-D3） */}
+                  <form action={markScheduleItemAction}>
+                    <input type="hidden" name="case_id" value={id} />
+                    <input type="hidden" name="item_id" value={item.id} />
+                    <input type="hidden" name="status" value="skipped" />
+                    <SubmitButton
+                      variant="ghost"
+                      size="sm"
+                      className="!px-1.5 !py-0.5 text-ink/40 underline"
+                      pendingText="處理中…"
+                    >
+                      本月免回診
+                    </SubmitButton>
+                  </form>
+                </>
+              ) : (
+                // 已完成的回頭路（2026-08-26）。不加 PIN、不限身分——發現問卷沒填的
+                // 就是當下那位護理師，要她先去切換操作者只會讓她乾脆不補。
+                <form action={markScheduleItemAction}>
+                  <input type="hidden" name="case_id" value={id} />
+                  <input type="hidden" name="item_id" value={item.id} />
+                  <input type="hidden" name="status" value="pending" />
+                  <SubmitButton
+                    variant="ghost"
+                    size="sm"
+                    className="!px-1.5 !py-0.5 text-ink/40 underline"
+                    pendingText="處理中…"
+                  >
+                    改回待處理
+                  </SubmitButton>
+                </form>
+              )}
+            </span>
+          </div>
+        )}
+
+        {/* 登記本次回診（2026-08-26）：治療紀錄跟該次回診的時間點放在一起 key。
+            只有待處理的列才展得開——已完成的要先「改回待處理」，避免同一次回診被登兩筆。 */}
+        {item.status === "pending" && (
+          <details className="text-xs">
+            <summary className="cursor-pointer font-medium text-brand-700 hover:text-brand-800">
+              ＋ 登記本次回診（治療、症狀變化、復發、抽血）
+            </summary>
+            <ScheduleVisitForm
+              caseId={id}
+              itemId={item.id}
+              today={todayTaipei}
+              lesions={lesionList.map((l) => ({ id: l.id, site_no: l.site_no, body_site: l.body_site }))}
+              symptomOptions={symptomChangeOptions}
+              treatmentTypes={(treatmentTypes ?? []).map((t) => ({ id: t.id, name: t.name }))}
+              pendingWarnings={pending}
+            />
+          </details>
+        )}
+        {/* 個案層級改換問卷：只影響這一筆時程項目，不動後台範本、也不影響其他個案 */}
+        {item.status === "pending" && (
+          <details className="text-xs">
+            <summary className="cursor-pointer text-ink/40 hover:text-ink/60">
+              {item.questionnaire_id ? "更換此時間點的問卷" : "指定此時間點的問卷"}
+            </summary>
+            <form
+              action={updateScheduleItemQuestionnaireAction}
+              className="mt-1.5 flex flex-wrap items-center gap-2"
+            >
+              <input type="hidden" name="case_id" value={id} />
+              <input type="hidden" name="item_id" value={item.id} />
+              <select
+                name="questionnaire_id"
+                defaultValue={item.questionnaire_id ?? ""}
+                className="rounded border border-brand-200 px-2 py-1 text-xs"
+              >
+                <option value="">（不指定問卷）</option>
+                {(questionnaireTemplates ?? []).map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <SubmitButton variant="outline" size="sm" className="!px-2 !py-0.5 !text-xs" pendingText="儲存中…">
+                儲存
+              </SubmitButton>
+            </form>
+          </details>
+        )}
+      </div>
+    </li>
+    );
+  };
+
   // JSS 疤痕診斷分類表（JSW Scar Scale 2015）：同一份量表每次追蹤重複施測，
   // 以個案最早一筆回覆的總分當基準，計算每筆回覆的 Delta Score（基準分-本次分，正值代表改善）。
   // （2026-07-27 決策：原本另有一份 6 題追蹤評估表，已刪除只留這份正式量表。）
@@ -454,7 +847,8 @@ export default async function CaseDetailPage({
     const jssResponses = (responses ?? [])
       .filter((r) => {
         const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
-        return q?.name === "JSS 疤痕診斷分類表";
+        // 草稿不當基準也不算一次施測，否則 Delta 會拿半份問卷的總分當基準線
+        return q?.name === "JSS 疤痕診斷分類表" && r.completed_at;
       })
       .map((r) => ({ id: r.id, submitted_at: r.submitted_at, total: computeJSSClassification(extractAnswers(r))?.total ?? null }))
       .filter((r): r is { id: string; submitted_at: string; total: number } => r.total !== null)
@@ -936,11 +1330,19 @@ export default async function CaseDetailPage({
       */}
 
       {/* 治療紀錄 */}
-      <section id="section-treatment" data-nav-section data-nav-label="治療紀錄" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
+      {/* 2026-08-26：這一區從「治療紀錄」縮成「術前治療與收案當次手術」。
+          術後每一次回診的治療改到下方追蹤時程那一區，跟該次回診的時間點放在一起。
+          id 維持 section-treatment——導覽與各處的欄位定位連結都指著它，改了會全斷。 */}
+      <section id="section-treatment" data-nav-section data-nav-label="術前治療與收案當次手術" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
-          治療紀錄
-          <InfoTooltip text="選擇治療類型並填寫對應欄位；若有常用套組可直接選擇帶入數值，再視情況微調後儲存。若登打「手術切除」且已標記部位，會自動產生放射治療排程。" />
+          術前治療與收案當次手術
+          <InfoTooltip text="收案手術（含）以前的治療都記在這裡：術前的病灶內注射、藥膏、貼片，以及收案當次的手術切除。選擇治療類型並填寫對應欄位；若有常用套組可直接選擇帶入數值，再視情況微調後儲存。登打「手術切除」且已標記部位時會自動產生放射治療排程，並以手術日為起點排出術後追蹤時程。術後每次回診的治療請到下方「追蹤時程」該次回診那一列登記。" />
         </h2>
+        <p className="mb-2 text-xs text-ink/45">
+          {surgeryDate
+            ? `手術日 ${surgeryDate}（最早一筆「手術切除」）。這一區只顯示該日（含）以前的治療；之後的在下方追蹤時程。`
+            : "尚未登記「手術切除」，所以目前所有治療紀錄都列在這一區。登記手術後，之後的治療會自動歸到下方追蹤時程。"}
+        </p>
         <div className="mb-4">
           <TreatmentForm
             caseId={id}
@@ -961,29 +1363,9 @@ export default async function CaseDetailPage({
         </div>
         <TreatmentRecordList
           caseId={id}
-          records={(treatmentRecords ?? []).map((r) => {
-            const tt = Array.isArray(r.treatment_types) ? r.treatment_types[0] : r.treatment_types;
-            return {
-              id: r.id,
-              treatment_type_id: r.treatment_type_id,
-              typeName: tt?.name ?? null,
-              treatment_date: r.treatment_date,
-              body_site: r.body_site,
-              lesion_id: r.lesion_id,
-              field_values: r.field_values,
-              free_text: r.free_text,
-              recorded_by: r.recorded_by,
-              recurrence_observed: r.recurrence_observed,
-              recurrence_description: r.recurrence_description,
-              blood_drawn: r.blood_drawn,
-              blood_drawn_note: r.blood_drawn_note,
-              symptom_change_option_id: r.symptom_change_option_id,
-            };
-          })}
+          records={preOpRecords.map(toTreatmentRow)}
           fieldSchemas={Object.fromEntries((treatmentTypes ?? []).map((t) => [t.id, t.field_schema ?? []]))}
-          symptomChangeOptions={(intakeOptions ?? [])
-            .filter((o) => o.category === "symptom_change")
-            .map((o) => ({ id: o.id, label: o.label }))}
+          symptomChangeOptions={symptomChangeOptions}
         />
       </section>
 
@@ -1088,6 +1470,163 @@ export default async function CaseDetailPage({
             尚無放療排程。登打「手術切除」治療紀錄時，勾選的部位若已在病灶清單指定部位分類，系統會為每個部位各產生一組排程。
           </p>
         )}
+      </section>
+
+      {/* 追蹤時程 */}
+      <section id="section-schedule" data-nav-section data-nav-label="追蹤時程" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-ink/80">
+          追蹤時程（含每次回診的治療）
+          <InfoTooltip text="套用範本後自動產生的追蹤項目，日期是「手術日＋範本天數」的預估值。病人實際來的那天，就在那一列展開「登記本次回診」：填實際回診日、勾本次治療，送出後會一併建立治療紀錄、把日期寫回這一列、並標記完成。LINE 回診提醒是依這個日期推播的（提前 3 天與當天各一則）。" />
+        </h2>
+        <p className="mb-2 text-xs text-ink/45">
+          術後每一次回診的治療都記在這裡——展開該次回診那一列登記。
+          劑量、套組等細節欄位這裡不收，登記後到上方「術前治療與收案當次手術」的表單補。
+        </p>
+
+        {/* 臨時回診：實務上追蹤很難完全照範本走（例：「兩週後回來看傷口」） */}
+        <details className="mb-3 rounded-md border border-brand-100 bg-paper-sunken p-2">
+          <summary className="cursor-pointer text-xs text-brand-800">＋ 新增一次回診（範本以外）</summary>
+          <form action={addScheduleItemAction} className="mt-2 flex flex-wrap items-end gap-2">
+            <input type="hidden" name="case_id" value={id} />
+            <div>
+              <label className="block text-xs text-ink/50">名稱</label>
+              <input
+                name="label"
+                placeholder="例：拆線回診"
+                className="mt-0.5 w-36 rounded-md border border-brand-200 px-2 py-1 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-ink/50">回診日期</label>
+              <input type="date" name="due_date" required className="mt-0.5 rounded-md border border-brand-200 px-2 py-1 text-sm" />
+            </div>
+            <label className="flex items-center gap-1 text-xs text-ink/60">
+              <input type="checkbox" name="remind" defaultChecked /> LINE 提醒
+            </label>
+            <SubmitButton variant="outline" size="sm" pendingText="新增中…">
+              新增
+            </SubmitButton>
+          </form>
+        </details>
+        <ul className="space-y-2">
+          {/* ① 已逾期：收折，但摘要行永遠看得到筆數與最早那一筆的日期。
+              用醒目色而不是一般的灰字連結——收折是為了不佔版面，不是把逾期藏起來。
+              排在最上面：要先知道欠了幾筆，才知道這位病人的狀況。 */}
+          {overdueScheduleItems.length > 0 && (
+            <li>
+              <details className="group rounded-md border-2 border-amber-300 bg-amber-50 px-3 py-2">
+                <summary className="cursor-pointer list-none text-sm font-medium text-amber-900">
+                  <span className="group-open:hidden">
+                    ⚠ 還有 {overdueScheduleItems.length} 筆已逾期{earliestOverdue && `（最早 ${earliestOverdue}）`} ▾
+                  </span>
+                  <span className="hidden group-open:inline">▴ 收合這 {overdueScheduleItems.length} 筆逾期</span>
+                </summary>
+                <ul className="mt-2 space-y-2">{overdueScheduleItems.map(renderScheduleRow)}</ul>
+              </details>
+            </li>
+          )}
+
+          {/* ② 近期待處理（今天 ~ 三個月內）：這是真正要動手的，直接展開 */}
+          {upcomingScheduleItems.map(renderScheduleRow)}
+          {/* 沒有近期待辦時要講一句，不然畫面上只剩收折鈕，看起來像這位病人沒有時程 */}
+          {upcomingScheduleItems.length === 0 && (scheduleItems ?? []).length > 0 && (
+            <li className="text-sm text-ink/40">近三個月內沒有待處理的時程。</li>
+          )}
+
+          {/* ③ 其他：已完成、免回診，以及三個月後才到期的 */}
+          {collapsedScheduleItems.length > 0 && (
+            <li className="pt-1">
+              {/* 用 <details> 而不是 useState——這一整段還是 server component */}
+              <details className="group">
+                <summary className="cursor-pointer list-none text-xs text-brand-700 underline decoration-dotted underline-offset-2 hover:text-brand-900">
+                  <span className="group-open:hidden">▾ 顯示其餘 {collapsedScheduleItems.length} 筆（已完成、免回診，以及三個月後才到期的）</span>
+                  <span className="hidden group-open:inline">▴ 收合其餘時程</span>
+                </summary>
+                <ul className="mt-2 space-y-2">{collapsedScheduleItems.map(renderScheduleRow)}</ul>
+              </details>
+            </li>
+          )}
+          {(!scheduleItems || scheduleItems.length === 0) && (
+            <li className="text-sm text-ink/40">尚未產生追蹤時程——登記「手術切除」治療紀錄後，會以手術日為起點自動排出術後 24 個月的每月追蹤與後三次抽血。</li>
+          )}
+        </ul>
+
+        {/* 對不上任何一列時程的術後治療（2026-08-26）。來源有二：臨時回診（範本以外，
+            而且日期後來又被改過）、舊資料匯入。沒有這一區的話這些紀錄會從畫面上消失，
+            而它們照樣進匯出檔——看不到的資料比沒有資料更糟。 */}
+        {orphanFollowUpRecords.length > 0 && (
+          <div className="mt-4 border-t border-brand-50 pt-3">
+            <h3 className="mb-1.5 text-xs font-semibold text-ink/60">
+              其他回診治療（無對應時程）
+              <InfoTooltip text="治療日期對不到上面任何一列時程的術後治療，多半來自臨時回診或舊資料匯入。要讓它歸位的話，把對應時程列的日期改成同一天即可。" />
+            </h3>
+            <TreatmentRecordList
+              caseId={id}
+              records={orphanFollowUpRecords.map(toTreatmentRow)}
+              fieldSchemas={treatmentFieldSchemas}
+              symptomChangeOptions={symptomChangeOptions}
+            />
+          </div>
+        )}
+      </section>
+
+      {/* 治療後追蹤結果（舊資料對齊欄位） */}
+      <section id="section-outcome" data-nav-section data-nav-label="治療後追蹤結果" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
+        <h2 className="mb-2 text-sm font-semibold text-ink/80">
+          治療後追蹤結果
+          <InfoTooltip text="記錄長期追蹤的復發狀態、復發日期、統計截止日等研究結果欄位，通常在統計截止時回頭填寫。" />
+        </h2>
+        <form action={updateOutcomeAction} className="grid grid-cols-2 gap-3 text-sm">
+          <input type="hidden" name="case_id" value={id} />
+          <div>
+            <label className="block text-xs font-medium text-ink/70">是否復發</label>
+            <select
+              name="recurrence_status"
+              defaultValue={caseRow.recurrence_status ?? ""}
+              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            >
+              <option value="">未填</option>
+              <option value="none">無復發</option>
+              <option value="recurred">已復發</option>
+              <option value="unknown">未知</option>
+              <option value="not_applicable">不適用</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink/70">復發日期</label>
+            <input
+              type="date"
+              name="recurrence_date"
+              defaultValue={caseRow.recurrence_date ?? ""}
+              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink/70">治療後復發天數</label>
+            <input
+              type="number"
+              name="days_to_recurrence"
+              defaultValue={caseRow.days_to_recurrence ?? ""}
+              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink/70">統計截止日</label>
+            <input
+              type="date"
+              name="followup_cutoff_date"
+              defaultValue={caseRow.followup_cutoff_date ?? ""}
+              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <label className="col-span-2 flex items-center gap-2 text-xs text-ink/70">
+            <input type="checkbox" name="over_one_year_flag" defaultChecked={caseRow.over_one_year_flag === true} />
+            距離治療後超過1年
+          </label>
+          <SubmitButton className="col-span-2" pendingText="更新中…">
+            更新追蹤結果
+          </SubmitButton>
+        </form>
       </section>
 
       {/* 生物資料庫 */}
@@ -1282,97 +1821,106 @@ export default async function CaseDetailPage({
             <span className="text-xs text-ink/40">沒驗到的項目留空即可（可 null），只有填了值的項目會被記錄。</span>
           </div>
         </form>
-        <ul className="divide-y divide-brand-50">
-          <CollapsedList listClassName="divide-y divide-brand-50" label="檢驗數據">
-          {(labResults ?? []).map((r) => {
-            const marker = Array.isArray(r.lab_marker_definitions) ? r.lab_marker_definitions[0] : r.lab_marker_definitions;
-            return (
-              <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 text-sm">
-                <span className="whitespace-nowrap font-medium text-ink/80">{marker?.display_name}</span>
-                <span className="whitespace-nowrap text-ink/70">
-                  {r.value !== null ? r.value : r.value_text}
-                  {marker?.unit ? ` ${marker.unit}` : ""}
-                </span>
-                <span className="whitespace-nowrap text-xs text-ink/40">{r.sample_date}</span>
-                {r.note && <span className="text-xs text-ink/40">・{r.note}</span>}
-                <span className="whitespace-nowrap text-xs text-ink/20">・{r.recorded_by}</span>
-                <form action={deleteLabResultAction} className="ml-auto">
-                  <input type="hidden" name="case_id" value={id} />
-                  <input type="hidden" name="result_id" value={r.id} />
-                  <SubmitButton
-                    variant="ghost"
-                    size="sm"
-                    className="!px-0 !py-0 text-xs text-red-400 underline hover:!bg-transparent"
-                    pendingText="刪除中…"
-                  >
-                    刪除
-                  </SubmitButton>
-                </form>
-              </li>
-            );
-          })}
-          </CollapsedList>
-          {(labResults ?? []).length === 0 && <li className="py-1.5 text-sm text-ink/40">尚無 Lab 數據</li>}
-        </ul>
-      </section>
-
-      {/* 治療後追蹤結果（舊資料對齊欄位） */}
-      <section id="section-outcome" data-nav-section data-nav-label="治療後追蹤結果" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-ink/80">
-          治療後追蹤結果
-          <InfoTooltip text="記錄長期追蹤的復發狀態、復發日期、統計截止日等研究結果欄位，通常在統計截止時回頭填寫。" />
-        </h2>
-        <form action={updateOutcomeAction} className="grid grid-cols-2 gap-3 text-sm">
-          <input type="hidden" name="case_id" value={id} />
-          <div>
-            <label className="block text-xs font-medium text-ink/70">是否復發</label>
-            <select
-              name="recurrence_status"
-              defaultValue={caseRow.recurrence_status ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            >
-              <option value="">未填</option>
-              <option value="none">無復發</option>
-              <option value="recurred">已復發</option>
-              <option value="unknown">未知</option>
-              <option value="not_applicable">不適用</option>
-            </select>
+        {/* 一列＝一個採檢日期，每個標記固定一欄（2026-08-27 使用者要求）。
+            一次只驗 2/9 項時，那兩個值仍落在自己的欄位上，其餘明寫「未輸入」，
+            上下兩次採檢就對得齊，也看得出某個標記的變化。
+            欄多的時候整張表自己橫向捲動，頁面本身不會被撐寬。 */}
+        {labRows.length > 0 ? (
+          <div className="-mx-1 overflow-x-auto px-1">
+            <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
+              <thead>
+                <tr>
+                  <th className="sticky left-0 z-10 border-b border-brand-100 bg-white py-1.5 pr-3 text-left text-xs font-medium text-ink/60">
+                    採檢日期
+                  </th>
+                  {labColumns.map((c) => (
+                    <th
+                      key={c.id}
+                      className="border-b border-brand-100 px-2 py-1.5 text-left text-xs font-medium text-ink/60"
+                      title={c.retired ? `${c.name}（後台已停用，仍保留歷史數據）` : c.name}
+                    >
+                      <span className="whitespace-nowrap">
+                        {c.name}
+                        {c.retired && <span className="ml-1 text-ink/25">（已停用）</span>}
+                      </span>
+                      {/* 單位獨立一行，數值那一格才不用每格重複帶單位 */}
+                      <span className="block whitespace-nowrap text-[10px] font-normal text-ink/35">{c.unit || " "}</span>
+                    </th>
+                  ))}
+                  <th className="border-b border-brand-100 px-2 py-1.5 text-left text-xs font-medium text-ink/60">備註</th>
+                  <th className="border-b border-brand-100 py-1.5 pl-2 text-right text-xs font-medium text-ink/60">逐筆</th>
+                </tr>
+              </thead>
+              <tbody>
+                {labRows.map(({ sampleDate, byMarker }) => {
+                  const all = [...byMarker.values()].flatMap((v) => v ?? []);
+                  const notes = [...new Set(all.map((r) => r.note).filter(Boolean))].join("・");
+                  return (
+                    <tr key={sampleDate} className="align-top">
+                      <td className="sticky left-0 z-10 whitespace-nowrap border-b border-brand-50 bg-white py-1.5 pr-3 font-data text-ink/80">
+                        {sampleDate}
+                      </td>
+                      {labColumns.map((c) => {
+                        const text = labCellText(byMarker.get(c.id));
+                        return (
+                          <td
+                            key={c.id}
+                            className={`whitespace-nowrap border-b border-brand-50 px-2 py-1.5 tabular-nums ${
+                              text === null ? "text-ink/25" : "text-ink/80"
+                            }`}
+                          >
+                            {text ?? "未輸入"}
+                          </td>
+                        );
+                      })}
+                      <td className="border-b border-brand-50 px-2 py-1.5 text-xs text-ink/40">{notes || "—"}</td>
+                      <td className="border-b border-brand-50 py-1.5 pl-2 text-right">
+                        {/* 刪除仍然是逐筆的（一筆＝一個標記一次採檢），所以收在這裡展開。
+                            寬表本身只負責對齊與比對，不承擔逐筆編輯。 */}
+                        <details className="text-xs">
+                          <summary className="cursor-pointer whitespace-nowrap text-ink/40 hover:text-ink/60">
+                            {all.length} 筆 ▾
+                          </summary>
+                          <ul className="mt-1 space-y-1 text-left">
+                            {all.map((r) => {
+                              const marker = Array.isArray(r.lab_marker_definitions)
+                                ? r.lab_marker_definitions[0]
+                                : r.lab_marker_definitions;
+                              return (
+                                <li key={r.id} className="flex flex-wrap items-center gap-x-2 whitespace-nowrap">
+                                  <span className="text-ink/70">{marker?.display_name}</span>
+                                  <span className="text-ink/80">
+                                    {r.value !== null ? r.value : r.value_text}
+                                    {marker?.unit ? ` ${marker.unit}` : ""}
+                                  </span>
+                                  <span className="text-ink/20">{r.recorded_by}</span>
+                                  <form action={deleteLabResultAction}>
+                                    <input type="hidden" name="case_id" value={id} />
+                                    <input type="hidden" name="result_id" value={r.id} />
+                                    <SubmitButton
+                                      variant="ghost"
+                                      size="sm"
+                                      className="!px-0 !py-0 text-xs text-red-400 underline hover:!bg-transparent"
+                                      pendingText="刪除中…"
+                                    >
+                                      刪除
+                                    </SubmitButton>
+                                  </form>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </details>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-ink/70">復發日期</label>
-            <input
-              type="date"
-              name="recurrence_date"
-              defaultValue={caseRow.recurrence_date ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-ink/70">治療後復發天數</label>
-            <input
-              type="number"
-              name="days_to_recurrence"
-              defaultValue={caseRow.days_to_recurrence ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-ink/70">統計截止日</label>
-            <input
-              type="date"
-              name="followup_cutoff_date"
-              defaultValue={caseRow.followup_cutoff_date ?? ""}
-              className="mt-1 w-full rounded-md border border-brand-200 px-2 py-1.5 text-sm"
-            />
-          </div>
-          <label className="col-span-2 flex items-center gap-2 text-xs text-ink/70">
-            <input type="checkbox" name="over_one_year_flag" defaultChecked={caseRow.over_one_year_flag === true} />
-            距離治療後超過1年
-          </label>
-          <SubmitButton className="col-span-2" pendingText="更新中…">
-            更新追蹤結果
-          </SubmitButton>
-        </form>
+        ) : (
+          <p className="py-1.5 text-sm text-ink/40">尚無 Lab 數據</p>
+        )}
       </section>
 
       {/* 問卷填寫 */}
@@ -1432,13 +1980,25 @@ export default async function CaseDetailPage({
           {(responses ?? []).map((r) => {
             const q = Array.isArray(r.questionnaire_templates) ? r.questionnaire_templates[0] : r.questionnaire_templates;
             const answers = extractAnswers(r);
-            const isSF36 = q?.name === "SF-36 健康調查簡表";
-            const isPSQI = q?.name === "匹茲堡睡眠品質量表（PSQI）";
-            const isJSSClassification = q?.name === "JSS 疤痕診斷分類表";
+            // 草稿（病人版存到一半被中斷）不顯示分數徽章：那些分數是用「已答題目平均」
+            // 算出來的，數字看起來完全正常，擺在畫面上只會被當成真的（2026-08-26）。
+            const draft = !r.completed_at;
+            const isSF36 = q?.name === "SF-36 健康調查簡表" && !draft;
+            const isPSQI = q?.name === "匹茲堡睡眠品質量表（PSQI）" && !draft;
+            const isJSSClassification = q?.name === "JSS 疤痕診斷分類表" && !draft;
             return (
-              <li key={r.id} className="rounded-md border border-brand-50 p-2 text-sm text-ink/70">
+              <li
+                key={r.id}
+                className={`rounded-md border p-2 text-sm text-ink/70 ${draft ? "border-amber-200 bg-amber-50/40" : "border-brand-50"}`}
+              >
                 <div>
-                  {new Date(r.submitted_at).toLocaleString("zh-TW")} ・ {q?.name} ・ 填寫人：
+                  {new Date(r.submitted_at).toLocaleString("zh-TW")} ・ {q?.name}
+                  {draft && (
+                    <span className="ml-2 whitespace-nowrap rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
+                      未完成・已答 {Object.keys(answers).length} 題
+                    </span>
+                  )}
+                  {" ・ 填寫人："}
                   {/* submitted_via 分得出 patient／staff，畫面原本一律顯示「診間人員」，
                       等於把「這份是病人自己答的」這件事抹掉——SF-36／PSQI 全都是病人自填。 */}
                   {r.submitted_via === "patient"
@@ -1567,189 +2127,6 @@ export default async function CaseDetailPage({
         </ul>
       </section>
 
-      {/* 追蹤時程 */}
-      <section id="section-schedule" data-nav-section data-nav-label="追蹤時程" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
-        <h2 className="mb-2 text-sm font-semibold text-ink/80">
-          追蹤時程
-          <InfoTooltip text="套用範本後自動產生的追蹤項目，日期是「建檔日＋範本天數」的預估值。實際約診日確定後請改成正確日期——LINE 回診提醒是依這個日期推播的（提前 3 天與當天各一則）。" />
-        </h2>
-
-        {/* 臨時回診：實務上追蹤很難完全照範本走（例：「兩週後回來看傷口」） */}
-        <details className="mb-3 rounded-md border border-brand-100 bg-paper-sunken p-2">
-          <summary className="cursor-pointer text-xs text-brand-800">＋ 新增一次回診（範本以外）</summary>
-          <form action={addScheduleItemAction} className="mt-2 flex flex-wrap items-end gap-2">
-            <input type="hidden" name="case_id" value={id} />
-            <div>
-              <label className="block text-xs text-ink/50">名稱</label>
-              <input
-                name="label"
-                placeholder="例：拆線回診"
-                className="mt-0.5 w-36 rounded-md border border-brand-200 px-2 py-1 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-ink/50">回診日期</label>
-              <input type="date" name="due_date" required className="mt-0.5 rounded-md border border-brand-200 px-2 py-1 text-sm" />
-            </div>
-            <label className="flex items-center gap-1 text-xs text-ink/60">
-              <input type="checkbox" name="remind" defaultChecked /> LINE 提醒
-            </label>
-            <SubmitButton variant="outline" size="sm" pendingText="新增中…">
-              新增
-            </SubmitButton>
-          </form>
-        </details>
-        <ul className="space-y-2">
-          {(scheduleItems ?? []).map((item) => (
-            <li key={item.id} className="rounded-md border border-brand-100 bg-paper-raised px-3 py-2 text-sm">
-              <div className="flex flex-col gap-1.5">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 break-words">
-                  <span className="font-medium text-ink">{item.label}</span>
-                  <span className="text-ink/40">到期 {item.due_date}</span>
-                  <span className="text-xs text-ink/40">{(item.actions ?? []).join("、")}</span>
-                  {item.questionnaire_id && (
-                    <span className="text-xs text-ink/40">
-                      問卷：
-                      {(questionnaireTemplates ?? []).find((t) => t.id === item.questionnaire_id)?.name ?? "（已刪除）"}
-                    </span>
-                  )}
-                  <span
-                    className={`whitespace-nowrap rounded px-2 py-0.5 text-xs ${
-                      item.status === "done"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : item.status === "skipped"
-                        ? "bg-ink/10 text-ink/50"
-                        : "bg-accent-100 text-accent-800"
-                    }`}
-                  >
-                    {item.status === "done" ? "已完成" : item.status === "skipped" ? "本月免回診" : "待處理"}
-                  </span>
-                </div>
-
-                {item.status === "skipped" && (
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-ink/40">
-                    <span>{item.skipped_reason ?? "醫師判定免回診"}</span>
-                    <form action={markScheduleItemAction}>
-                      <input type="hidden" name="case_id" value={id} />
-                      <input type="hidden" name="item_id" value={item.id} />
-                      <input type="hidden" name="status" value="pending" />
-                      <SubmitButton variant="ghost" size="sm" className="!px-1 !py-0 text-xs underline" pendingText="處理中…">
-                        改回待處理
-                      </SubmitButton>
-                    </form>
-                  </div>
-                )}
-
-                {/* 改期：範本算出來的日期只是預估，實際約診日確定後改這裡，提醒才會在對的日子送出 */}
-                {item.status === "pending" && (
-                  <form action={updateScheduleItemDateAction} className="flex flex-wrap items-center gap-2 text-xs">
-                    <input type="hidden" name="case_id" value={id} />
-                    <input type="hidden" name="item_id" value={item.id} />
-                    <span className="text-ink/40">實際回診日</span>
-                    <input
-                      type="date"
-                      name="due_date"
-                      defaultValue={item.due_date ?? ""}
-                      className="rounded border border-brand-200 px-1.5 py-0.5 text-xs"
-                    />
-                    <label className="flex items-center gap-1 text-ink/60">
-                      <input
-                        type="checkbox"
-                        name="remind"
-                        defaultChecked={(item.actions ?? []).includes("visit_reminder")}
-                      />
-                      LINE 提醒
-                    </label>
-                    <SubmitButton variant="ghost" size="sm" className="!px-1 !py-0 text-xs underline" pendingText="儲存中…">
-                      儲存日期
-                    </SubmitButton>
-                  </form>
-                )}
-                {item.status === "pending" && (
-                  <div className="-mx-3 overflow-x-auto px-3">
-                    <span className="flex w-max items-center gap-3 whitespace-nowrap">
-                      {(item.actions ?? []).includes("questionnaire") &&
-                        (item.questionnaire_id ? (
-                          <Link
-                            href={`/patient/${id}/questionnaire/${item.id}`}
-                            className="text-xs text-brand-700 underline"
-                          >
-                            填寫問卷
-                          </Link>
-                        ) : (
-                          <span className="text-xs text-red-400" title="此時間點標記了填問卷動作，但尚未指定問卷，請至後台時程範本補設定">
-                            （未指定問卷）
-                          </span>
-                        ))}
-                      {(item.actions ?? []).includes("photo") && (
-                        <Link href={`/patient/${id}/photo/${item.id}`} className="text-xs text-brand-700 underline">
-                          部位標記與拍照
-                        </Link>
-                      )}
-                      <form action={markScheduleItemAction}>
-                        <input type="hidden" name="case_id" value={id} />
-                        <input type="hidden" name="item_id" value={item.id} />
-                        <input type="hidden" name="status" value="done" />
-                        <SubmitButton variant="ghost" size="sm" className="!px-1.5 !py-0.5 underline" pendingText="處理中…">
-                          標記完成
-                        </SubmitButton>
-                      </form>
-                      {/* 醫師判定穩定、改為每 2 個月追蹤時，跳過的月份標這個而不是刪掉：
-                          欄位對齊 FW1–24 不變，也查得到是從第幾個月開始降頻的（決策 2026-08-20 F-D3） */}
-                      <form action={markScheduleItemAction}>
-                        <input type="hidden" name="case_id" value={id} />
-                        <input type="hidden" name="item_id" value={item.id} />
-                        <input type="hidden" name="status" value="skipped" />
-                        <SubmitButton
-                          variant="ghost"
-                          size="sm"
-                          className="!px-1.5 !py-0.5 text-ink/40 underline"
-                          pendingText="處理中…"
-                        >
-                          本月免回診
-                        </SubmitButton>
-                      </form>
-                    </span>
-                  </div>
-                )}
-                {/* 個案層級改換問卷：只影響這一筆時程項目，不動後台範本、也不影響其他個案 */}
-                {item.status === "pending" && (
-                  <details className="text-xs">
-                    <summary className="cursor-pointer text-ink/40 hover:text-ink/60">
-                      {item.questionnaire_id ? "更換此時間點的問卷" : "指定此時間點的問卷"}
-                    </summary>
-                    <form
-                      action={updateScheduleItemQuestionnaireAction}
-                      className="mt-1.5 flex flex-wrap items-center gap-2"
-                    >
-                      <input type="hidden" name="case_id" value={id} />
-                      <input type="hidden" name="item_id" value={item.id} />
-                      <select
-                        name="questionnaire_id"
-                        defaultValue={item.questionnaire_id ?? ""}
-                        className="rounded border border-brand-200 px-2 py-1 text-xs"
-                      >
-                        <option value="">（不指定問卷）</option>
-                        {(questionnaireTemplates ?? []).map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
-                          </option>
-                        ))}
-                      </select>
-                      <SubmitButton variant="outline" size="sm" className="!px-2 !py-0.5 !text-xs" pendingText="儲存中…">
-                        儲存
-                      </SubmitButton>
-                    </form>
-                  </details>
-                )}
-              </div>
-            </li>
-          ))}
-          {(!scheduleItems || scheduleItems.length === 0) && (
-            <li className="text-sm text-ink/40">尚未產生追蹤時程——登記「手術切除」治療紀錄後，會以手術日為起點自動排出術後 24 個月的每月追蹤與後三次抽血。</li>
-          )}
-        </ul>
-      </section>
 
     </div>
   );

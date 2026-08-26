@@ -362,6 +362,18 @@ export async function savePatientQuestionnaireAction(
     /** 本次填寫先前送出的那一筆回覆；病人回頭改答案後重存時取代它，不要留下兩份同一份問卷的回覆。
      *  只刪本次自己建立的那一筆，歷史回覆（例如上次回診填的）不受影響。 */
     replaceResponseId?: string | null;
+    /**
+     * 這一次是「跑到最後一頁了」還是「翻頁順手存的草稿」（2026-08-26）。
+     *
+     * SF-36／PSQI 改成硬鎖之後，病人卡在中間就出不去，只能請人員從右上角出口跳出——
+     * 所以改成每翻一頁存一次，損失上限是一頁而不是整整一段。代價是資料庫裡會出現
+     * 「存到一半」的回覆，而 scoring.ts 對缺題是用官方的「已答題目平均」處理，
+     * 一份只答了 19/36 題的 SF-36 照樣算得出一個看起來正常的分數。
+     *
+     * 所以草稿一律不寫 completed_at、不標記段落完成、也不動待補清單；
+     * 計分與匯出只認 completed_at is not null 的那些。
+     */
+    completed: boolean;
   }
 ): Promise<{ responseId: string }> {
   const supabase = supabaseServer();
@@ -375,7 +387,12 @@ export async function savePatientQuestionnaireAction(
   const { data: response, error } = await supabase
     .from("questionnaire_responses")
     // submitted_via='patient'：跟人員代填（'staff'）區分開，之後分析才知道是誰答的
-    .insert({ case_id: caseId, questionnaire_id: payload.questionnaireId, submitted_via: "patient" })
+    .insert({
+      case_id: caseId,
+      questionnaire_id: payload.questionnaireId,
+      submitted_via: "patient",
+      completed_at: payload.completed ? new Date().toISOString() : null,
+    })
     .select("id")
     .single();
   if (error || !response) throw error ?? new Error("送出問卷失敗");
@@ -401,7 +418,10 @@ export async function savePatientQuestionnaireAction(
 
   // 漏答的題目要有人知道（2026-08-24）。逐題各留一筆會有五十幾筆待補把清單灌爆，
   // 所以一份問卷只留一筆、標題帶未答題數；人員點進去重填即可。
-  const followupKey = QUESTIONNAIRE_FOLLOWUP_KEY[segment];
+  //
+  // 草稿不進這裡（2026-08-26）：翻到第 3 頁時「未答」當然還有三十幾題，那不是漏答而是還沒走到。
+  // 硬鎖之後走完的那一份 missing 一定是 0，這段等於只剩「把先前的待補清掉」的作用。
+  const followupKey = payload.completed ? QUESTIONNAIRE_FOLLOWUP_KEY[segment] : undefined;
   if (followupKey) {
     const answered = new Set(rows.map((r) => r.question_id));
     const missing = payload.presentedQuestionIds.filter((qid) => !answered.has(qid)).length;
@@ -417,14 +437,16 @@ export async function savePatientQuestionnaireAction(
     }
   }
 
-  await markSegmentDone(caseId, segment);
+  // 草稿不標記段落完成——標了的話收案動線的「病人自填 5/5 段」會亮綠燈，
+  // 但那一份問卷其實只答到一半。
+  if (payload.completed) await markSegmentDone(caseId, segment);
   await logAudit({
     caseId,
     operatorName: operator,
     action: "patient_self_entry",
     entity: "questionnaire_responses",
     entityId: response.id,
-    detail: { segment, answered: rows.length },
+    detail: { segment, answered: rows.length, completed: payload.completed },
   });
   revalidatePath(`/cases/${caseId}`);
   return { responseId: response.id };
