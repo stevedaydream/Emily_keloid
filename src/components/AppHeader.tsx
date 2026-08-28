@@ -49,22 +49,29 @@ function HelpLink() {
   );
 }
 
-// 姓名顯示開關。2026-08-25 起姓名存在資料庫（不再是本機對照表），所以這顆一律顯示——
+// 可識別資料顯示開關。2026-08-25 起姓名存在資料庫（不再是本機對照表），所以這顆一律顯示——
 // 它現在的用途是投影／教學／診間有訪客時把姓名藏起來，跟有沒有掛對照表無關。
+//
+// 2026-08-29 起**病歷號也一起藏**（使用者裁決）：病歷號的可識別度不比姓名低，
+// 只藏姓名的話這顆開關形同虛設。按鈕的字跟著改，不然關掉之後病歷號也不見會像是壞了。
 function ShowNamesToggle({ className = "" }: { className?: string }) {
   const { showNames, toggleShowNames } = useLocalNames();
   return (
     <button
       type="button"
       onClick={toggleShowNames}
-      title={showNames ? "目前顯示病人姓名（點擊隱藏）" : "目前隱藏病人姓名（點擊顯示）"}
+      title={
+        showNames
+          ? "目前顯示病人姓名與病歷號（點擊隱藏）"
+          : "目前隱藏病人姓名與病歷號（點擊顯示）"
+      }
       className={`whitespace-nowrap rounded-md border px-2 py-1 text-xs ${
         showNames
           ? "border-brand-300 bg-brand-50 text-brand-800"
           : "border-brand-200 bg-white text-ink/40"
       } ${className}`}
     >
-      {showNames ? "姓名：顯示中" : "姓名：已隱藏"}
+      {showNames ? "姓名／病歷號：顯示中" : "姓名／病歷號：已隱藏"}
     </button>
   );
 }

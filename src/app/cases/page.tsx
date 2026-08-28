@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase";
 import CaseSearchBox from "@/components/CaseSearchBox";
-import PatientName from "@/components/LocalNameProvider";
+import PatientName, { PatientMrn } from "@/components/LocalNameProvider";
 import { buttonClasses } from "@/components/ui/buttonStyles";
 
 const RECURRENCE_LABEL: Record<string, string> = {
@@ -107,6 +107,9 @@ export default async function HomePage({
           <thead className="border-b border-brand-100 bg-brand-50/60 text-left text-ink/50">
             <tr>
               <th className="whitespace-nowrap px-4 py-2 font-medium">研究編號</th>
+              {/* 病歷號（2026-08-29）：搜尋一直吃得到它，但畫面上看不到，
+                  搜到之後沒東西可以核對是不是同一個人 */}
+              <th className="whitespace-nowrap px-4 py-2 font-medium">病歷號</th>
               <th className="whitespace-nowrap px-4 py-2 font-medium">姓名</th>
               <th className="whitespace-nowrap px-4 py-2 font-medium">醫師</th>
               <th className="whitespace-nowrap px-4 py-2 font-medium">部位</th>
@@ -131,7 +134,10 @@ export default async function HomePage({
                       </span>
                     )}
                   </td>
-                  {/* 姓名由瀏覽器端從本機對照表注入，伺服器渲染的內容不含姓名 */}
+                  {/* 姓名與病歷號都受導覽列的「姓名／病歷號」開關控制（見 PatientName／PatientMrn） */}
+                  <td className="whitespace-nowrap px-4 py-2 text-ink/60">
+                    <PatientMrn mrn={c.mrn} />
+                  </td>
                   <td className="whitespace-nowrap px-4 py-2 text-ink/80">
                     <PatientName name={c.patient_name} />
                   </td>

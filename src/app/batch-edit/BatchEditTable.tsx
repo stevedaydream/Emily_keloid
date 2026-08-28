@@ -4,13 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Button from "@/components/ui/Button";
-import PatientName, { useLocalNames } from "@/components/LocalNameProvider";
+import PatientName, { PatientMrn, useLocalNames } from "@/components/LocalNameProvider";
 import CaseDrawer from "./CaseDrawer";
 import { saveBatchEditsAction, type BatchEdit } from "./actions";
 
 export type BatchCaseRow = {
   id: string;
   research_id: string;
+  /** 病歷號。只拿來搜尋，不另外顯示在表格裡——這張表已經很擠（2026-08-29） */
+  mrn: string | null;
   /** 2026-08-25 起姓名存在資料庫（原本靠本機對照表在瀏覽器端注入） */
   patient_name: string | null;
   doctor: string;
@@ -171,12 +173,16 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
     return rows.filter((r) => {
       if (onlyIncomplete && !isRowIncomplete(r)) return false;
       if (!needle) return true;
+      // 姓名與病歷號都受「顯示姓名」開關控制（跟今日門診、PatientName 一致）：
+      // 投影或有訪客時關掉，就不該還能用姓名或病歷號把人搜出來——只擋姓名的話那個開關形同虛設。
       const name = r.patient_name ?? "";
+      const mrn = r.mrn ?? "";
       return (
         r.research_id.toLowerCase().includes(needle) ||
         r.doctor.toLowerCase().includes(needle) ||
         r.body_site.toLowerCase().includes(needle) ||
-        (showNames && name.toLowerCase().includes(needle))
+        (showNames && name.toLowerCase().includes(needle)) ||
+        (showNames && mrn.toLowerCase().includes(needle))
       );
     });
   }, [rows, keyword, onlyIncomplete, showNames]);
@@ -252,7 +258,7 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
           </select>
         </div>
         <div className="flex-1">
-          <label className="block text-xs text-ink/50">關鍵字（編號／醫師／部位／姓名）</label>
+          <label className="block text-xs text-ink/50">關鍵字（編號／病歷號／醫師／部位／姓名）</label>
           <input
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
@@ -351,10 +357,14 @@ export default function BatchEditTable({ rows, years }: { rows: BatchCaseRow[]; 
           <tbody>
             {filtered.map((row) => (
               <tr key={row.id} className="border-b border-brand-50 last:border-0 hover:bg-brand-50/30">
+                {/* 病歷號放在研究編號底下、同一格（2026-08-29）：這張表 18 欄本來就要左右捲，
+                    再多一欄只會讓「往右填一格、往左確認這是誰」更痛苦。
+                    這一格是 sticky 的，所以左右捲時病歷號一直跟著留在畫面上，正好是要拿來對人的那個。 */}
                 <td className="sticky left-0 z-10 whitespace-nowrap bg-white px-3 py-1.5">
                   <Link href={`/cases/${row.id}`} className="font-data text-xs text-brand-800 underline">
                     {row.research_id}
                   </Link>
+                  <PatientMrn mrn={row.mrn} className="block text-[11px] text-ink/40" />
                 </td>
                 {withNames && (
                   <td className="whitespace-nowrap px-3 py-1.5 text-ink/80">

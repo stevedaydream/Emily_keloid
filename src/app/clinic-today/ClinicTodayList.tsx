@@ -77,17 +77,20 @@ export default function ClinicTodayList({
   const autoIds = useMemo(() => new Set(auto.map((a) => a.caseId)), [auto]);
   const inListIds = useMemo(() => new Set([...autoIds, ...manualIds]), [autoIds, manualIds]);
 
-  // 全部比對都在瀏覽器內做（見 page.tsx 的說明）：關鍵字可能是病人姓名，
-  // 而姓名只存在本機對照表，送去伺服器搜尋就等於把姓名送上雲端。
+  // 全部比對都在瀏覽器內做（清單不到百筆，一次送下來比逐次查伺服器快）。
   const matches = useMemo(() => {
     const q = normalize(query);
     if (!q) return [];
     const hits = searchable.filter((c) => {
-      // 姓名只在使用者開著「顯示姓名」時才納入比對，跟 PatientName 的行為一致
-      // （投影或有訪客時關掉，就不該還能用姓名搜到人）。
+      // 姓名與病歷號只在使用者開著「顯示姓名」時才納入比對，跟 PatientName 的行為一致
+      // （投影或有訪客時關掉，就不該還能用姓名或病歷號把人搜出來——只擋姓名的話那個開關形同虛設）。
+      //
+      // 2026-08-29 補上病歷號：searchable 從一開始就帶著 mrn，只是沒被放進比對字串，
+      // 於是護理師拿著病歷號在這裡找人永遠找不到（個案列表那邊一直都搜得到）。
       const name = showNames ? c.patientName ?? "" : "";
+      const mrn = showNames ? c.mrn ?? "" : "";
       const haystack = normalize(
-        [c.researchId, name, c.doctor, c.bodySite, c.enrollmentYear ?? "", c.dataSource].join(" ")
+        [c.researchId, mrn, name, c.doctor, c.bodySite, c.enrollmentYear ?? "", c.dataSource].join(" ")
       );
       return haystack.includes(q);
     });
@@ -150,7 +153,7 @@ export default function ClinicTodayList({
               setSelected(new Set());
             }}
             onKeyDown={handleKeyDown}
-            placeholder="例如 yen、2024、王、楊醫師"
+            placeholder="編號／病歷號／姓名／醫師，例如 yen、07001、王"
             className="min-w-0 flex-1 rounded-md border border-brand-200 px-2 py-1.5 text-sm"
           />
           {query && (
@@ -208,6 +211,10 @@ export default function ClinicTodayList({
                             onChange={() => toggle(c.caseId)}
                           />
                           <span className="font-data whitespace-nowrap">{c.researchId}</span>
+                          {/* 病歷號跟姓名同一顆開關（showNames 已經套在 name 上了，這裡沿用同一個判斷） */}
+                          {showNames && c.mrn && (
+                            <span className="font-data whitespace-nowrap text-ink/50">{c.mrn}</span>
+                          )}
                           {name && <span className="whitespace-nowrap">{name}</span>}
                           <span className="truncate text-xs text-ink/40">
                             {[c.doctor, c.bodySite].filter(Boolean).join(" ・ ")}

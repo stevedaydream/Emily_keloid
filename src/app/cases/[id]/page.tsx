@@ -30,7 +30,7 @@ import PriorTreatmentPicker from "./PriorTreatmentPicker";
 import MultiEntryInput from "./MultiEntryInput";
 import KeloidLesionSection from "./KeloidLesionSection";
 import InfoTooltip from "@/components/InfoTooltip";
-import PatientName from "@/components/LocalNameProvider";
+import PatientName, { PatientMrn } from "@/components/LocalNameProvider";
 import SubmitButton from "@/components/ui/SubmitButton";
 import CollapsedList from "@/components/ui/CollapsedList";
 import type { CasePipelineRow } from "@/lib/pipeline";
@@ -867,7 +867,9 @@ export default async function CaseDetailPage({
         </Link>
         <div className="mt-1 flex items-center gap-3">
           <h1 className="text-xl font-semibold">{caseRow.research_id}</h1>
-          {/* 姓名由瀏覽器端從本機對照表注入 */}
+          {/* 病歷號（2026-08-29）：在這之前它從建檔之後就再也沒出現在畫面上——
+              可以拿它搜尋，但搜到之後沒東西可以核對是不是同一個人，而醫院裡認人靠的正是它。 */}
+          <PatientMrn mrn={caseRow.mrn} className="text-base text-ink/50" />
           <PatientName name={caseRow.patient_name} className="text-lg text-ink/70" />
           {/* 測試個案（2026-08-25）：正式與測試資料混在同一套系統裡，要在最顯眼的地方講清楚 */}
           {caseRow.is_test && (

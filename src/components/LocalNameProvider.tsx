@@ -58,6 +58,35 @@ export function useLocalNames() {
   return useContext(NameDisplayContext);
 }
 
+/**
+ * 顯示病歷號；沒有病歷號或使用者關閉顯示時，什麼都不輸出（2026-08-29）。
+ *
+ * 跟 PatientName 同一顆開關：病歷號的可識別度不比姓名低，只藏姓名的話那顆開關形同虛設
+ * （使用者裁決）。所以導覽列那顆按鈕的字也從「姓名」改成「姓名／病歷號」。
+ *
+ * 用等寬字（font-data）：病歷號是要拿來跟手上的單子逐字對的，等寬比較不會看錯。
+ */
+export function PatientMrn({
+  mrn,
+  className = "",
+  prefix = "",
+}: {
+  mrn?: string | null;
+  className?: string;
+  prefix?: string;
+}) {
+  const { showNames } = useLocalNames();
+  if (!showNames) return null;
+  const trimmed = mrn?.trim();
+  if (!trimmed) return null;
+  return (
+    <span className={`font-data ${className}`}>
+      {prefix}
+      {trimmed}
+    </span>
+  );
+}
+
 /** 顯示病人姓名；沒有姓名或使用者關閉顯示時，什麼都不輸出。 */
 export default function PatientName({
   name,
