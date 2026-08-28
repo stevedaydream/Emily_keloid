@@ -156,7 +156,8 @@ type Visit = {
   /** 當次治療（KOR_FW / KSI_FW / KOST_FW；2026-08-26 起 FW1–FW27 每一格都有這三欄） */
   korCode: number;
   ksiCode: number;
-  kostCode: number | "";
+  /** 藥膏／貼片品項碼。同一天有多筆時併排成 "6, 8"（2026-08-28），單筆維持數字型別。 */
+  kostCode: number | string;
 };
 
 export async function GET(request: Request) {
@@ -505,7 +506,23 @@ export async function GET(request: Request) {
         // 當次治療：手術或放療→KOR=1；類固醇劑量與藥膏品項各自對照 field_schema 的碼
         const hasOpOrRt = rows.some((r) => ["手術切除", "放射治療"].includes(typeNameOf(r)));
         const inj = rows.find((r) => typeNameOf(r) === "病灶內注射");
-        const oint = rows.find((r) => ["藥膏", "貼片"].includes(typeNameOf(r)));
+        // KOST：**同一天所有藥膏／貼片的品項碼都要進去**（助理 2026-08-28）。
+        //
+        // 原本是 rows.find(...) 只取第一筆。但「同時擦藥膏又貼矽膠片」正是助理要觀察的情況
+        // （他明講這三欄的目的是「觀察術後有在使用藥膏或矽膠貼布」），只留一筆等於答不出這件事。
+        // 實際資料就有兩天同時登了藥膏與貼片各一筆。
+        //
+        // 多碼寫法沿用 Medical_history_self／Fmaily_history 的「1, 5」格式，部長的檔案裡已經有這種欄位。
+        // **只有一個碼時仍輸出數字**（不是 "8" 字串）——單碼是絕大多數情況，
+        // 讓 Excel 照樣存成數值，部長既有的公式不會因為型別變成文字而失效。
+        const ointCodes = [
+          ...new Set(
+            rows
+              .filter((r) => ["藥膏", "貼片"].includes(typeNameOf(r)))
+              .map((r) => selectCode(r, "product"))
+              .filter((v): v is number => typeof v === "number")
+          ),
+        ].sort((a, b) => a - b);
         return {
           date,
           days: daysBetween(opDate, date),
@@ -514,7 +531,7 @@ export async function GET(request: Request) {
           symptomChangeCode: changeId ? optionById.get(changeId)?.export_code ?? null : null,
           korCode: hasOpOrRt ? 1 : 0,
           ksiCode: inj ? Number(selectCode(inj, "steroid_dose") || 0) : 0,
-          kostCode: oint ? selectCode(oint, "product") : "",
+          kostCode: ointCodes.length === 0 ? "" : ointCodes.length === 1 ? ointCodes[0] : ointCodes.join(", "),
         };
       });
   };

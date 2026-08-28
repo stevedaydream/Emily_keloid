@@ -84,7 +84,16 @@ type Screen = {
   questionIds?: string[];
 };
 
-/** 兩份自評量表要硬鎖：沒作答就不能下一步。其餘三段維持可跳過（跳過會進待補清單）。 */
+/**
+ * 兩份自評量表要「攔一下」的段落。
+ *
+ * 2026-08-26 一度做成硬鎖（沒選就按不動、沒有退路）。**2026-08-28 助理與診間討論後改為軟鎖**：
+ * 沒選還是能過，但要多按一次確認。理由是硬鎖在門診一定會撞到不肯答的病人，
+ * 而那時唯一的出口是右上角那顆小按鈕，等於讓人員在病人面前手忙腳亂。
+ *
+ * 軟鎖擋得住的是「一路按下一步滑過去」，擋不住存心跳的人——這是刻意的取捨。
+ * 跳過的題目會進待補清單（一份問卷一筆，標題帶未答題數），人員事後看得到。
+ */
 const LOCKED_SEGMENTS: PatientIntakeSegmentKey[] = ["sf36", "psqi"];
 
 /** 建檔時診間已填過的欄位，用來當作病人流程的初始值 */
@@ -202,6 +211,8 @@ export default function PatientIntakeFlow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
+  // 軟鎖的確認框（2026-08-28）：值＝這一頁還沒選的題數；null＝沒有在問
+  const [skipAsk, setSkipAsk] = useState<number | null>(null);
   // 本次填寫已經建立的資料列 id。病人按「上一步」回頭改答案、再往前走一次時，
   // 會再次跨越同一個段落邊界並重存——記住上次建的 id，重存時取代掉，
   // 否則同一次收案會留下兩份同一份問卷的回覆／兩筆互相矛盾的選項紀錄。
@@ -229,13 +240,13 @@ export default function PatientIntakeFlow({
    * PSQI 前四題不是選項題，但 WheelPicker 本來就記得住「有沒有被滑過」：沒滑過時 value 是空字串，
    * 滑過才會寫回 `HH:MM`／分鐘數／時數，所以這裡的空值判定對輪盤題同樣成立。
    */
-  function screenAnswered(s: Screen): boolean {
-    if (!s.questionIds || !LOCKED_SEGMENTS.includes(s.segment)) return true;
-    return s.questionIds.every((qid) => {
+  function unansweredCount(s: Screen): number {
+    if (!s.questionIds || !LOCKED_SEGMENTS.includes(s.segment)) return 0;
+    return s.questionIds.filter((qid) => {
       const v = answers[qid];
-      if (Array.isArray(v)) return v.length > 0;
-      return typeof v === "string" && v.trim() !== "";
-    });
+      if (Array.isArray(v)) return v.length === 0;
+      return typeof v !== "string" || v.trim() === "";
+    }).length;
   }
 
   // 複選題的互斥處理：選「都沒有」或「不知道」就把其他清掉，反之亦然。
@@ -586,19 +597,29 @@ export default function PatientIntakeFlow({
     }
   }
 
-  async function goNext(from: number) {
+  /**
+   * @param skipConfirmed 使用者已經在確認框按過「確定跳過」。
+   *   軟鎖（2026-08-28）：量表這一頁還有題目沒選時不直接放行，先跳一次確認；
+   *   確認過才會帶著 true 再呼叫一次走完流程。
+   */
+  async function goNext(from: number, skipConfirmed = false) {
     const list = screensRef.current;
     const current = list[from];
     if (!current) return;
     const next = list[from + 1];
-    // 硬鎖：這一頁還有題目沒答就不放行（2026-08-26）。按鈕本來就是灰的，
-    // 這裡再擋一次是因為 autoAdvance 的計時器也會走到 goNext。
-    if (!screenAnsweredRef.current(current)) return;
+    // 軟鎖：量表這一頁還沒答完就先問一次「確定跳過？」。
+    // autoAdvance 的計時器也會走到這裡，但那條路徑必定是「剛選完一個單選題」，不會中。
+    const missing = unansweredCountRef.current(current);
+    if (missing > 0 && !skipConfirmed) {
+      setSkipAsk(missing);
+      return;
+    }
+    setSkipAsk(null);
 
     const crossing = !next || next.segment !== current.segment;
     // 跨段（或走完最後一段）時把這一段存起來——被打斷也只會丟掉當下這一段。
-    // 兩份量表另外**每翻一頁就存一次草稿**：硬鎖之後病人卡在中間出不去，
-    // 只能請人員從右上角出口跳出，那一刻沒存的東西就沒了。逐頁存讓損失上限降到一頁。
+    // 兩份量表另外**每翻一頁就存一次草稿**：門診很容易被打斷，
+    // 逐頁存讓「人員把平板收回去」時的損失上限降到一頁，而不是整整一段。
     if (crossing || LOCKED_SEGMENTS.includes(current.segment)) {
       setSaving(true);
       setError(null);
@@ -631,12 +652,12 @@ export default function PatientIntakeFlow({
     saveSegmentRef.current = saveSegment;
   });
 
-  // screenAnswered 讀的也是那一輪的 answers，同樣要走 ref——
+  // unansweredCount 讀的也是那一輪的 answers，同樣要走 ref——
   // autoAdvance 的 220ms 計時器執行時，閉包裡那份 answers 還是點下去之前的，
-  // 會把「剛剛才選好的那一題」判成沒答而擋住自己。
-  const screenAnsweredRef = useRef(screenAnswered);
+  // 會把「剛剛才選好的那一題」判成沒答，然後跳出一個莫名其妙的「確定跳過？」。
+  const unansweredCountRef = useRef(unansweredCount);
   useEffect(() => {
-    screenAnsweredRef.current = screenAnswered;
+    unansweredCountRef.current = unansweredCount;
   });
 
   // ── 歡迎 / 完成畫面 ──────────────────────────────────────────
@@ -783,9 +804,8 @@ export default function PatientIntakeFlow({
   const pos = Math.min(index, screens.length - 1);
   const screen = screens[pos];
   const segmentMeta = PATIENT_INTAKE_SEGMENTS.find((s) => s.key === screen.segment);
-  // 兩份量表的畫面沒作答就不放行（2026-08-26）。這兩份是純主觀量表，
-  // 只有病人自己答得出來，事後人員補不了——跟前三段跳過後可以再追問不同。
-  const answered = screenAnswered(screen);
+  // 量表這一頁還有幾題沒選（軟鎖用）。按下一步時會先跳一次確認，不是擋死。
+  const missing = unansweredCount(screen);
 
   return (
     <Shell caseId={caseId}>
@@ -825,17 +845,48 @@ export default function PatientIntakeFlow({
           <p className="mt-4 rounded-xl border-2 border-red-200 bg-red-50 p-4 text-lg text-red-700">{error}</p>
         )}
 
-        {/* 沒作答時要講出原因，不然病人只會看到一顆按不動的灰按鈕而不知道自己漏了什麼 */}
-        {!answered && (
+        {/* 還沒選時先提醒一句。按鈕仍然按得下去（軟鎖），按了才跳確認。 */}
+        {missing > 0 && skipAsk === null && (
           <p className="mt-4 text-center text-lg text-ink/50">
-            {(screen.questionIds?.length ?? 0) > 1 ? "上面每一題都選好才能繼續" : "請先選一個答案"}
+            {(screen.questionIds?.length ?? 0) > 1 ? `上面還有 ${missing} 題沒選` : "還沒選答案"}
           </p>
+        )}
+
+        {/* 軟鎖的確認（2026-08-28 助理與診間討論後定案）。
+            用整塊面板而不是原生 confirm()：平板上原生對話框的按鈕又小又容易誤按，
+            而且長輩看不清楚。「回去選」放在前面且做得更大——預設行為應該是回去補，不是跳過。 */}
+        {skipAsk !== null && (
+          <div className="mt-4 rounded-xl border-2 border-accent-300 bg-accent-50 p-4">
+            <p className="text-lg leading-relaxed text-ink">
+              這一頁還有 <b>{skipAsk}</b> 題沒有選，跳過就不會有這幾題的答案。確定要跳過嗎？
+            </p>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setSkipAsk(null)}
+                className="min-h-14 flex-[2] rounded-xl bg-brand-700 px-4 text-lg font-medium text-white hover:bg-brand-800"
+              >
+                回去選
+              </button>
+              <button
+                type="button"
+                onClick={() => goNext(pos, true)}
+                disabled={saving}
+                className="min-h-14 flex-1 rounded-xl border-2 border-brand-200 px-4 text-lg text-ink/60 disabled:opacity-60"
+              >
+                確定跳過
+              </button>
+            </div>
+          </div>
         )}
 
         <div className="sticky bottom-0 flex gap-3 bg-paper-raised py-4">
           <button
             type="button"
-            onClick={() => setIndex(Math.max(0, pos - 1))}
+            onClick={() => {
+              setSkipAsk(null);
+              setIndex(Math.max(0, pos - 1));
+            }}
             disabled={pos === 0 || saving}
             className="min-h-16 flex-1 rounded-xl border-2 border-brand-200 text-xl text-ink/70 disabled:opacity-40"
           >
@@ -844,8 +895,8 @@ export default function PatientIntakeFlow({
           <button
             type="button"
             onClick={() => goNext(pos)}
-            disabled={saving || !answered}
-            className="flex min-h-16 flex-[2] items-center justify-center gap-2 rounded-xl bg-brand-700 text-xl font-medium text-white hover:bg-brand-800 disabled:opacity-40 disabled:hover:bg-brand-700"
+            disabled={saving}
+            className="flex min-h-16 flex-[2] items-center justify-center gap-2 rounded-xl bg-brand-700 text-xl font-medium text-white hover:bg-brand-800 disabled:opacity-60"
           >
             {saving ? (
               <>

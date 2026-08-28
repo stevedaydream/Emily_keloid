@@ -245,8 +245,15 @@ export default function CameraCapture({
                 className="mt-0.5 min-h-12 w-full rounded-md border border-slate-300 px-2 text-base tabular-nums"
               />
             </label>
+            {/* 紙尺提醒（助理 2026-08-28：上傳維持現狀，加提醒即可）。
+                用系統內建的相機拍時，畫面上就有對齊框與比例尺參照框；從相簿選圖沒有那一層，
+                照片裡有沒有那把紙尺，決定這張之後能不能拿來比對大小。
+                做成明顯的黃框而不是灰色小字——這是上傳路徑唯一會漏掉的東西。 */}
+            <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+              ⚠️ 請確認這張照片裡<b>有放紙質直尺</b>。沒有尺的照片之後無法比對病灶大小。
+            </p>
             <p className="mt-1 text-[11px] text-slate-400">
-              已從檔案時間讀出，不對就改。這張沒有經過對齊框與比例尺，系統會記成「候補上傳」。
+              拍攝日期已從檔案時間讀出，不對就改。這張沒有經過對齊框與比例尺，系統會記成「候補上傳」。
             </p>
           </div>
         )}
