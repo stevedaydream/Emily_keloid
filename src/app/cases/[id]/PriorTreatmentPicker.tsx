@@ -85,30 +85,41 @@ export default function PriorTreatmentPicker({
         ))}
       </div>
       {status === "yes" && (
-        <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+        // 手機單欄、sm 以上才三欄（2026-08-29 修）。
+        //
+        // 原本一律 grid-cols-3：這個元件本身又被外層的 grid-cols-2 夾在半個螢幕寬裡，
+        // 手機上每一格只剩約 60px。Grid 軌道預設的最小寬度是 auto，所以
+        // <input type="date"> **不會縮到比自己的原生寬度更小**，直接溢出蓋到隔壁那格——
+        // 畫面上就是日期輸入框壓在「次數」上面（使用者回報）。
+        //
+        // minmax(0,1fr) 讓軌道真的縮得下去，w-full 讓輸入框填滿而不撐開；
+        // 兩者要一起用，只加其中一個仍然會溢出。
+        <div className="mt-1.5 grid grid-cols-[minmax(0,1fr)] gap-1.5 sm:grid-cols-3">
           <input
             type="date"
             value={date}
             onChange={(e) => setDate(e.target.value)}
-            className="rounded-md border border-brand-200 px-1.5 py-1 text-xs"
+            className="w-full min-w-0 rounded-md border border-brand-200 px-1.5 py-1 text-xs"
           />
           <input
             placeholder="次數"
             value={count}
             onChange={(e) => setCount(e.target.value)}
-            className="rounded-md border border-brand-200 px-1.5 py-1 text-xs"
+            className="w-full min-w-0 rounded-md border border-brand-200 px-1.5 py-1 text-xs"
           />
           <input
             placeholder="劑量"
             value={dose}
             onChange={(e) => setDose(e.target.value)}
-            className="rounded-md border border-brand-200 px-1.5 py-1 text-xs"
+            className="w-full min-w-0 rounded-md border border-brand-200 px-1.5 py-1 text-xs"
           />
+          {/* sm:col-span-3 而不是 col-span-3：單欄時跨 3 軌會長出 2 個隱含欄，
+              備註框反而變成三倍寬再溢出一次。 */}
           <input
             placeholder="備註"
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            className="col-span-3 rounded-md border border-brand-200 px-1.5 py-1 text-xs"
+            className="w-full min-w-0 rounded-md border border-brand-200 px-1.5 py-1 text-xs sm:col-span-3"
           />
         </div>
       )}

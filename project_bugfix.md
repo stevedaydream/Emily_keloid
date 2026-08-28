@@ -68,3 +68,27 @@ render 的 `screen.segment` 直接 TypeError → 整棵樹掛掉。順帶連 PSQ
 
 **教訓**：`accept`／`types` 在桌機是過濾副檔名、在 Android 是過濾系統 MIME，行為完全不同。
 行動裝置的檔案選擇器一律不要帶型別過濾。
+
+## 病史與過往治療：日期輸入框壓在隔壁欄上（2026-08-29）
+
+**症狀**：手機上「之前類固醇注射治療」「之前小川令貼布使用史」展開後，日期輸入框溢出並蓋住
+右邊的「次數」格，文字被截掉（使用者截圖回報）。
+
+**成因（兩層，缺一不可）**：
+
+1. `PriorTreatmentPicker` 的細節列是 `grid-cols-3`，而元件本身又被外層的 `grid-cols-2` 夾住，
+   手機上每格只剩約 60px。
+2. **關鍵在 grid item 的 `min-width: auto`**，不是軌道。Tailwind 的 `grid-cols-3` 本來就是
+   `repeat(3, minmax(0,1fr))`，軌道縮得下去；但 grid item 預設 `min-width:auto` 會解析成
+   min-content 寬度，而 `<input type="date">` 是替換元素、min-content 就是它的原生寬度（約 140px+），
+   於是**項目撐破自己的軌道**疊到隔壁。
+
+**修法**：項目加 `w-full min-w-0`（真正解掉溢出），並改成手機單欄
+`grid-cols-[minmax(0,1fr)] sm:grid-cols-3`（55px 的日期框就算不重疊也沒法用）。
+備註框的 `col-span-3` 要改成 `sm:col-span-3`——單欄時跨 3 軌會長出 2 個隱含欄，反而變三倍寬再溢出一次。
+
+**教訓**：grid 裡放原生日期／數字輸入框而排版又窄時，`minmax(0,1fr)` **不夠**，
+一定要在項目上加 `min-w-0`。只改軌道不會有效果。
+
+**驗證**：容器壓到 177px 時三欄各 55px、無溢出無重疊；探針確認
+`grid-cols-[minmax(0,1fr)]` 有被編出來（單一軌道、三個輸入框各自成列），所以 <640px 會正確堆疊。
