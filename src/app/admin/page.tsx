@@ -15,7 +15,7 @@ const GROUPS = [
     items: [
       { href: "/admin/treatments", title: "治療類型與套組", desc: "治療欄位定義與常用套組範本" },
       { href: "/admin/schedules", title: "追蹤時程範本", desc: "標準追蹤時程與各時間點動作" },
-      { href: "/admin/lab-markers", title: "Lab 生物標記清單", desc: "IgE/Exosome/IL-1α/IL-1β/IL-6/TNF-α/MMP2/MMP9 等標記維護" },
+      { href: "/admin/lab-markers", title: "Lab 生物標記清單", desc: "IgE/Exosome/IL-1β/IL-6/IL-10/TNF-α/MMP2/MMP9 等標記維護" },
     ],
   },
   {

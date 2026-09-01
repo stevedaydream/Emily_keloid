@@ -2,7 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { maskShapeForCategory, DOSE_CATEGORY_LABEL } from "@/lib/bodyZones";
+import PhotoAligner, { type AlignMaskShape } from "./PhotoAligner";
 import { uploadPhotoAction } from "./actions";
+
+/** 相機的即時蒙板樣式 → 對齊編輯器的蒙板樣式（同一個部位分類，兩邊看到的框要一致） */
+function alignShapeFor(maskShape: string): AlignMaskShape {
+  if (maskShape === "ear_outline") return "ellipse";
+  if (maskShape === "chest_outline") return "rect_landscape";
+  return "rect_square";
+}
 
 /** 時間戳 → 本地的 `YYYY-MM-DD`（`<input type="date">` 要的格式）。不能用 toISOString，那是 UTC。 */
 function localDate(ms: number): string {
@@ -50,6 +58,9 @@ export default function CameraCapture({
   //   takenAt  真正的拍攝日，預帶檔案的 lastModified；人員改得了（相簿轉存會把時間戳弄丟）。
   // 兩者都跟著照片一起送，這樣之後做影像對比才分得出哪些是診間標準拍攝。
   const [source, setSource] = useState<"camera" | "upload">("camera");
+  // 2026-09-02：對齊編輯器。相簿選完自動進入（那條路徑本來完全沒有對齊機制），
+  // 相機拍的則是按「調整」才進——現場已經有即時對齊框，不該再多卡一步門診動線。
+  const [editing, setEditing] = useState(false);
   const [takenAt, setTakenAt] = useState("");
   // 拍攝日期的上界（不能選未來）。在 pickFile 裡算——那是事件處理器，
   // 在 render 當中呼叫 Date.now() 會被 react-hooks/purity 擋下。
@@ -110,6 +121,8 @@ export default function CameraCapture({
       setSource("upload");
       setTakenAt(localDate(file.lastModified));
       setCapturedUrl(canvas.toDataURL("image/jpeg"));
+      // 相簿的照片構圖是散的，直接進對齊編輯器（可取消，取消就用原圖）
+      setEditing(true);
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -122,8 +135,26 @@ export default function CameraCapture({
   function retake() {
     setCapturedUrl(null);
     setSource("camera");
+    setEditing(false);
     setTakenAt("");
     if (fileRef.current) fileRef.current.value = "";
+  }
+
+  /**
+   * 對齊完成：把編輯器輸出的畫布寫回上傳用的那張 canvas。
+   * confirmUpload 讀的就是它，所以縮圖／尺寸／拍攝日那一整套邏輯一行都不用動。
+   */
+  function applyAligned(out: HTMLCanvasElement) {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.width = out.width;
+      canvas.height = out.height;
+      const ctx = canvas.getContext("2d");
+      ctx?.clearRect(0, 0, canvas.width, canvas.height);
+      ctx?.drawImage(out, 0, 0);
+      setCapturedUrl(canvas.toDataURL("image/jpeg", 0.9));
+    }
+    setEditing(false);
   }
 
   async function confirmUpload() {
@@ -184,6 +215,15 @@ export default function CameraCapture({
           </p>
         </div>
 
+        {editing && capturedUrl ? (
+          <PhotoAligner
+            srcUrl={capturedUrl}
+            initialShape={alignShapeFor(maskShape)}
+            onCancel={() => setEditing(false)}
+            onApply={applyAligned}
+          />
+        ) : (
+          <>
         <div className="relative bg-black">
           {status === "done" ? (
             <div className="p-8 text-center text-white">
@@ -196,9 +236,11 @@ export default function CameraCapture({
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={capturedUrl} alt="拍攝預覽" className="w-full" />
+              {/* 2026-09-02：原文是「候補上傳（未經對齊框）」，但相簿路徑現在會先過對齊編輯器，
+                  那句話已經不成立；而且它只是在標記「這張是哪條路徑來的」，不是在判定照片不合格。 */}
               {source === "upload" && (
-                <div className="absolute left-2 top-2 rounded bg-amber-500/90 px-2 py-1 text-xs text-white">
-                  候補上傳（未經對齊框）
+                <div className="absolute left-2 top-2 rounded bg-slate-700/80 px-2 py-1 text-xs text-white">
+                  相簿補傳
                 </div>
               )}
             </>
@@ -253,7 +295,7 @@ export default function CameraCapture({
               ⚠️ 請確認這張照片裡<b>有放紙質直尺</b>。沒有尺的照片之後無法比對病灶大小。
             </p>
             <p className="mt-1 text-[11px] text-slate-400">
-              拍攝日期已從檔案時間讀出，不對就改。這張沒有經過對齊框與比例尺，系統會記成「候補上傳」。
+              拍攝日期已從檔案時間讀出，不對就改。構圖要再調整可按下方「調整」重開對齊框；系統會記成「相簿補傳」以便日後分辨拍攝條件。
             </p>
           </div>
         )}
@@ -306,6 +348,13 @@ export default function CameraCapture({
                 <button onClick={retake} className="flex-1 whitespace-nowrap rounded-md border border-slate-300 py-2 text-sm">
                   重拍
                 </button>
+                {/* 2026-09-02：兩條路徑都能再對齊一次（相機路徑不強制，按了才進編輯器） */}
+                <button
+                  onClick={() => setEditing(true)}
+                  className="flex-1 whitespace-nowrap rounded-md border border-slate-300 py-2 text-sm text-slate-700"
+                >
+                  調整
+                </button>
                 <button
                   onClick={confirmUpload}
                   disabled={status === "uploading"}
@@ -329,6 +378,8 @@ export default function CameraCapture({
               </>
             )}
           </div>
+        )}
+          </>
         )}
         <input
           ref={fileRef}

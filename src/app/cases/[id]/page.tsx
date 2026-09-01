@@ -1769,7 +1769,7 @@ export default async function CaseDetailPage({
       <section id="section-lab" data-nav-section data-nav-label="Lab 生物標記數據" className="scroll-mt-4 rounded-lg border border-brand-100 bg-white p-4">
         <h2 className="mb-2 text-sm font-semibold text-ink/80">
           Lab 生物標記數據
-          <InfoTooltip text="記錄 IgE、Exosome、IL-1α/β、IL-6、TNF-α、MMP2/9 等生物標記檢驗結果，可依採檢日期多次登打；標記清單於後台「Lab 生物標記清單」維護。" />
+          <InfoTooltip text="記錄 IgE、Exosome、IL-1β、IL-6、IL-10、TNF-α、MMP2/9 等生物標記檢驗結果，可依採檢日期多次登打；標記清單於後台「Lab 生物標記清單」維護。" />
         </h2>
         {/* 一次橫向列出所有標記、各自在下方填值後一次儲存（決策 2026-07-28）。
             原本是「選一個標記→填一個值→送出」，一次採檢要重複十幾次。

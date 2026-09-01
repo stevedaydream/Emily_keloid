@@ -936,9 +936,53 @@ export async function GET(request: Request) {
     ...SF36_SCALES.flatMap((s) => [`SF36-${s.label}-Baseline`, `SF36-${s.label}-12個月`, `SF36-${s.label}-差值`]),
   ], compareRows, 18);
 
-  // Lab 逐筆（沿用既有做法：同一個案多標記×多次採檢，wide table 攤不平）
   const labMarkerById = new Map((labMarkers ?? []).map((m) => [m.id, m]));
   const researchIdById = new Map(cases.map((c) => [c.id, c.research_id as string]));
+
+  // Lab 生物標記寬表（2026-09-02 使用者要求：檢驗值要跟研究編號在同一橫列）。
+  //   一列 ＝ 一個研究編號 × 一次抽血（同一個採檢日期抽的所有標記併成一列，標記往右排）
+  // 跟問卷逐題分頁同一套慣例（一列＝編號×次別），欄數不會隨抽血次數膨脹；
+  // 沒抽過血的個案也留一列空白，這張分頁的個案數才跟主表一致，一眼看得出誰還沒抽。
+  //   · 一格優先放 value（數字，Excel 才當數字算），沒有數字才退回 value_text（`<0.35` 這種檢驗報告寫法）
+  //   · 備註與記錄者塞不進寬表（同一次抽血的各個標記各有各的備註），留在下面的逐筆分頁
+  const markerCols = labMarkers ?? [];
+  const labByCase = new Map<string, Map<string, Map<string, string | number>>>();
+  for (const r of (labResults ?? []) as LabRow[]) {
+    if (!researchIdById.has(r.case_id)) continue;
+    const byDate = labByCase.get(r.case_id) ?? new Map<string, Map<string, string | number>>();
+    const cells = byDate.get(r.sample_date ?? "") ?? new Map<string, string | number>();
+    const n = r.value === null || r.value === undefined ? NaN : Number(r.value);
+    cells.set(r.marker_id, Number.isFinite(n) ? n : r.value_text ?? "");
+    byDate.set(r.sample_date ?? "", cells);
+    labByCase.set(r.case_id, byDate);
+  }
+
+  const labWideRows: (string | number)[][] = [];
+  for (const c of cases) {
+    const byDate = labByCase.get(c.id);
+    if (!byDate || byDate.size === 0) {
+      labWideRows.push([c.research_id, "", "", ...markerCols.map(() => "")]);
+      continue;
+    }
+    [...byDate.keys()].sort().forEach((date, i) => {
+      const cells = byDate.get(date);
+      labWideRows.push([c.research_id, i + 1, date, ...markerCols.map((m) => cells?.get(m.id) ?? "")]);
+    });
+  }
+
+  addSheet(
+    "Lab 生物標記",
+    [
+      "Subject_ID",
+      "第幾次抽血",
+      "採檢日期",
+      ...markerCols.map((m) => (m.unit ? `${m.display_name}（${m.unit}）` : m.display_name)),
+    ],
+    labWideRows,
+    14
+  );
+
+  // Lab 逐筆：寬表一格只放得下一個值，備註／記錄者／原始字串留在這裡（資料不流失）
   const labRows = ((labResults ?? []) as LabRow[])
     .filter((r) => researchIdById.has(r.case_id))
     .sort(
