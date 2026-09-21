@@ -94,7 +94,7 @@ type Screen = {
  * 軟鎖擋得住的是「一路按下一步滑過去」，擋不住存心跳的人——這是刻意的取捨。
  * 跳過的題目會進待補清單（一份問卷一筆，標題帶未答題數），人員事後看得到。
  */
-const LOCKED_SEGMENTS: PatientIntakeSegmentKey[] = ["sf36", "psqi"];
+const LOCKED_SEGMENTS: PatientIntakeSegmentKey[] = ["sf36", "psqi", "lifestyle"];
 
 /** 建檔時診間已填過的欄位，用來當作病人流程的初始值 */
 export type IntakePrefill = {
@@ -124,6 +124,7 @@ export type IntakePrefill = {
   /** 兩份量表的最新一筆回覆：逐題答案帶回畫面，responseId 供重存時取代（不要多長一筆 Baseline） */
   sf36: { responseId: string | null; answers: Record<string, string | string[]> };
   psqi: { responseId: string | null; answers: Record<string, string | string[]> };
+  lifestyle: { responseId: string | null; answers: Record<string, string | string[]> };
 };
 
 /** 某一段還沒答的項目（來源是存檔當下寫進去的待補清單） */
@@ -145,6 +146,7 @@ export default function PatientIntakeFlow({
   hasLesions,
   sf36,
   psqi,
+  lifestyle,
 }: {
   caseId: string;
   researchId: string;
@@ -167,6 +169,8 @@ export default function PatientIntakeFlow({
   hasLesions: boolean;
   sf36: Questionnaire | null;
   psqi: Questionnaire | null;
+  /** 飲食與運動習慣問卷（2026-09-21） */
+  lifestyle: Questionnaire | null;
 }) {
   // ── 各段的作答狀態 ────────────────────────────────────────────
   // 初始值＝建檔時診間已填的資料（2026-08-12）。病人看到的是已經選好/填好的畫面，
@@ -202,10 +206,11 @@ export default function PatientIntakeFlow({
   const [priorTreated, setPriorTreated] = useState<Prior | "">(prefill.priorTreated);
   const [priorDoctor, setPriorDoctor] = useState(prefill.priorDoctor);
 
-  // 兩份量表的答案共用同一個 map（key 是題目 id，不會撞）
+  // 各份問卷的答案共用同一個 map（key 是題目 id，不會撞）
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({
     ...prefill.sf36.answers,
     ...prefill.psqi.answers,
+    ...prefill.lifestyle.answers,
   });
 
   const [saving, setSaving] = useState(false);
@@ -221,6 +226,7 @@ export default function PatientIntakeFlow({
     intakeOptions: (string | null)[];
     sf36: string | null;
     psqi: string | null;
+    lifestyle: string | null;
   }>({
     history: null,
     intakeOptions: [],
@@ -229,6 +235,7 @@ export default function PatientIntakeFlow({
     // 帶進來反而會把上次那筆（可能是人員在個案頁補的）刪掉。
     sf36: prefill.sf36.responseId,
     psqi: prefill.psqi.responseId,
+    lifestyle: prefill.lifestyle.responseId,
   });
 
   const setAnswer = (qid: string, value: string | string[]) => setAnswers((a) => ({ ...a, [qid]: value }));
@@ -271,8 +278,10 @@ export default function PatientIntakeFlow({
    * 算成病人漏答，那筆待補就永遠消不掉。
    */
   const usableQuestions = useMemo(() => {
-    const pick = (segment: "sf36" | "psqi", q: Questionnaire | null): PageableQuestion[] => {
+    const pick = (segment: "sf36" | "psqi" | "lifestyle", q: Questionnaire | null): PageableQuestion[] => {
       if (!q) return [];
+      // 飲食運動的「其他運動項目說明」是自由文字，病人版不問，由人員補（見 savePatientQuestionnaireAction）
+      if (segment === "lifestyle") return q.questions.filter((x) => x.question_type !== "text");
       const noBedPartner =
         segment === "psqi" &&
         String(answers[q.questions.find((x) => x.order_no === PSQI_BED_PARTNER_ORDER)?.id ?? ""] ?? "") === "0";
@@ -283,8 +292,8 @@ export default function PatientIntakeFlow({
         return true;
       });
     };
-    return { sf36: pick("sf36", sf36), psqi: pick("psqi", psqi) };
-  }, [sf36, psqi, answers]);
+    return { sf36: pick("sf36", sf36), psqi: pick("psqi", psqi), lifestyle: pick("lifestyle", lifestyle) };
+  }, [sf36, psqi, lifestyle, answers]);
 
   // ── 把整個流程攤平成一連串畫面 ──────────────────────────────
   const screens = useMemo<Screen[]>(() => {
@@ -485,6 +494,7 @@ export default function PatientIntakeFlow({
     for (const [segment, q] of [
       ["sf36", sf36],
       ["psqi", psqi],
+      ["lifestyle", lifestyle],
     ] as const) {
       if (!q) continue;
       for (const page of paginateQuestions(usableQuestions[segment])) {
@@ -516,7 +526,7 @@ export default function PatientIntakeFlow({
     priorTreated, priorDoctor, onsetCause, referral, symptoms, noSymptomId, answers,
     prefill.sex, prefill.birthDate, prefill.height, prefill.weight, prefill.phone, birthDateMax,
     familyDiseaseOptions, visitReasonOptions, onsetCauseOptions, referralOptions,
-    symptomOptions, priorDoctorOptions, sf36, psqi, usableQuestions,
+    symptomOptions, priorDoctorOptions, sf36, psqi, lifestyle, usableQuestions,
   ]);
 
   // 續填：從第一個「還沒完成的段落」的第一個畫面開始
@@ -594,6 +604,15 @@ export default function PatientIntakeFlow({
         completed,
       });
       setSavedIds((s) => ({ ...s, psqi: responseId }));
+    } else if (segment === "lifestyle" && lifestyle) {
+      const { responseId } = await savePatientQuestionnaireAction(caseId, "lifestyle", {
+        questionnaireId: lifestyle.id,
+        answers,
+        presentedQuestionIds: usableQuestions.lifestyle.map((q) => q.id),
+        replaceResponseId: savedIds.lifestyle,
+        completed,
+      });
+      setSavedIds((s) => ({ ...s, lifestyle: responseId }));
     }
   }
 

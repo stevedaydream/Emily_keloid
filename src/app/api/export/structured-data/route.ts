@@ -1016,6 +1016,7 @@ export async function GET(request: Request) {
     "SF-36 健康調查簡表": { sheet: "SF-36 逐題", order: 1 },
     "匹茲堡睡眠品質量表（PSQI）": { sheet: "PSQI 逐題", order: 2 },
     "JSS 疤痕診斷分類表": { sheet: "JSS 逐題", order: 3 },
+    "飲食與運動習慣問卷": { sheet: "飲食運動 逐題", order: 4 },
   };
 
   const questionOrderNosByTemplate = new Map<string, number[]>();

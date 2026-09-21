@@ -48,11 +48,21 @@ const OPTION_FOLLOWUP_LABELS: Record<string, string> = {
 const QUESTIONNAIRE_FOLLOWUP_KEY: Partial<Record<PatientIntakeSegmentKey, string>> = {
   sf36: "questionnaire_sf36",
   psqi: "questionnaire_psqi",
+  lifestyle: "questionnaire_lifestyle",
 };
 const QUESTIONNAIRE_FOLLOWUP_LABEL: Partial<Record<PatientIntakeSegmentKey, string>> = {
   sf36: "SF-36 健康調查簡表",
   psqi: "匹茲堡睡眠品質量表（PSQI）",
+  lifestyle: "飲食與運動習慣問卷",
 };
+
+/**
+ * 飲食運動問卷的「其他運動」（2026-09-21）：docx 是「其他：＿＿」＋頻率。病人版不出現自由文字，
+ * 所以只問頻率（order_no 16）；答了有做（≥1）而項目說明（order_no 17）還空著，就留一筆待補給人員問。
+ */
+const LIFESTYLE_OTHER_FREQ_ORDER = 16;
+const LIFESTYLE_OTHER_TEXT_ORDER = 17;
+const LIFESTYLE_OTHER_FOLLOWUP_KEY = "lifestyle_other_exercise";
 
 async function operatorName() {
   // 病人自填時 operator cookie 仍是那位交出平板的人員——稽核要記得住負責的人，不是「病人」。
@@ -399,10 +409,10 @@ export async function savePatientQuestionnaireAction(
 
   const { data: questions } = await supabase
     .from("questionnaire_questions")
-    .select("id, question_type")
+    .select("id, question_type, order_no")
     .eq("questionnaire_id", payload.questionnaireId);
 
-  const rows = [];
+  const rows: { response_id: string; question_id: string; answer_value: unknown }[] = [];
   for (const q of questions ?? []) {
     const raw = payload.answers[q.id];
     if (raw === undefined || raw === "" || (Array.isArray(raw) && raw.length === 0)) continue;
@@ -433,6 +443,20 @@ export async function savePatientQuestionnaireAction(
           fieldLabel: `${QUESTIONNAIRE_FOLLOWUP_LABEL[segment] ?? segment}（${missing} 題未作答）`,
           reason: "skipped",
         },
+      ]);
+    }
+  }
+
+  if (payload.completed && segment === "lifestyle") {
+    const answerOf = (order: number) => {
+      const qid = (questions ?? []).find((q) => q.order_no === order)?.id;
+      return qid ? rows.find((r) => r.question_id === qid)?.answer_value : undefined;
+    };
+    await clearFollowups(caseId, [LIFESTYLE_OTHER_FOLLOWUP_KEY]);
+    const freq = Number(answerOf(LIFESTYLE_OTHER_FREQ_ORDER) ?? 0);
+    if (freq >= 1 && !answerOf(LIFESTYLE_OTHER_TEXT_ORDER)) {
+      await addFollowups(caseId, [
+        { fieldKey: LIFESTYLE_OTHER_FOLLOWUP_KEY, fieldLabel: "其他運動是哪一種（病人答有做）", reason: "no_detail" },
       ]);
     }
   }

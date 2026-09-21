@@ -14,14 +14,17 @@ export const PATIENT_INTAKE_SEGMENTS = [
   { key: "intake_options", label: "就診資訊", hint: "怎麼發生的、怎麼知道要來看診" },
   { key: "sf36", label: "健康狀況", hint: "SF-36 健康調查" },
   { key: "psqi", label: "睡眠品質", hint: "PSQI 睡眠品質量表" },
+  { key: "lifestyle", label: "飲食與運動", hint: "平時的飲食習慣與運動頻率" },
 ] as const;
 
 export type PatientIntakeSegmentKey = (typeof PATIENT_INTAKE_SEGMENTS)[number]["key"];
 
-/** 這兩份問卷是病人自評量表，放進病人流程；JSS 是醫師評分，刻意不放。 */
+/** 這幾份問卷是病人自評，放進病人流程；JSS 是醫師評分，刻意不放。 */
 export const SEGMENT_QUESTIONNAIRE_NAME: Partial<Record<PatientIntakeSegmentKey, string>> = {
   sf36: "SF-36 健康調查簡表",
   psqi: "匹茲堡睡眠品質量表（PSQI）",
+  // Emily 2026-09-21《新增飲食運動調查》，題目見 migration 20260921010000
+  lifestyle: "飲食與運動習慣問卷",
 };
 
 /**
@@ -50,6 +53,8 @@ export const FOLLOWUP_SEGMENT: Record<string, PatientIntakeSegmentKey> = {
   keloid_symptom: "intake_options",
   questionnaire_sf36: "sf36",
   questionnaire_psqi: "psqi",
+  questionnaire_lifestyle: "lifestyle",
+  lifestyle_other_exercise: "lifestyle",
 };
 
 /**

@@ -102,6 +102,8 @@ const FOLLOWUP_ANCHOR: Record<string, string | undefined> = {
   // 病人自評量表漏答：一份一筆，點過去是問卷區塊（要重填整份，不是補某一格）
   questionnaire_sf36: "section-responses",
   questionnaire_psqi: "section-responses",
+  questionnaire_lifestyle: "section-responses",
+  lifestyle_other_exercise: "section-responses",
 };
 
 /** 從待補清單點過來時，`:target` 讓那一格亮一圈——捲到位還要自己找是哪一格就白做了。 */

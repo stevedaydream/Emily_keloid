@@ -76,6 +76,7 @@ export default async function PatientIntakePage({ params }: { params: Promise<{ 
 
   const sf36 = byName(SEGMENT_QUESTIONNAIRE_NAME.sf36!);
   const psqi = byName(SEGMENT_QUESTIONNAIRE_NAME.psqi!);
+  const lifestyle = byName(SEGMENT_QUESTIONNAIRE_NAME.lifestyle!);
   const optionsOf = (category: string) => (options ?? []).filter((o) => o.category === category);
 
   // ── 回頭檢視用的既有作答（2026-08-25）──────────────────────────
@@ -126,7 +127,7 @@ export default async function PatientIntakePage({ params }: { params: Promise<{ 
 
   // 兩份量表的最新一筆回覆＋逐題答案。回頭重填時取代它，不要多長出一筆 Baseline——
   // 匯出的「問卷分數」是一列＝一個人×一個時間點，同一個時間點兩筆會打架。
-  const scaleIds = [sf36?.id, psqi?.id].filter((v): v is string => Boolean(v));
+  const scaleIds = [sf36?.id, psqi?.id, lifestyle?.id].filter((v): v is string => Boolean(v));
   const { data: responses } = scaleIds.length
     ? await supabase
         .from("questionnaire_responses")
@@ -150,6 +151,7 @@ export default async function PatientIntakePage({ params }: { params: Promise<{ 
   };
   const sf36Prev = answersOf(sf36?.id);
   const psqiPrev = answersOf(psqi?.id);
+  const lifestylePrev = answersOf(lifestyle?.id);
 
   // 「哪幾題沒答」：待補清單裡還沒被人員處理掉的那些，依段落分組給畫面用
   const unresolved = (followups ?? []).filter((f) => f.status === "pending");
@@ -186,6 +188,7 @@ export default async function PatientIntakePage({ params }: { params: Promise<{ 
         priors,
         sf36: sf36Prev,
         psqi: psqiPrev,
+        lifestyle: lifestylePrev,
       }}
       // 每一段還有哪幾題沒答（存檔當下算好的待補清單），回頭檢視的入口畫面要標出來
       pendingBySegment={unresolved
@@ -203,6 +206,7 @@ export default async function PatientIntakePage({ params }: { params: Promise<{ 
       hasLesions={(lesions ?? []).length > 0}
       sf36={sf36 ? { id: sf36.id, name: sf36.name, questions: questionsFor(sf36.id) } : null}
       psqi={psqi ? { id: psqi.id, name: psqi.name, questions: questionsFor(psqi.id) } : null}
+      lifestyle={lifestyle ? { id: lifestyle.id, name: lifestyle.name, questions: questionsFor(lifestyle.id) } : null}
     />
   );
 }

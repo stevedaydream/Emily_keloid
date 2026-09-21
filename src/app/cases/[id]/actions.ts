@@ -1106,6 +1106,18 @@ export async function deleteKeloidLesionAction(formData: FormData) {
 
   await supabase.from("case_keloid_lesions").delete().eq("id", lesionId);
 
+  // 刪除後其餘部位往前遞補（Emily 2026-09-21）：部位1 登錯刪掉，原本的部位2 要變部位1，
+  // 否則畫面從「部位2」開始，匯出的「部位1~4」欄也會對不上人員口中的編號。
+  // 照片／放療／治療紀錄都是用 lesion_id 連結，重編只改顯示的「部位N」（同 moveKeloidLesionAction）。
+  const { data: remaining } = await supabase
+    .from("case_keloid_lesions")
+    .select("id, site_no")
+    .eq("case_id", caseId)
+    .order("site_no", { nullsFirst: false });
+  for (const [i, l] of (remaining ?? []).entries()) {
+    if (l.site_no !== i + 1) await supabase.from("case_keloid_lesions").update({ site_no: i + 1 }).eq("id", l.id);
+  }
+
   // 刪掉的是主病灶時，把剩下編號最小的那顆補上——JSS 沒有主病灶就無從解讀
   if (removed?.is_primary) {
     const { data: next } = await supabase
