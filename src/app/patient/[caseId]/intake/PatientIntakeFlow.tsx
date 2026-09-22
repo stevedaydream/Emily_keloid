@@ -1024,7 +1024,7 @@ function renderQuestion(
       <BigMultiChoice
         values={Array.isArray(value) ? value : []}
         onChange={onChange}
-        options={q.options.map((o) => ({ value: o.value, label: o.label }))}
+        options={q.options.map((o) => ({ value: o.value, label: segment === "psqi" ? o.label.replace(/^[0-3]分[・、\s]*/, "") : o.label }))}
       />
     );
   }
@@ -1034,7 +1034,7 @@ function renderQuestion(
       <BigChoice
         value={typeof value === "string" ? value : ""}
         onChange={onChange}
-        options={q.options.map((o) => ({ value: o.value, label: o.label }))}
+        options={q.options.map((o) => ({ value: o.value, label: segment === "psqi" ? o.label.replace(/^[0-3]分[・、\s]*/, "") : o.label }))}
       />
     );
   }

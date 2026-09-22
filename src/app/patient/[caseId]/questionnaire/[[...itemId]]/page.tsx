@@ -186,7 +186,7 @@ export default async function ClinicQuestionnairePage({
                       required={q.required}
                       defaultChecked={isChecked(q.id, o.value)}
                     />
-                    {o.label}
+                    {template?.name === PSQI_QUESTIONNAIRE_NAME ? o.label.replace(/^[0-3]分[・、\s]*/, "") : o.label}
                   </label>
                 ))}
               </div>
